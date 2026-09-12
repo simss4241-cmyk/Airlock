@@ -396,8 +396,16 @@ async function refreshHealth() {
             return;
         }
 
-        const saved = localStorage.getItem('airlock.model');
-        const wanted = saved || h.activeModel;
+        // The server's config is the single source of truth for the current model.
+        //
+        // This used to prefer a localStorage value, which meant a browser that had
+        // ever picked a model outvoted the server's config permanently — changing
+        // the default did nothing, forever, with no way to tell why. The picker now
+        // writes back to the config instead of keeping a private copy.
+        const wanted = h.activeModel;
+
+        // One-time cleanup of that private copy.
+        try { localStorage.removeItem('airlock.model'); } catch { /* ignore */ }
 
         modelCaps = Object.fromEntries(h.models.map(m => [m.name, m.caps || []]));
 
@@ -1653,7 +1661,6 @@ async function send() {
 
     const model = el.model.value;
     const sendingThreadId = activeThread?.id || null;
-    localStorage.setItem('airlock.model', model);
 
     const userImages = pending.map(p => p.dataUrl);
     const userMsg = { role: 'user', content: text, images: userImages };
@@ -1956,10 +1963,17 @@ el.saveSettings.onclick = async () => {
     await loadConfig();
 };
 
-el.model.onchange = () => {
-    localStorage.setItem('airlock.model', el.model.value);
+el.model.onchange = async () => {
     paintThinkToggle();     // capabilities differ per model
     paintWorkspace();
+
+    // Persisted server-side, so the choice survives a reload, a different browser
+    // and a restart — and so there is only ever one answer to "which model".
+    try {
+        await json('/api/config', { model: el.model.value });
+    } catch {
+        flash('Could not save that model choice; it applies to this session only.', 6000);
+    }
 };
 
 el.hint.textContent = 'images + tool use supported';

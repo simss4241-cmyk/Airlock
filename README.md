@@ -81,6 +81,12 @@ That is enough to run. **Airlock does not require you to download a model.**
 The default is resolved at boot rather than hardcoded, because a fixed default is
 wrong for somebody — see `pickDefaultModel` in [server.js](server.js).
 
+Whichever model is selected lives in the server's config, and the picker writes
+back to it. There is deliberately no per-browser copy: one used to exist in
+`localStorage`, and because it was preferred over the config it outvoted it
+permanently — changing the default did nothing in any browser that had ever
+picked a model, with nothing on screen to explain why.
+
 > Remote-first as a default is a deliberate inversion, and not a retreat from
 > local-first. *Local-first* is a claim about where your data rests by default,
 > not about which dropdown entry is preselected. Hardcoding a local model sent a
@@ -356,6 +362,12 @@ in browser history.
 **Everyone holding it sees the same packets.** That is honest for a demo and it
 is not per-user isolation — the store is a single SQLite file with no user
 dimension, and giving it one is a real piece of work rather than a flag.
+
+It also means **the model choice is shared**. The current model lives in the
+server's config rather than in each browser, so one visitor switching tiers
+switches it for everyone. That is the right behaviour for a desktop app with two
+windows open and the wrong behaviour for a shared demo; it is the same missing
+per-visitor dimension, not a separate bug.
 
 Which is why `AIRLOCK_DEMO=1` exists. It shows a permanent banner saying the
 instance is shared and anything typed into it is visible to other visitors.
