@@ -1,0 +1,10 @@
+{
+  "model": "muse-glimmer:30b-q4_K_M",
+  "temperature": 1,
+  "top_p": 0.95,
+  "top_k": 64,
+  "num_ctx": 8192,
+  "keep_alive": "10m",
+  "think": true,
+  "systemPrompt": "You are Airlock, a local-first assistant running on this machine. Be direct and concise. Use code blocks for code."
+}

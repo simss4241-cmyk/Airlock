@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Airlock</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/favicon.png" sizes="any">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="theme-color" content="#0b1120">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="app-shell">
+
+<aside class="sidebar">
+    <div class="brand-block">
+        <div class="brand">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <defs>
+                    <linearGradient id="gl" x1="0" y1="1" x2="1" y2="0">
+                        <stop offset="0%" stop-color="#2dd4bf"/>
+                        <stop offset="55%" stop-color="#a855f7"/>
+                        <stop offset="100%" stop-color="#6d28d9"/>
+                    </linearGradient>
+                </defs>
+                <path d="M12 2.5 13.9 9 20.5 11 13.9 13 12 19.5 10.1 13 3.5 11 10.1 9Z" stroke="url(#gl)"/>
+                <path d="M18.5 3.5v3M20 5h-3" stroke="#2dd4bf"/>
+            </svg>
+            <h1>Airlock</h1>
+        </div>
+        <p class="tagline">Runs local. Packs thoughts.</p>
+
+        <div class="pill-row">
+            <span class="pill" id="status"><span class="dot" id="dot"></span><span id="statusText">checking…</span></span>
+            <button class="pill pill-btn" id="tokenPill">Σ 0</button>
+        </div>
+        <select id="model" title="Model"></select>
+    </div>
+
+    <div class="rail-head">
+        <span>Trays</span>
+        <span>
+            <button class="icon-btn sm" id="newChat" title="Scratch chat — not saved to a thread">✎</button>
+            <button class="icon-btn sm" id="newFolder" title="New tray">＋</button>
+        </span>
+    </div>
+
+    <div id="trays"></div>
+
+    <div class="rail-foot" id="storeStats"></div>
+    <button class="icon-btn wide" id="openSettings">⚙ Settings</button>
+</aside>
+
+<div class="pane">
+
+    <!-- The Galactic Oversight Committee. Drop a thread on a member to hand it off. -->
+    <div class="committee" id="committee">
+        <span class="lane-label">Local</span>
+        <span class="chip-local" id="localChip">Local · 16 GB</span>
+        <span class="lane-arrow">↗</span>
+        <span class="lane-label">Oversight</span>
+        <div class="members" id="members">
+            <button class="member" data-actor="Claude">Claude</button>
+            <button class="member" data-actor="GPT">GPT</button>
+            <button class="member" data-actor="Gemini">Gemini</button>
+        </div>
+        <span class="spacer"></span>
+        <span class="pill" id="threadPill" hidden><span id="threadName"></span></span>
+        <span class="lane-hint" id="laneHint">drag a thread up here</span>
+    </div>
+
+    <main id="main">
+        <div class="wrap" id="messages"></div>
+    </main>
+
+    <footer>
+        <div class="composer" id="composer">
+            <div class="attached" id="attached" hidden></div>
+            <textarea id="input" rows="1" placeholder="Ask Airlock…  (Enter to send, Shift+Enter for a new line)"></textarea>
+            <div class="row">
+                <button class="icon-btn" id="attach" title="Attach an image or a text/.md file">📎</button>
+                <input type="file" id="file" multiple hidden
+                       accept="image/*,.md,.markdown,.txt,.text,.json,.csv,.log,.yml,.yaml,.js,.ts,.py,.ps1,.scad,.html,.css">
+                <button class="icon-btn toggle" id="thinkToggle"
+                        title="The local model's reasoning channel. Off is ~3.7x faster on this hardware.">◈ reasoning</button>
+                <button class="icon-btn toggle" id="toolToggle"
+                        title="Let the model list, find and read files in the workspace root">⛁ files</button>
+                <span class="hint" id="hint"></span>
+                <span class="spacer"></span>
+                <button class="send" id="send">Send</button>
+            </div>
+        </div>
+    </footer>
+
+</div><!-- /.pane -->
+</div><!-- /.app-shell -->
+
+<dialog id="settings">
+    <form method="dialog">
+        <div class="dlg-head">Settings</div>
+        <div class="dlg-body">
+            <div class="field">
+                <label for="wsRoot">Workspace for <strong id="wsThread">No thread selected</strong></label>
+                <input id="wsRoot" type="text" spellcheck="false"
+                       placeholder="No workspace — Browse…, or paste a path and press Enter">
+                <div class="row gap">
+                    <button type="button" class="icon-btn" id="wsBrowse">Browse…</button>
+                    <button type="button" class="icon-btn" id="wsClear">Clear</button>
+                    <span class="hint" id="wsHint"></span>
+                </div>
+                <p class="note">Each thread has its own read-only workspace. Switching threads switches file access with it.</p>
+            </div>
+
+            <div class="field">
+                <label for="sys">System prompt</label>
+                <textarea id="sys"></textarea>
+            </div>
+            <div class="grid">
+                <div class="field">
+                    <label for="temp">Temperature</label>
+                    <input id="temp" type="number" step="0.05" min="0" max="2">
+                </div>
+                <div class="field">
+                    <label for="topp">Top&nbsp;P</label>
+                    <input id="topp" type="number" step="0.01" min="0" max="1">
+                </div>
+                <div class="field">
+                    <label for="topk">Top&nbsp;K</label>
+                    <input id="topk" type="number" step="1" min="0" max="200">
+                </div>
+                <div class="field">
+                    <label for="ctx">Context (num_ctx)</label>
+                    <input id="ctx" type="number" step="1024" min="1024" max="262144">
+                </div>
+            </div>
+            <p class="note">
+                Meta's recommended sampling for Muse Glimmer is <b>1.0 / 0.95 / 64</b>.
+                Context is capped low on purpose — on 16&nbsp;GB of VRAM a large KV cache
+                pushes weights out to system RAM and generation slows to a crawl.
+            </p>
+        </div>
+        <div class="dlg-foot">
+            <button class="icon-btn" value="cancel">Cancel</button>
+            <button class="send" id="saveSettings" value="save">Save</button>
+        </div>
+    </form>
+</dialog>
+
+<!-- Handoff: out by clipboard, back by paste. No API, no spend. -->
+<dialog id="handoff">
+    <div class="dlg-head">
+        <span id="handoffTitle">Handoff</span>
+        <button class="icon-btn sm" id="handoffClose" title="Close">✕</button>
+    </div>
+    <div class="dlg-body">
+        <p class="note" id="handoffMeta"></p>
+
+        <div class="field">
+            <label for="brief">Brief — carry this to them</label>
+            <textarea id="brief" readonly spellcheck="false"></textarea>
+        </div>
+        <div class="row gap">
+            <button class="icon-btn" id="copyBrief">Copy brief</button>
+            <button class="icon-btn" id="saveBrief">Save .md</button>
+            <span class="hint" id="copyHint"></span>
+        </div>
+
+        <hr>
+
+        <div class="field">
+            <label for="verdict">Their verdict — paste it back</label>
+            <textarea id="verdict" placeholder="Paste the committee member's reply here…"></textarea>
+        </div>
+        <p class="note" id="signNote"></p>
+    </div>
+    <div class="dlg-foot">
+        <button class="icon-btn" id="handoffCancel">Cancel</button>
+        <button class="send" id="recordHandoff">Record signature</button>
+    </div>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

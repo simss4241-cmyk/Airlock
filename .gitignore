@@ -1,0 +1,27 @@
+# ── Local data: never publish ────────────────────────────────────────────────
+# The packet store holds real conversations. Keep it on the machine.
+*.db
+*.db-shm
+*.db-wal
+
+# Pre-rename snapshot of the Glimmer tree
+backup-*/
+
+# Secrets: Nebius Token Factory / Tavily keys
+.env
+.env.*
+!.env.example
+
+node_modules/
+npm-debug.log*
+
+# OS / editor
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
+
+# Runtime config: written by POST /api/config, may hold a personal system prompt.
+# Ships as airlock-config.example.json instead.
+airlock-config.json
