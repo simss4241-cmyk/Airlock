@@ -338,17 +338,27 @@ async function refreshHealth() {
 
         modelCaps = Object.fromEntries(h.models.map(m => [m.name, m.caps || []]));
 
-        el.model.innerHTML = h.models
-            .map(m => {
-                const badges = [
-                    m.caps?.includes('thinking') ? '◈' : '',
-                    m.caps?.includes('vision') ? '👁' : '',
-                    m.caps?.includes('tools') ? '⛁' : ''
-                ].filter(Boolean).join('');
-                return `<option value="${m.name}">${m.name}  (${(m.size / 1e9).toFixed(1)} GB)`
-                     + `${badges ? '  ' + badges : ''}</option>`;
-            })
-            .join('');
+        // Grouped by tier, because which side of the boundary a model sits on is the
+        // one thing you must know before picking it. Remote models report no size —
+        // there is no local file — so the GB suffix is omitted rather than NaN.
+        const option = m => {
+            const badges = [
+                m.caps?.includes('thinking') ? '◈' : '',
+                m.caps?.includes('vision') ? '👁' : '',
+                m.caps?.includes('tools') ? '⛁' : ''
+            ].filter(Boolean).join('');
+            const size = m.size ? `  (${(m.size / 1e9).toFixed(1)} GB)` : '';
+            return `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}${size}`
+                 + `${badges ? '  ' + badges : ''}</option>`;
+        };
+        const group = (label, list) => list.length
+            ? `<optgroup label="${label}">${list.map(option).join('')}</optgroup>` : '';
+
+        const local = h.models.filter(m => m.tier !== 'remote');
+        const remote = h.models.filter(m => m.tier === 'remote');
+
+        el.model.innerHTML = group('Local — stays on this machine', local)
+                           + group('Oversight — crosses the boundary', remote);
 
         if (h.models.some(m => m.name === wanted)) {
             el.model.value = wanted;

@@ -25,9 +25,11 @@ version — clone it and check.
 | Packet store — threads, nesting, provenance, move/fork/review | working, 89 assertions |
 | Per-thread read-only workspaces, with containment tests | working, 46 assertions |
 | Escalation briefs and recorded verdicts | working — transport is manual copy-paste |
-| Remote tier on Nebius Token Factory (Nemotron 3) | in progress |
+| Remote tier on Nebius Token Factory (Nemotron 3) | working, 34 assertions |
+| Model dropdown grouped by tier, capability-badged | working |
 | Boundary classification and redaction before a packet crosses | in progress |
 | Tier recorded in provenance; "what crossed?" as a query | in progress |
+| Escalation driven by the router rather than the clipboard | in progress |
 
 The local model in use is **Meta Muse Glimmer 30B** (Apache 2.0, released 2026-08-10), but
 nothing here is specific to it — any Ollama model works, and the dropdown badges each one's
@@ -273,7 +275,9 @@ which drops a Startup-folder shortcut to `airlock-server-hidden.vbs` (node, no c
 | `tools/focus_airlock.ps1` | Finds and raises an existing Airlock window; exit code says which |
 | `public/icons/` | Generated PNGs + `airlock.ico` |
 | `tools/make_icons.py` | Redraws the whole icon set — edit colors here, re-run |
+| `providers/` | One streaming contract, two tiers. `index.js` documents the chunk shape |
 | `tools/smoke_test.js` | 89 assertions over the store API. Run it after touching `db.js` |
+| `tools/provider_test.js` | 34 assertions over the provider contract. Run it after touching `providers/` |
 | `airlock-launch.vbs` | Ensures the server is up, then opens app mode. What the icon runs |
 | `tools/install_shortcut.ps1` | Creates the pinnable Start Menu / Desktop shortcut |
 | `tools/install_autostart.ps1` | Startup-folder shortcut (`-Remove` to undo) |
@@ -446,6 +450,64 @@ the input. Automated tests use `.select()` and never touch a mouse, so they can'
 Every packet shows its id in the label (`You · #12`) so a brief can refer to it by number.
 Badges under a packet read its provenance: `from PBIS` when it was born elsewhere, `1 hop`,
 `nested`, `reviewed by Claude`, `oversight verdict`.
+
+## Two tiers, one stream
+
+`providers/` is the seam. `/api/chat` pulls one async generator and never branches
+on where a model runs; each provider adapts its API to a single chunk shape.
+
+That shape is Ollama's native NDJSON, which is a deliberate choice and not an
+accident of history. `public/app.js` already speaks it and is proven against it,
+so adapting a new provider to the client is strictly less risky than rewriting
+both ends of a working stream.
+
+| | Local | Remote |
+|---|---|---|
+| Runs on | Ollama, this machine | Nebius Token Factory |
+| Wire format | NDJSON | Server-Sent Events, OpenAI-shaped |
+| Model ids | bare tags (`llama3.2:latest`) | namespaced (`nvidia/...`) |
+| Cost | free | per token |
+
+### ⚠ The remote tier has no `eval_duration`, so we measure it
+
+Every reply carries a stats line, and the client computes throughput from the
+final chunk as `eval_count / (eval_duration / 1e9)` — nanoseconds, because that
+is what Ollama reports. **OpenAI-compatible APIs do not send a duration at all.**
+
+Nothing throws when it is missing. `undefined` fails the truthiness check, the
+client falls back to `'?'`, and every remote reply quietly renders `? tok/s`
+while local replies show a real number. It is invisible in development and
+obvious in a demo video, which is the worst combination a defect can have.
+
+So `providers/tokenfactory.js` measures generation itself, timing from the
+**first streamed token** rather than from the request. Ollama's `eval_duration`
+covers generation only; timing from the request would fold in queueing and
+network latency and understate the remote tier against the local one. Time to
+first token is measured separately by the client, for both tiers, so nothing is
+lost by excluding it.
+
+`tools/provider_test.js` guards this specifically. It does not check that the
+field exists — it computes the stats line the way the client does and asserts
+the result is a finite number, on both tiers.
+
+Two more translations worth knowing about:
+
+- **Usage must be asked for.** Without `stream_options: { include_usage: true }`
+  the final chunk carries no usage at all and the token counter silently reads
+  zero for the entire remote turn.
+- **Reasoning arrives on a different channel.** Nemotron 3 reasons heavily —
+  "name one metal" produced 855 characters of reasoning for a two-character
+  answer — and it is billed. The provider maps a `reasoning_content` delta
+  straight across, and also splits inline `<think>` fences out of the content
+  channel, carrying the open/closed state across delta boundaries because a
+  fence can land anywhere.
+
+### ⚠ `top_k` and `num_ctx` are local-tier concepts
+
+They are not sent remotely. `num_ctx` is the local server's KV-cache budget and
+has no remote meaning; `top_k` is not in the OpenAI schema and a strict endpoint
+may reject the whole request over it. Temperature and `top_p` cross; the rest
+stay home.
 
 ## The Galactic Oversight Committee
 

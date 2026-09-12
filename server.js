@@ -1,14 +1,19 @@
+// Node 20.6+ reads .env natively, so the remote tier needs no dotenv dependency.
+// Absent .env is not an error: Airlock runs fully local without one.
+try { process.loadEnvFile(); } catch { /* no .env; local tier only */ }
+
 const express = require('express');
 const fs = require('fs').promises;
 const path = require('path');
 
 const store = require('./db');
 const files = require('./files');
+const providers = require('./providers');
 
 const app = express();
 
 const PORT = Number(process.env.PORT) || 8100;
-const OLLAMA = 'http://127.0.0.1:11434';
+const OLLAMA = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';   // keep in step with providers/ollama.js
 const CONFIG_FILE = path.join(__dirname, 'airlock-config.json');
 
 // Meta's recommended sampling for Muse Glimmer: temp 1.0 / top_p 0.95 / top_k 64.
@@ -92,24 +97,9 @@ const TOOLS = [
  * support thinking` — and so is sending `tools` to one without "tools" (codellama has
  * neither). Both flags must therefore be gated per model, not set globally from config.
  */
-const capsCache = new Map();
-
-async function modelCaps(model) {
-    if (capsCache.has(model)) return capsCache.get(model);
-
-    let caps = [];
-    try {
-        const r = await fetch(`${OLLAMA}/api/show`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model })
-        });
-        if (r.ok) caps = (await r.json()).capabilities || [];
-    } catch { /* Ollama down; treat as no capabilities and send neither flag */ }
-
-    capsCache.set(model, caps);
-    return caps;
-}
+// Capability lookup moved into the provider layer: a remote model has no
+// /api/show to ask, so each provider answers for its own models.
+const modelCaps = model => providers.capabilities(model);
 
 async function runTool(name, args, root) {
     switch (name) {
@@ -176,6 +166,19 @@ app.post('/api/config', async (req, res) => {
     res.json(config);
 });
 
+// Remote-tier models, with their declared capabilities. Never throws: a missing
+// key, a network blip or a bad key all mean the same thing to the UI — no seats.
+async function remoteModels() {
+    try {
+        const tf = require('./providers/tokenfactory');
+        const list = await tf.list();
+        const caps = await tf.capabilities();
+        return list
+            .map(m => ({ name: m.id, tier: m.tier, caps }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    } catch { return []; }
+}
+
 // ── Health: is Ollama up, is the local model actually installed, what else is available ──
 app.get('/api/health', async (req, res) => {
     try {
@@ -189,19 +192,34 @@ app.get('/api/health', async (req, res) => {
         const withCaps = await Promise.all(models.map(async m => ({
             name: m.name,
             size: m.size,
+            tier: 'local',
             family: m.details?.family,
             caps: await modelCaps(m.name)     // cached, so only the first call costs anything
         })));
+        withCaps.sort((a, b) => a.name.localeCompare(b.name));
+
+        // The remote tier is optional. No key means no seats past the boundary,
+        // and the dropdown simply shows the local models — not an error state.
+        const remote = await remoteModels();
 
         res.json({
             ollama: true,
             version,
-            models: withCaps.sort((a, b) => a.name.localeCompare(b.name)),
+            models: [...withCaps, ...remote],
+            remoteTier: remote.length > 0,
             localModelInstalled: models.some(m => m.name.startsWith('muse-glimmer')),
             activeModel: config.model
         });
     } catch (err) {
-        res.json({ ollama: false, error: err.message, models: [], localModelInstalled: false });
+        // Ollama being down must not take the remote tier with it.
+        const remote = await remoteModels();
+        res.json({
+            ollama: false,
+            error: err.message,
+            models: remote,
+            remoteTier: remote.length > 0,
+            localModelInstalled: false
+        });
     }
 });
 
@@ -232,7 +250,18 @@ app.post('/api/chat', async (req, res) => {
 
     // The conversation grows as tools run: assistant tool_calls, then tool results.
     const convo = [...messages];
-    const send = obj => res.write(JSON.stringify(obj) + '\n');
+
+    // Flushed lazily, on the first byte we actually write. The upstream call does
+    // not happen until the generator is first pulled, so a refusal (bad key, model
+    // gone, Ollama down) still lands before any header and can be answered with a
+    // real status code instead of an error chunk inside a 200 stream.
+    const ensureHeaders = () => {
+        if (res.headersSent) return;
+        res.setHeader('Content-Type', 'application/x-ndjson');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.flushHeaders();
+    };
+    const send = obj => { ensureHeaders(); res.write(JSON.stringify(obj) + '\n'); };
 
     // Every tool round is a real Ollama call that really costs tokens, but only the last
     // round's `done` chunk reaches the client (see below). Total them here or a tool-using
@@ -249,75 +278,32 @@ app.post('/api/chat', async (req, res) => {
         for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
             const lastRound = round === MAX_TOOL_ROUNDS;   // stop offering tools; force an answer
 
-            const payload = {
+            // One generator whatever the tier: the provider layer has already
+            // normalised the remote stream into this same chunk shape.
+            const stream = providers.chat({
                 model: chosen,
                 messages: convo,
-                stream: true,
-                // Omitted entirely when unsupported — sending `false` is still a request
+                config,
+                // Omitted entirely when unsupported - sending `false` is still a request
                 // to a model that has no thinking channel.
                 ...(canThink ? { think: config.think !== false } : {}),
-                keep_alive: config.keep_alive,
-                options: {
-                    temperature: config.temperature,
-                    top_p: config.top_p,
-                    top_k: config.top_k,
-                    num_ctx: config.num_ctx
-                }
-            };
-            if (useTools && !lastRound) payload.tools = TOOLS;
-
-            const ollama = await fetch(`${OLLAMA}/api/chat`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
+                tools: useTools && !lastRound ? TOOLS : undefined,
                 signal: controller.signal
             });
 
-            if (!ollama.ok) {
-                const text = await ollama.text();
-                if (!res.headersSent) {
-                    return res.status(ollama.status)
-                        .json({ error: text || `Ollama returned ${ollama.status}` });
-                }
-                send({ error: text || `Ollama returned ${ollama.status}` });
-                break;
-            }
-
-            if (!res.headersSent) {
-                res.setHeader('Content-Type', 'application/x-ndjson');
-                res.setHeader('Cache-Control', 'no-cache');
-                res.flushHeaders();
-            }
-
-            // Parse rather than blind-pipe: we need the tool calls, and the per-round
+            // Collect rather than blind-pipe: we need the tool calls, and the per-round
             // `done` chunk must not reach the client until the last round or it would
             // finalise the message while tools are still running.
             let content = '', thinking = '', toolCalls = [], finalChunk = null;
-            const reader = ollama.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
+            for await (const chunk of stream) {
+                if (chunk.message?.thinking) thinking += chunk.message.thinking;
+                if (chunk.message?.content) content += chunk.message.content;
+                if (chunk.message?.tool_calls?.length) toolCalls.push(...chunk.message.tool_calls);
 
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop();
-
-                for (const line of lines) {
-                    if (!line.trim()) continue;
-
-                    let chunk;
-                    try { chunk = JSON.parse(line); } catch { continue; }
-
-                    if (chunk.message?.thinking) thinking += chunk.message.thinking;
-                    if (chunk.message?.content) content += chunk.message.content;
-                    if (chunk.message?.tool_calls?.length) toolCalls.push(...chunk.message.tool_calls);
-
-                    if (chunk.done) { finalChunk = chunk; continue; }
-                    res.write(line + '\n');
-                }
+                if (chunk.done) { finalChunk = chunk; continue; }
+                ensureHeaders();
+                res.write(JSON.stringify(chunk) + '\n');
             }
 
             if (finalChunk) {
@@ -373,10 +359,18 @@ app.post('/api/chat', async (req, res) => {
         res.end();
     } catch (err) {
         if (err.name === 'AbortError') return;   // user hit Stop; nothing to report
-        console.error('Ollama proxy error:', err.message);
+
+        const tier = err.tier || 'local';
+        console.error(`${tier} provider error:`, err.message);
+
         if (!res.headersSent) {
-            res.status(502).json({ error: 'Ollama unreachable: ' + err.message });
+            // Pass an upstream status straight through where there is one. A 401 from
+            // the remote tier is a key problem, not a gateway problem, and answering
+            // 502 would send the user hunting in the wrong place.
+            if (err.status) res.status(err.status).json({ error: err.message });
+            else res.status(502).json({ error: 'Ollama unreachable: ' + err.message });
         } else {
+            send({ error: err.message });
             res.end();
         }
     }
