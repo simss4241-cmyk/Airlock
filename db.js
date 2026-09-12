@@ -5,8 +5,8 @@
  *
  * The shape everything else is a view over:
  *
- *   folder  ── a tray (CODE PROJECTS, HARDWARE PROJECTS, DARTH PACKET)
- *     thread ── a project stream inside a tray (PBIS, Alchemi, Tonight's Run)
+ *   folder  ── a tray (PROJECTS, RESEARCH, whatever you name it)
+ *     thread ── a project stream inside a tray (one per line of work)
  *       packet ── one unit of thought. Nests via parent_id, so a thread is a
  *                 container, not a flat log.
  *
@@ -130,10 +130,17 @@ if (!getMeta(TIER_BACKFILLED)) {
 
 // ─────────────────────────── seed ───────────────────────────
 
+// A fresh database gets one tray holding one thread, and nothing else.
+//
+// Trays and threads are the user's own vocabulary. Seeding a stranger's project
+// names gives a new arrival nothing but a list to delete before they can start,
+// and this seed ships in a public repository — so it has to make sense to
+// someone who has never met the person who wrote it.
+//
+// One of each is deliberate: it shows the tray -> thread shape that the whole
+// board depends on, without pretending to be content.
 const SEED = [
-    ['CODE PROJECTS', ['Alchemi', 'liAIseCo', 'DotDash', 'Qubit']],
-    ['HARDWARE PROJECTS', ['PBIS', 'SlabGuards', 'Toploader Frame', 'Display Stands', 'Sunny Habitat']],
-    ['DARTH PACKET', ["Tonight's Run"]]
+    ['PROJECTS', ['First thread']]
 ];
 
 function seed() {

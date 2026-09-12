@@ -306,8 +306,8 @@ Uses `node:sqlite`, built into Node 24 — no native module, no build tools. It 
 ExperimentalWarning on boot; that's the runtime, not a problem here.
 
 ```
-folder   ── a tray            (CODE PROJECTS, HARDWARE PROJECTS, DARTH PACKET)
-  thread ── a project stream  (PBIS, Alchemi, Tonight's Run)
+folder   ── a tray            (PROJECTS, RESEARCH — whatever you name it)
+  thread ── a project stream  (one per line of work)
     packet ── one unit of thought, nests via parent_id
 ```
 
