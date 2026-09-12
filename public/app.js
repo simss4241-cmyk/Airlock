@@ -427,10 +427,15 @@ async function refreshHealth() {
             ? `<optgroup label="${label}">${list.map(option).join('')}</optgroup>` : '';
 
         const local = h.models.filter(m => m.tier !== 'remote');
-        const remote = h.models.filter(m => m.tier === 'remote');
+        const nemotron = h.models.filter(m => m.tier === 'remote' && m.family === 'nemotron');
+        const other = h.models.filter(m => m.tier === 'remote' && m.family !== 'nemotron');
 
+        // Three groups, not two: Nemotron is the tier this is built around, and
+        // burying it alphabetically among twenty other remote models made the
+        // dropdown read like a vendor list rather than an escalation ladder.
         el.model.innerHTML = group('Local — stays on this machine', local)
-                           + group('Oversight — crosses the boundary', remote);
+                           + group('Oversight — Nemotron, across the boundary', nemotron)
+                           + group('Oversight — other remote models', other);
 
         if (h.models.some(m => m.name === wanted)) {
             el.model.value = wanted;

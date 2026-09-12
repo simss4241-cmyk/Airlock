@@ -16,13 +16,19 @@ const app = express();
 
 const PORT = Number(process.env.PORT) || 8100;
 const OLLAMA = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';   // keep in step with providers/ollama.js
-const CONFIG_FILE = path.join(__dirname, 'airlock-config.json');
+// Overridable so a hosted instance can keep config outside the code directory,
+// and so the first-run path is testable without moving the developer's own file.
+const CONFIG_FILE = process.env.AIRLOCK_CONFIG || path.join(__dirname, 'airlock-config.json');
 
 // Meta's recommended sampling for Muse Glimmer: temp 1.0 / top_p 0.95 / top_k 64.
 // num_ctx is deliberately NOT 128K — on a 16GB card the KV cache for full context
 // would evict the weights. 8192 is a sane desk default; raise it in Settings.
 const DEFAULTS = {
-    model: 'muse-glimmer:30b-q4_K_M',
+    // Resolved at boot by pickDefaultModel(), not hardcoded. A fixed default is
+    // wrong for somebody: naming a local model means a fresh clone opens on a
+    // model that has not been downloaded — and muse-glimmer in particular is an
+    // 18 GB pull that Ollama currently refuses outright on Windows/NVIDIA.
+    model: null,
     temperature: 1.0,
     top_p: 0.95,
     top_k: 64,
@@ -161,10 +167,41 @@ app.get('/api/access', (req, res) => res.json({
     ok: true, demo: Boolean(process.env.AIRLOCK_DEMO), ...auth.remoteSpend()
 }));
 
+/**
+ * Which model the app opens on, when the user has not chosen one.
+ *
+ * Remote first, and that is a deliberate inversion of "local-first". The
+ * reasoning: a remote model works the moment a key exists, with nothing to
+ * download, whereas a local default sends a new arrival to fetch 18 GB before
+ * the app does anything at all. Local-first is a claim about where your data
+ * rests by default, not about which dropdown entry is preselected.
+ *
+ * It also makes the first message demonstrate the product. Opening on a
+ * Nemotron model means the very first turn hits the local gate, so the boundary
+ * is something you watch happen rather than read about.
+ *
+ * A saved config always wins — this only fills a blank.
+ */
+async function pickDefaultModel() {
+    const wanted = process.env.AIRLOCK_MODEL_DEFAULT || process.env.AIRLOCK_MODEL_VERDICT;
+    if (process.env.NEBIUS_API_KEY && wanted) return wanted;
+
+    // No key: the largest local model, on the theory that the biggest thing
+    // somebody bothered to download is the one they meant to use.
+    const local = await require('./providers/ollama').list().catch(() => []);
+    if (local.length) {
+        return local.slice().sort((a, b) => (b.size || 0) - (a.size || 0))[0].id;
+    }
+
+    return null;   // nothing reachable; the UI says so rather than guessing
+}
+
 async function loadConfig() {
     try {
         config = { ...DEFAULTS, ...JSON.parse(await fs.readFile(CONFIG_FILE, 'utf8')) };
     } catch { /* first run, no config yet */ }
+
+    if (!config.model) config.model = await pickDefaultModel();
 
     // Before workspaces belonged to threads, one global root lived in the JSON config.
     // Copy it to each existing thread exactly once, then delete the key outright rather
@@ -219,14 +256,58 @@ const scratchCleared = new Set();
 
 // Remote-tier models, with their declared capabilities. Never throws: a missing
 // key, a network blip or a bad key all mean the same thing to the UI — no seats.
+// Nemotron in capability order rather than alphabetical order, which scatters
+// them (Nano lands under N, Super under n, Ultra under N again). The dropdown
+// should read the way the tiers actually escalate.
+const NEMOTRON_RANK = [
+    [/nano/i,      1],
+    [/super/i,     2],
+    [/ultra/i,     3],
+    [/lightning/i, 4]
+];
+
+function nemotronRank(id) {
+    for (const [pattern, rank] of NEMOTRON_RANK) if (pattern.test(id)) return rank;
+    return 5;
+}
+
+/**
+ * Remote-tier models, grouped.
+ *
+ * Token Factory serves far more than Nemotron, and all of it is genuinely
+ * usable, so nothing is hidden — a router that reaches one vendor is not a
+ * router. But Nemotron is the tier this is built around, so it is separated and
+ * ordered by escalation rather than being buried alphabetically among twenty
+ * others.
+ *
+ * AIRLOCK_REMOTE_ALLOW narrows the list to comma-separated substrings when a
+ * curated demo wants fewer choices on screen.
+ */
 async function remoteModels() {
     try {
         const tf = require('./providers/tokenfactory');
         const list = await tf.list();
         const caps = await tf.capabilities();
+
+        const allow = (process.env.AIRLOCK_REMOTE_ALLOW || '')
+            .split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
+
         return list
-            .map(m => ({ name: m.id, tier: m.tier, caps }))
-            .sort((a, b) => a.name.localeCompare(b.name));
+            .filter(m => !allow.length || allow.some(a => m.id.toLowerCase().includes(a)))
+            .map(m => ({
+                name: m.id,
+                tier: m.tier,
+                caps,
+                family: /nemotron/i.test(m.id) ? 'nemotron' : 'other'
+            }))
+            .sort((a, b) => {
+                if (a.family !== b.family) return a.family === 'nemotron' ? -1 : 1;
+                if (a.family === 'nemotron') {
+                    const r = nemotronRank(a.name) - nemotronRank(b.name);
+                    if (r) return r;
+                }
+                return a.name.localeCompare(b.name);
+            });
     } catch { return []; }
 }
 
@@ -892,7 +973,9 @@ loadConfig().then(() => {
         const s = store.stats();
         console.log('');
         console.log(`  Airlock is running -> http://localhost:${PORT}`);
-        console.log(`  Model: ${config.model}   ctx: ${config.num_ctx}`);
+        console.log(config.model
+            ? `  Model: ${config.model}   ctx: ${config.num_ctx}`
+            : '  Model: none reachable. Pull an Ollama model, or set NEBIUS_API_KEY.');
         console.log(`  Store: ${s.packets} packets in ${s.threads} threads / ${s.folders} trays`);
         console.log(auth.describe(PORT));
         console.log('');
