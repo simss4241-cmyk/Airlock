@@ -341,6 +341,7 @@ async function refreshHealth() {
         // Seats that can cross on their own. Everything else is carried by hand,
         // so with no key configured the committee behaves exactly as it always did.
         liveSeats = Object.fromEntries((h.seats || []).map(s => [s.actor, s.model]));
+        modelTier = Object.fromEntries(h.models.map(m => [m.name, m.tier || 'local']));
         paintSeats();
 
         // Grouped by tier, because which side of the boundary a model sits on is the
@@ -841,6 +842,8 @@ function leaveThread() {
 async function persist(role, content, images = []) {
     if (!activeThread || !content) return null;
     try {
+        // Tier is decided server-side from the model id — the client does not get to
+        // assert which side of the boundary produced something.
         const p = await json('/api/packets', {
             threadId: activeThread.id, role, content,
             model: role === 'assistant' ? el.model.value : null,
@@ -1405,6 +1408,7 @@ function wireTrayDnd(tray) {
 
 let handoffCtx = null;
 let liveSeats = {};
+let modelTier = {};   // model id -> 'local' | 'remote', from /api/health
 
 /** Title for a thread id, from the tray tree already in hand. */
 const threadTitle = id => {
@@ -1606,7 +1610,15 @@ async function send() {
     // Build the wire payload: system prompt first, images on the last user turn.
     const wire = [];
     if (config.systemPrompt) wire.push({ role: 'system', content: config.systemPrompt });
-    messages.filter(m => !m.streaming && !m.error).forEach((m, i, arr) => {
+
+    // The packets this request exposes. Every turn resends the whole conversation,
+    // so on a remote model that is what crosses — and the server cannot know which
+    // packets these messages are unless we say. Without this the audit reports
+    // nothing crossed while the entire thread is on its way to a remote endpoint.
+    const sending = messages.filter(m => !m.streaming && !m.error);
+    const sendingPacketIds = sending.map(m => m.packetId).filter(Boolean);
+
+    sending.forEach((m, i, arr) => {
         const msg = { role: m.role, content: m.content };
         if (m.role === 'user' && i === arr.length - 1 && outgoingImages.length) msg.images = outgoingImages;
         wire.push(msg);
@@ -1620,13 +1632,37 @@ async function send() {
         const res = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model, messages: wire, threadId: sendingThreadId }),
+            body: JSON.stringify({
+                model, messages: wire, threadId: sendingThreadId,
+                packetIds: sendingPacketIds
+            }),
             signal: controller.signal
         });
 
         if (!res.ok) {
             const { error } = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
             throw new Error(error);
+        }
+
+        // The gate withheld release, so nothing was sent. Not an error: the request
+        // worked and the answer was no, so say what the gate said rather than
+        // rendering a failure the user cannot act on.
+        if (res.headers.get('content-type')?.includes('application/json')) {
+            const verdict = await res.json();
+            if (verdict.blocked) {
+                const concerns = verdict.gate?.concerns?.length
+                    ? `
+
+Flagged: ${verdict.gate.concerns.join('; ')}` : '';
+                reply.content = `**Nothing was sent.** ${verdict.gate?.reason || 'The gate withheld release.'}`
+                              + concerns
+                              + `
+
+_The local gate rules before anything crosses. `
+                              + `Switch to a local model to continue here._`;
+                reply.blocked = true;
+                return;
+            }
         }
 
         const reader = res.body.getReader();
@@ -1711,7 +1747,7 @@ async function send() {
         scrollDown();
         save();
 
-        if (activeThread && reply.content && !reply.error) {
+        if (activeThread && reply.content && !reply.error && !reply.blocked) {
             const replyPacketId = await persist('assistant', reply.content);
             if (replyPacketId) {
                 reply.packetId = replyPacketId;

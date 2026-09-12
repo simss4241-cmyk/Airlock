@@ -27,7 +27,7 @@ version — clone it and check.
 | Escalation briefs and recorded verdicts | working — transport is manual copy-paste |
 | Remote tier on Nebius Token Factory (Nemotron 3) | working, 34 assertions |
 | Model dropdown grouped by tier, capability-badged | working |
-| Local gate rules before anything crosses | working, 33 assertions |
+| Local gate rules before anything crosses | working, 50 assertions |
 | Tier recorded per packet; "what crossed?" as a query | working |
 | Escalation driven by the router rather than the clipboard | working |
 | Redaction — crossing a brief with the sensitive parts removed | in progress |
@@ -35,7 +35,7 @@ version — clone it and check.
 
 The local model in use is **Meta Muse Glimmer 30B** (Apache 2.0, released 2026-08-10), but
 nothing here is specific to it — any Ollama model works, and the dropdown badges each one's
-capabilities. Sibling apps for reference: Qubit (:8000), Synth (:8080).
+capabilities.
 
 Built for the Nebius × NVIDIA Global AI Hackathon — Personal AI track.
 
@@ -281,7 +281,7 @@ which drops a Startup-folder shortcut to `airlock-server-hidden.vbs` (node, no c
 | `tools/smoke_test.js` | 89 assertions over the store API. Run it after touching `db.js` |
 | `boundary.js` | The gate. Local-only, deterministic, fails closed |
 | `tools/provider_test.js` | 34 assertions over the provider contract. Run it after touching `providers/` |
-| `tools/boundary_test.js` | 33 assertions over the gate, the crossing and the audit trail |
+| `tools/boundary_test.js` | 50 assertions over the gate, both crossing paths and the audit trail |
 | `airlock-launch.vbs` | Ensures the server is up, then opens app mode. What the icon runs |
 | `tools/install_shortcut.ps1` | Creates the pinnable Start Menu / Desktop shortcut |
 | `tools/install_autostart.ps1` | Startup-folder shortcut (`-Remove` to undo) |
@@ -339,10 +339,10 @@ so the board UI will be one client of them rather than the only place they live.
 | `POST /api/threads/:id/handoff` | Records a verdict — one transaction, packet + signatures |
 | `GET /api/stats` | Counts, and the db path |
 
-"Everything in PBIS from April" is the query the schema exists to answer:
+"Everything in Indexing from April" is the query the schema exists to answer:
 
 ```
-curl "http://localhost:8100/api/search?thread=PBIS&from=2026-04-01&to=2026-04-30"
+curl "http://localhost:8100/api/search?thread=Indexing&from=2026-04-01&to=2026-04-30"
 ```
 
 A bare `to` date is treated as end-of-day, so `to=2026-04-30` includes the 30th.
@@ -352,7 +352,7 @@ packet cascades to its children and its provenance rows.
 
 ## Layout & gestures
 
-300px rail on the left, Qubit's idiom: brand block, status + model picker, scrolling tray
+300px rail on the left: brand block, status + model picker, scrolling tray
 list, stats, settings pinned at the bottom. Committee lane across the top of the pane.
 
 | Gesture | Does |
@@ -393,7 +393,7 @@ What the text looks like depends on what you grabbed:
 - **A thread** drops the full oversight brief — provenance, every packet numbered, the review
   ask. From `/api/threads/:id/brief.md`.
 - **A packet** drops just that thought, with a one-line context header:
-  `[Airlock packet #12 · thread: PBIS · born in Alchemi · reviewed by Claude]`.
+  `[Airlock packet #12 · thread: Indexing · born in Schema · reviewed by Claude]`.
   From `/api/packets/:id/packet.md`.
 
 So dragging a thread into another model hands over the whole case file; dragging one packet
@@ -452,7 +452,7 @@ ancestor swallows `mousedown`, so without this you drag the row instead of selec
 the input. Automated tests use `.select()` and never touch a mouse, so they can't catch it.
 
 Every packet shows its id in the label (`You · #12`) so a brief can refer to it by number.
-Badges under a packet read its provenance: `from PBIS` when it was born elsewhere, `1 hop`,
+Badges under a packet read its provenance: `from Schema` when it was born elsewhere, `1 hop`,
 `nested`, `reviewed by Claude`, `oversight verdict`.
 
 ## Settings, and which of them cross
@@ -562,6 +562,44 @@ was true at the time: deriving it would silently reclassify history the moment a
 model leaves the catalogue. Packets written before the column existed predate the
 remote tier entirely, so the one-time backfill marks them `local` as a fact
 rather than a guess.
+
+### Chat crosses too, and it is recorded
+
+Selecting an Oversight model in the composer dropdown is the other way across the
+boundary, and it is the easier one to do by accident: the choice is sticky in
+`localStorage`, so you can come back to a thread tomorrow already pointed at a
+remote endpoint.
+
+So the same three rules apply to chat as to escalation.
+
+**The gate runs on a thread's first remote turn**, then the clearance is
+remembered per thread per model. Gating every message was considered and
+rejected: a local reasoning model costs seconds per call, and paying that twice
+per turn makes remote chat unusable. A refusal comes back as `200` with
+`blocked: true` and renders as the gate's reason in the transcript — nothing was
+sent, so it is not an error.
+
+> ⚠ **Known gap.** A secret typed on turn nine is not gated, because the thread
+> was cleared at turn one. The fix is a cheap new-message-only gate rather than
+> re-reading the whole conversation; it is not built yet.
+
+**Every packet in the request is recorded as crossed**, deduplicated per
+(packet, model). A turn resends the whole conversation, so without dedup the log
+would grow quadratically with thread length. The question being answered is "has
+this model ever seen this packet", and one row answers it — while a packet that
+crosses to a *second* model still records a second row, because that is a
+different exposure.
+
+**The tier is resolved server-side** from the model id, in `POST /api/packets`.
+The client does not get to assert which side of the boundary produced something.
+
+### ⚠ A forced crossing says so, permanently
+
+`force: true` skips the gate. That is allowed — an operator may know better than
+a local model — but it is never invisible. The crossing note carries
+`gate=FORCED` instead of `gate=released`, and a `gated` event is recorded against
+the verdict packet naming it a bypass. An override that leaves no trace is the
+one thing an audit trail must not permit.
 
 ## Seats that cross by themselves
 
@@ -782,7 +820,7 @@ thread with its folder renamed away — one round, no tool calls attempted.
 
 Workspaces used to be one global `workspaceRoot` in the JSON config. Upgrading copies that
 value onto every thread that existed at the time, which is why older threads arrived already
-pointing at `C:\Projects\NeuroForge\CFE`.
+pointing at `C:\work\CFE`.
 
 That bridge is one-time, and keeping it that way needs a fence. Left armed it would re-run on
 every boot against whatever `workspaceRoot` it found, granting file access to exactly the
@@ -826,7 +864,7 @@ browser. It looks exactly like nothing happened.
 The picker script therefore builds a transparent 1×1 `Form` in the centre of the active
 screen with `ShowInTaskbar = $false` and `TopMost = $true`, activates it, and passes it as the
 dialog's owner. That keeps the chooser both visible and above Airlock. It opens at the
-current thread's workspace (or `C:\Projects\NeuroForge`) rather than This PC.
+current thread's workspace (or your home directory) rather than This PC.
 
 If it ever misbehaves again, the path box is editable — paste and press Enter. That path
 doesn't depend on any dialog.
@@ -853,7 +891,7 @@ Observed working: *"Read README.md and tell me which port the app listens on"* �
   `C:\workspace-secret` string-matches `C:\workspace`.
 - Re-check the **realpath**, so a junction or symlink inside the workspace can't tunnel out.
 - Text extensions only, and a NUL-byte sniff rejects binaries that lie about their extension.
-- Read-only. There is no write, delete, or shell tool. Deliberately — Qubit has a shell loop
+- Read-only. There is no write, delete, or shell tool. Deliberately — a shell loop
   if that's ever wanted, and it should stay a separate, consciously-chosen thing.
 
 One more trap worth naming: the `find_files` walk tolerates unreadable directories so a
@@ -881,14 +919,14 @@ still go to the perception encoder as base64.
   depth-having containers, and packets don't have inertia or snap-to-grid.
 - **Live remote-tier calls.** In progress — see *Where this is going* above. Until they
   land, escalation works, but a human is the transport.
-- **Write access or a shell.** File tools are read-only on purpose. Qubit has a shell loop
-  (`qubit-chat/server.js`) if that's ever wanted — it should stay a deliberate decision.
+- **Write access or a shell.** File tools are read-only on purpose. Adding either should
+  stay a deliberate decision rather than a convenience.
 - **Tool results as packets.** Tool calls render as cards in the transcript but aren't stored
   in the packet store, so briefs stay readable.
 
 ## Palette
 
-From Nova's teal/purple moodboard — the five hexes are the tokens in `styles.css`:
+Five hexes, and they are the tokens in `styles.css`:
 
 | | Hex | Used for |
 |---|---|---|
@@ -943,7 +981,7 @@ pane doesn't composite frames, so no animation can be observed and no `anim.fini
 settles; a real drag to the desktop can't be automated at all.
 
 Gestures verified in-browser by dispatching real drag events: packet → thread lit the drop
-target and logged `moved: PBIS -> Alchemi`; Alt+drop forked and left the original in place
+target and logged `moved: Indexing -> Schema`; Alt+drop forked and left the original in place
 with the tether intact; thread → Claude armed the lane, highlighted the member, and opened a
 brief carrying the provenance line; an empty verdict was refused; recording closed the dialog
 and produced `Claude · #4` with an `oversight verdict` badge plus `reviewed by Claude` on the

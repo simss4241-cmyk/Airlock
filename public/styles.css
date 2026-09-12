@@ -1,4 +1,4 @@
-/* Palette from Nova's teal/purple moodboard:
+/* Palette - teal/purple, five tokens:
    #0b1120 ink · #022c43 deep teal · #115e59 teal · #6d28d9 violet · #a855f7 purple */
 :root {
     --bg: #0b1120;
@@ -49,7 +49,7 @@ select, input, textarea, button {
 
 .spacer { flex: 1; }
 
-/* ── Shell: Qubit-style 300px rail + working pane ── */
+/* ── Shell: 300px rail + working pane ── */
 .app-shell {
     display: grid;
     grid-template-columns: 300px 1fr;

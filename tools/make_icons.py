@@ -9,7 +9,7 @@ import os
 
 from PIL import Image, ImageDraw, ImageFilter
 
-# Nova's teal/purple moodboard
+# The teal/purple palette, matching styles.css
 BG = (11, 17, 32, 255)        # --bg          #0b1120
 TEAL = (45, 212, 191, 255)    # --teal-bright #2dd4bf
 PURPLE = (168, 85, 247, 255)  # --accent      #a855f7

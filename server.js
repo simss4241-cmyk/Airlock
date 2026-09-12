@@ -200,6 +200,11 @@ function liveSeats() {
     ].filter(s => s.model && process.env.NEBIUS_API_KEY);
 }
 
+// Scratch chat has no thread to hang a clearance on, so it is remembered per
+// model for the life of the process. Restarting asks again, which is the right
+// default for something with no durable home.
+const scratchCleared = new Set();
+
 // Remote-tier models, with their declared capabilities. Never throws: a missing
 // key, a network blip or a bad key all mean the same thing to the UI — no seats.
 async function remoteModels() {
@@ -270,7 +275,7 @@ app.post('/api/chat', async (req, res) => {
         if (!res.writableEnded) controller.abort();
     });
 
-    const { messages, model, threadId } = req.body;
+    const { messages, model, threadId, packetIds = [] } = req.body;
 
     const chosen = model || config.model;
     const caps = await modelCaps(chosen);
@@ -310,6 +315,40 @@ app.post('/api/chat', async (req, res) => {
         send({ airlock_usage: usage });
     };
 
+    // A remote model means this conversation is about to leave the machine, so the
+    // gate rules before anything is sent. Once per thread per model: the selection
+    // is sticky in localStorage, so the risk being guarded against is returning to
+    // a thread already pointed at the remote tier and forgetting.
+    const tier = providers.tierOf(chosen);
+    let gateRuling = null;
+
+    if (tier === 'remote') {
+        const cleared = threadId
+            ? store.isCleared(Number(threadId), chosen)
+            : scratchCleared.has(chosen);
+
+        if (!cleared) {
+            // The system prompt is in `convo` too, and it crosses with everything
+            // else, so the gate reads exactly what would be sent.
+            const outgoing = convo
+                .map(m => `${m.role}: ${m.content || ''}`)
+                .join('\n\n');
+
+            gateRuling = await runGate(outgoing, { model: config.model, config });
+
+            if (!gateRuling.release) {
+                // Nothing has been sent. 200, because the request succeeded and the
+                // answer was no — the client renders the reason rather than an error.
+                return res.status(200).json({ blocked: true, gate: gateRuling, tier });
+            }
+
+            if (threadId) store.recordClearance(Number(threadId), chosen, gateRuling);
+            else scratchCleared.add(chosen);
+        }
+    }
+
+    let crossingRecorded = false;
+
     try {
         for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
             const lastRound = round === MAX_TOOL_ROUNDS;   // stop offering tools; force an answer
@@ -333,6 +372,20 @@ app.post('/api/chat', async (req, res) => {
             let content = '', thinking = '', toolCalls = [], finalChunk = null;
 
             for await (const chunk of stream) {
+                // First chunk back proves the request was accepted, which is the
+                // moment the content is provably across. Recording on dispatch
+                // instead would log crossings that never happened.
+                if (tier === 'remote' && !crossingRecorded) {
+                    crossingRecorded = true;
+                    try {
+                        store.recordCrossings(packetIds, {
+                            actor: chosen, model: chosen, transport: 'chat', gate: gateRuling
+                        });
+                    } catch (err) {
+                        console.error('crossing not recorded:', err.message);
+                    }
+                }
+
                 if (chunk.message?.thinking) thinking += chunk.message.thinking;
                 if (chunk.message?.content) content += chunk.message.content;
                 if (chunk.message?.tool_calls?.length) toolCalls.push(...chunk.message.tool_calls);
@@ -545,8 +598,10 @@ app.get('/api/workspace/browse', async (req, res) => {
         'if ($result -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dlg.SelectedPath }'
     ].join('\r\n');
 
-    // Open somewhere useful rather than at This PC.
-    const start = thread.workspace_root || 'C:\\Projects\\NeuroForge';
+    // Open somewhere useful rather than at This PC. Falls back to the user's home
+    // directory: an absolute path baked in here exists on exactly one machine and
+    // the picker silently opens nowhere on every other one.
+    const start = thread.workspace_root || os.homedir();
 
     try {
         await fs.writeFile(tmp, script, 'utf8');
@@ -727,7 +782,8 @@ app.post('/api/threads/:id/escalate', async (req, res) => {
             packetIds: brief.packetIds,
             model,
             tier: 'remote',
-            transport: 'token-factory'
+            transport: 'token-factory',
+            gate
         });
 
         res.json({
@@ -753,10 +809,18 @@ app.get('/api/threads/:id/brief', ok(req => store.buildBrief(id(req), { actor: r
 app.post('/api/threads/:id/handoff', ok(req => store.recordHandoff(id(req), req.body)));
 
 app.post('/api/packets', ok(req => {
-    const { threadId, role, content } = req.body;
+    const { threadId, role, content, model } = req.body;
     if (!threadId) throw new Error('A packet needs a threadId.');
     if (!role || !content) throw new Error('A packet needs a role and content.');
-    return store.createPacket(req.body);
+
+    // The tier is resolved here, not accepted from the caller: the client should
+    // not be able to assert which side of the boundary produced something. This is
+    // still recording rather than deriving — it captures the fact at creation,
+    // which is what the audit needs. (Human-carried seats like "Claude" are not
+    // model ids and would resolve local, so recordHandoff sets their tier
+    // explicitly instead of coming through here.)
+    const tier = model ? providers.tierOf(model) : 'local';
+    return store.createPacket({ ...req.body, tier });
 }));
 
 app.get('/api/packets/:id', ok(req => {

@@ -512,7 +512,7 @@ function deletePacket(id) {
 
 /**
  * The query that justifies the whole schema:
- *   "everything in PBIS from April"  ->  { thread: 'PBIS', from: '2026-04-01', to: '2026-04-30' }
+ *   "everything in Indexing from April"  ->  { thread: 'Indexing', from: '2026-04-01', to: '2026-04-30' }
  */
 function search({ folder = null, thread = null, from = null, to = null, q = null, role = null, limit = 200 } = {}) {
     const where = [];
@@ -665,7 +665,7 @@ function buildBrief(threadId, { actor = 'the committee' } = {}) {
  * `transport` records HOW it crossed. A brief copied into Claude by hand is
  * still an exposure; the only difference from an API call is who carried it.
  */
-function recordHandoff(threadId, { actor, verdict, packetIds = [], model = null, tier = 'remote', transport = 'manual' }) {
+function recordHandoff(threadId, { actor, verdict, packetIds = [], model = null, tier = 'remote', transport = 'manual', gate = null }) {
     if (!getThread(threadId)) throw new Error(`No thread ${threadId}`);
     if (!actor) throw new Error('A handoff needs an actor — who reviewed it?');
     if (!verdict || !verdict.trim()) throw new Error('A handoff needs the verdict text.');
@@ -683,12 +683,22 @@ function recordHandoff(threadId, { actor, verdict, packetIds = [], model = null,
             if (!getPacket(pid)) continue;
             record(pid, 'reviewed', { actor, note: `via handoff packet #${packet.id}` });
             if (tier === 'remote') {
-                record(pid, 'crossed', {
-                    actor,
-                    note: `${transport} · ${model || actor} · handoff packet #${packet.id}`
-                });
+                crossOnce(pid, actor, crossingNote({ transport, model, actor, gate })
+                    + ` · handoff packet #${packet.id}`);
             }
             covered.push(pid);
+        }
+
+        // The ruling that permitted this crossing, attached to the packet it
+        // produced. A forced crossing says so here, permanently, in the same
+        // append-only log as everything else.
+        if (tier === 'remote') {
+            record(packet.id, 'gated', {
+                actor: gate?.model || 'no gate',
+                note: gate?.forced
+                    ? `FORCED · gate bypassed · ${(gate.reason || '').slice(0, 200)}`
+                    : `released · ${(gate?.reason || 'no gate ruling recorded').slice(0, 200)}`
+            });
         }
 
         db.exec('COMMIT');
@@ -697,6 +707,79 @@ function recordHandoff(threadId, { actor, verdict, packetIds = [], model = null,
         db.exec('ROLLBACK');
         throw err;
     }
+}
+
+/**
+ * Record that some packets crossed the boundary.
+ *
+ * Deduplicated per (packet, actor). Every chat turn resends the whole
+ * conversation, so without this the log would grow quadratically with thread
+ * length and the exposure view would become unreadable. The question it has to
+ * answer is "has this model ever seen this packet", and one row answers it.
+ *
+ * A packet that crosses to a SECOND model still records a second row, because
+ * that is a different exposure.
+ */
+const alreadyCrossed = db.prepare(
+    "SELECT 1 FROM provenance WHERE packet_id = ? AND event = 'crossed' AND actor = ? LIMIT 1");
+
+/**
+ * How a crossing reads in the log. The gate's verdict is part of it, because an
+ * override that looks identical to a gated crossing is the one thing an audit
+ * trail must not allow.
+ */
+function crossingNote({ transport, model, actor, gate }) {
+    return [
+        transport,
+        model || actor,
+        gate == null ? null : (gate.forced ? 'gate=FORCED' : 'gate=released')
+    ].filter(Boolean).join(' · ');
+}
+
+/** One crossing row, deduped. Caller owns the transaction. */
+function crossOnce(pid, actor, note) {
+    if (!pid || !getPacket(pid)) return 0;
+    if (alreadyCrossed.get(pid, actor)) return 0;
+    record(pid, 'crossed', { actor, note });
+    return 1;
+}
+
+function recordCrossings(packetIds, opts) {
+    const note = crossingNote(opts);
+    let written = 0;
+    db.exec('BEGIN');
+    try {
+        for (const pid of packetIds) written += crossOnce(pid, opts.actor, note);
+        db.exec('COMMIT');
+    } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+    }
+    return written;
+}
+
+/**
+ * Has this thread already been cleared to talk to this model?
+ *
+ * The gate runs on the first remote turn of a thread and the answer is
+ * remembered, so ordinary conversation does not pay for a local gate call on
+ * every message. Stored in `meta` rather than a column because it is a fact
+ * about a session's consent, not about the thread's content.
+ *
+ * KNOWN GAP: a secret typed on turn nine is not gated, because the thread was
+ * cleared at turn one. Gating every turn was considered and rejected on latency
+ * (a local reasoning model costs seconds per call). Revisit with a cheap
+ * new-message-only gate if this bites.
+ */
+const clearanceKey = (threadId, model) => `cleared:${threadId}:${model}`;
+
+function isCleared(threadId, model) {
+    return Boolean(getMeta(clearanceKey(threadId, model)));
+}
+
+function recordClearance(threadId, model, gate) {
+    setMeta(clearanceKey(threadId, model),
+        `${now()} · ${gate?.forced ? 'FORCED' : 'released'} · ${(gate?.reason || '').slice(0, 200)}`);
 }
 
 /**
@@ -762,5 +845,5 @@ module.exports = {
     setThreadWorkspace, migrateWorkspaceRoot, getMeta, setMeta,
     createPacket, getPacket, getThreadPackets, movePacket, forkPacket, deletePacket,
     reviewPacket, getProvenance, getReviews, search, getTravelled, stats, subtreeIds,
-    buildBrief, recordHandoff, getExposure
+    buildBrief, recordHandoff, getExposure, recordCrossings, isCleared, recordClearance
 };

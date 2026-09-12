@@ -43,9 +43,9 @@ async function throws(label, fn, expect) {
     await fs.mkdir(path.join(root, 'node_modules', 'junk'), { recursive: true });
     await fs.mkdir(outside, { recursive: true });
 
-    await fs.writeFile(path.join(root, 'README.md'), '# Bible\nSlabGuards v13 open, v24 closed.\n');
+    await fs.writeFile(path.join(root, 'README.md'), '# Notes\nWidget v13 open, v24 closed.\n');
     await fs.writeFile(path.join(root, 'notes.txt'), 'boba pearl tuning\n');
-    await fs.writeFile(path.join(root, 'docs', 'spec.md'), '# Spec\nToploader frame v7.\n');
+    await fs.writeFile(path.join(root, 'docs', 'spec.md'), '# Spec\nBracket frame v7.\n');
     await fs.writeFile(path.join(root, 'docs', 'deep', 'buried.md'), 'deep file\n');
     await fs.writeFile(path.join(root, 'model.stl'), 'solid whatever\n');
     await fs.writeFile(path.join(root, 'blob.bin'), Buffer.from([1, 2, 0, 3, 4, 5]));
@@ -69,15 +69,15 @@ async function throws(label, fn, expect) {
 
     // ── reading ──
     const readme = await files.readTextFile(root, 'README.md');
-    check('reads a markdown file', readme.content.includes('SlabGuards v13'));
+    check('reads a markdown file', readme.content.includes('Widget v13'));
     check('read reports its relative path', readme.path === 'README.md', readme.path);
     check('read reports byte count', readme.bytes > 10);
     check('short file is not truncated', readme.truncated === false);
 
     const nested = await files.readTextFile(root, 'docs/spec.md');
-    check('reads via forward-slash path', nested.content.includes('Toploader'));
+    check('reads via forward-slash path', nested.content.includes('Bracket'));
     const nestedWin = await files.readTextFile(root, 'docs\\spec.md');
-    check('reads via backslash path', nestedWin.content.includes('Toploader'));
+    check('reads via backslash path', nestedWin.content.includes('Bracket'));
 
     await throws('refuses a non-text extension', () => files.readTextFile(root, 'model.stl'), 'not a readable text file');
     await throws('refuses a binary file despite extension', async () => {
