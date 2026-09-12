@@ -338,6 +338,11 @@ async function refreshHealth() {
 
         modelCaps = Object.fromEntries(h.models.map(m => [m.name, m.caps || []]));
 
+        // Seats that can cross on their own. Everything else is carried by hand,
+        // so with no key configured the committee behaves exactly as it always did.
+        liveSeats = Object.fromEntries((h.seats || []).map(s => [s.actor, s.model]));
+        paintSeats();
+
         // Grouped by tier, because which side of the boundary a model sits on is the
         // one thing you must know before picking it. Remote models report no size —
         // there is no local file — so the GB suffix is omitted rather than NaN.
@@ -1399,6 +1404,61 @@ function wireTrayDnd(tray) {
 // vote without every thought making a pilgrimage through a paid endpoint.
 
 let handoffCtx = null;
+let liveSeats = {};
+
+/** Title for a thread id, from the tray tree already in hand. */
+const threadTitle = id => {
+    for (const tray of tree) {
+        const found = (tray.threads || []).find(t => t.id === id);
+        if (found) return found.title;
+    }
+    return 'thread';
+};
+
+/** A live seat says so: it crosses by itself, and that should be visible before you drop. */
+function paintSeats() {
+    el.members.querySelectorAll('.member').forEach(m => {
+        const model = liveSeats[m.dataset.actor];
+        m.classList.toggle('live', Boolean(model));
+        m.title = model
+            ? `${model} — crosses the boundary directly. The local gate rules first.`
+            : `${m.dataset.actor} — brief out, verdict pasted back by hand.`;
+    });
+}
+
+/**
+ * Cross for real. The server gates before it sends, so a refusal here means
+ * nothing left the machine — say that plainly rather than reporting a failure.
+ */
+async function escalate(threadId, actor, title) {
+    const model = liveSeats[actor];
+    const seat = [...el.members.querySelectorAll('.member')].find(m => m.dataset.actor === actor);
+
+    seat?.classList.add('working');
+    flash(`Gate is reading the thread before anything leaves…`, 4000);
+
+    try {
+        const res = await json(`/api/threads/${threadId}/escalate`, { actor, model });
+
+        if (res.error) { flash(res.error, 8000); return; }
+
+        if (!res.escalated) {
+            const why = res.gate?.reason || 'The gate withheld release.';
+            const concerns = res.gate?.concerns?.length
+                ? ` Flagged: ${res.gate.concerns.join('; ')}.` : '';
+            flash(`Nothing sent. ${why}${concerns}`, 12000);
+            return;
+        }
+
+        await selectThread(threadId, title);
+        flash(`${actor} reviewed ${res.crossed} packet(s) · `
+            + `${res.usage.prompt}+${res.usage.reply} tokens · logged as crossed`, 9000);
+    } catch (err) {
+        flash(`Escalation failed: ${err.message}`, 8000);
+    } finally {
+        seat?.classList.remove('working');
+    }
+}
 
 async function openHandoff(threadId, actor) {
     const brief = await (await fetch(
@@ -1489,13 +1549,16 @@ el.members.querySelectorAll('.member').forEach(m => {
         if (!wants(e)) return;
         e.preventDefault();
         m.classList.remove('over');
-        openHandoff(+e.dataTransfer.getData(DT_THREAD), actor);
+        const threadId = +e.dataTransfer.getData(DT_THREAD);
+        if (liveSeats[actor]) escalate(threadId, actor, threadTitle(threadId));
+        else openHandoff(threadId, actor);
     });
 
     // Clicking works too — dragging is the gesture, not the only way in.
     m.addEventListener('click', () => {
         if (!activeThread) return flash('Pick a thread first, or drag one up here.', 5000);
-        openHandoff(activeThread.id, actor);
+        if (liveSeats[actor]) escalate(activeThread.id, actor, activeThread.title);
+        else openHandoff(activeThread.id, actor);
     });
 });
 

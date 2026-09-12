@@ -27,9 +27,11 @@ version — clone it and check.
 | Escalation briefs and recorded verdicts | working — transport is manual copy-paste |
 | Remote tier on Nebius Token Factory (Nemotron 3) | working, 34 assertions |
 | Model dropdown grouped by tier, capability-badged | working |
-| Boundary classification and redaction before a packet crosses | in progress |
-| Tier recorded in provenance; "what crossed?" as a query | in progress |
-| Escalation driven by the router rather than the clipboard | in progress |
+| Local gate rules before anything crosses | working, 33 assertions |
+| Tier recorded per packet; "what crossed?" as a query | working |
+| Escalation driven by the router rather than the clipboard | working |
+| Redaction — crossing a brief with the sensitive parts removed | in progress |
+| Hosted demo build | in progress |
 
 The local model in use is **Meta Muse Glimmer 30B** (Apache 2.0, released 2026-08-10), but
 nothing here is specific to it — any Ollama model works, and the dropdown badges each one's
@@ -277,7 +279,9 @@ which drops a Startup-folder shortcut to `airlock-server-hidden.vbs` (node, no c
 | `tools/make_icons.py` | Redraws the whole icon set — edit colors here, re-run |
 | `providers/` | One streaming contract, two tiers. `index.js` documents the chunk shape |
 | `tools/smoke_test.js` | 89 assertions over the store API. Run it after touching `db.js` |
+| `boundary.js` | The gate. Local-only, deterministic, fails closed |
 | `tools/provider_test.js` | 34 assertions over the provider contract. Run it after touching `providers/` |
+| `tools/boundary_test.js` | 33 assertions over the gate, the crossing and the audit trail |
 | `airlock-launch.vbs` | Ensures the server is up, then opens app mode. What the icon runs |
 | `tools/install_shortcut.ps1` | Creates the pinnable Start Menu / Desktop shortcut |
 | `tools/install_autostart.ps1` | Startup-folder shortcut (`-Remove` to undo) |
@@ -450,6 +454,101 @@ the input. Automated tests use `.select()` and never touch a mouse, so they can'
 Every packet shows its id in the label (`You · #12`) so a brief can refer to it by number.
 Badges under a packet read its provenance: `from PBIS` when it was born elsewhere, `1 hop`,
 `nested`, `reviewed by Claude`, `oversight verdict`.
+
+## The gate
+
+Escalation crosses a line, so something has to decide whether it may. That
+decision is made by the **local** model, always, and it is the one part of this
+design that is not negotiable.
+
+### ⚠ The gate cannot be a remote model
+
+The obvious implementation is to let Nemotron Nano judge the brief — it is fast,
+it is cheap, and deciding what to escalate is exactly the kind of cheap
+classification a small model is for.
+
+It cannot work. To let a remote model rule on whether content may leave, you
+must first send it the content. The gate would be standing on the wrong side of
+the door it is guarding, and by the time it says "no" the answer no longer
+means anything. **A remote gate cannot gate remoteness.**
+
+So the gatekeeper runs on the machine it protects, and the remote tier keeps the
+job it is actually good at: reasoning about what the gate released.
+
+### It fails closed
+
+A privacy boundary that holds when everything is healthy and leaks when the gate
+is slow is not a boundary. `runGate` returns a refusal — not a release — when
+the local model is unreachable, when it times out, when it answers with prose
+instead of JSON, and when it answers with `"release": "yes"` instead of a real
+boolean. The failure mode is always *nothing left the machine*.
+
+`tools/boundary_test.js` drives those four cases offline by stubbing the
+provider, and it imports the real `runGate` rather than a copy, so the
+assertions cannot drift away from the code that ships.
+
+The gate runs at temperature 0 with reasoning off: the same brief should get the
+same ruling twice, and a yes/no does not need a reasoning channel that costs
+~3.7× the wall clock here.
+
+### Order of operations
+
+    gate  ->  cross  ->  record
+
+Nothing reaches the network before the gate releases it, and nothing is recorded
+as having crossed unless it actually did. A refusal returns `200` with
+`escalated: false` and the reason, because the request succeeded — the answer
+was simply no.
+
+## What has ever left this machine
+
+    GET /api/threads/:id/exposure
+    GET /api/exposure
+
+This is the query the boundary exists to make answerable, and it reads the
+append-only provenance log rather than any mutable field — so a packet that has
+since been moved, forked or renamed still reports the crossing it actually made.
+
+Two separate facts are recorded per covered packet, and conflating them would
+lose the one that matters:
+
+| Event | Means |
+|---|---|
+| `reviewed` | a judgement was made about this packet |
+| `crossed` | this packet's content left the machine |
+
+A packet can be reviewed without crossing — a local model read it. It can cross
+without being reviewed — it was context in a brief, not the subject. Only
+`crossed` answers the boundary question, which is why it is its own event rather
+than a flag on the other.
+
+**A manual handoff is a crossing too.** Copying a brief into Claude by hand
+exposes exactly the same content as an API call; the only difference is who
+carried it. Both record `crossed`, and the `transport` field says which — so the
+audit answers "what left this desk", not "what used an API".
+
+Tier is **recorded, not derived**. `packets.tier` is written at creation rather
+than inferred later from the model id, because an audit trail has to say what
+was true at the time: deriving it would silently reclassify history the moment a
+model leaves the catalogue. Packets written before the column existed predate the
+remote tier entirely, so the one-time backfill marks them `local` as a fact
+rather than a guess.
+
+## Seats that cross by themselves
+
+The Oversight lane now has two kinds of seat, and the difference is visible
+before you drop rather than after:
+
+| Seat | Border | What a drop does |
+|---|---|---|
+| Nano · Super · Ultra | solid, with `↗` | gates locally, calls Token Factory, records the crossing |
+| Claude · GPT · Gemini | dashed | opens the brief for you to carry by hand |
+
+Which seats are live comes from `.env` by way of `/api/health`, so the model ids
+have one home and the markup only names actors. **A seat with no model
+configured is simply not live** — with no key at all, every seat falls back to
+the manual brief and the committee behaves exactly as it did before any of this
+existed.
 
 ## Two tiers, one stream
 

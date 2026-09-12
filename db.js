@@ -30,6 +30,7 @@ const now = () => new Date().toISOString();
 // Lives in the database rather than the JSON config so a restored or hand-edited config
 // can never re-run it — see migrateWorkspaceRoot.
 const WORKSPACE_MIGRATED = 'workspace_root_migrated';
+const TIER_BACKFILLED   = 'packet_tier_backfilled';
 
 // ─────────────────────────── schema ───────────────────────────
 
@@ -108,6 +109,23 @@ if (!threadColumns.some(column => column.name === 'workspace_root')) {
     db.exec('ALTER TABLE threads ADD COLUMN workspace_root TEXT');
 } else if (!getMeta(WORKSPACE_MIGRATED)) {
     setMeta(WORKSPACE_MIGRATED, 'schema already thread-scoped');
+}
+
+// Which side of the boundary produced a packet. RECORDED, not derived: an audit
+// trail has to say what was true at the time. Deriving the tier from the model id
+// later would silently reclassify history the moment a model leaves the
+// catalogue or a local tag starts colliding with a remote one.
+const packetColumns = db.prepare('PRAGMA table_info(packets)').all();
+if (!packetColumns.some(column => column.name === 'tier')) {
+    db.exec("ALTER TABLE packets ADD COLUMN tier TEXT");
+}
+
+// Every packet written before this column existed predates the remote tier
+// entirely, so 'local' is a fact about them rather than a guess. Runs once.
+if (!getMeta(TIER_BACKFILLED)) {
+    const { n } = db.prepare("SELECT COUNT(*) AS n FROM packets WHERE tier IS NULL").get();
+    db.prepare("UPDATE packets SET tier = 'local' WHERE tier IS NULL").run();
+    setMeta(TIER_BACKFILLED, `${n} packet(s) predating the remote tier`);
 }
 
 // ─────────────────────────── seed ───────────────────────────
@@ -322,13 +340,14 @@ function moveThreadToFolder(id, folderId) {
 
 // ─────────────────────────── packets ───────────────────────────
 
-function createPacket({ threadId, role, content, model = null, images = null, parentId = null }) {
+function createPacket({ threadId, role, content, model = null, images = null, parentId = null, tier = 'local' }) {
     const id = db.prepare(`
-        INSERT INTO packets (thread_id, parent_id, origin_thread_id, role, content, model, images, position, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO packets (thread_id, parent_id, origin_thread_id, role, content, model, images, tier, position, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
         threadId, parentId, threadId, role, content, model,
         images && images.length ? JSON.stringify(images) : null,
+        tier,
         nextPosition(threadId, parentId), now()
     ).lastInsertRowid;
 
@@ -621,7 +640,25 @@ function buildBrief(threadId, { actor = 'the committee' } = {}) {
  * `reviewed` signature on everything that was sent (so you can see what's been vetted vs
  * local-only). One transaction — a half-recorded review is worse than none.
  */
-function recordHandoff(threadId, { actor, verdict, packetIds = [] }) {
+/**
+ * Land a verdict and stamp what it covered.
+ *
+ * Two different facts get written per covered packet, and conflating them would
+ * lose the one that matters:
+ *
+ *   reviewed  a judgement was made about this packet
+ *   crossed   this packet's content left the machine
+ *
+ * A packet can be reviewed without crossing (a local model read it) and can
+ * cross without being reviewed (it was context in a brief, not the subject). The
+ * boundary question — "what has a remote model ever seen?" — is answered by
+ * `crossed` alone, which is why it is its own event rather than a flag on the
+ * other one.
+ *
+ * `transport` records HOW it crossed. A brief copied into Claude by hand is
+ * still an exposure; the only difference from an API call is who carried it.
+ */
+function recordHandoff(threadId, { actor, verdict, packetIds = [], model = null, tier = 'remote', transport = 'manual' }) {
     if (!getThread(threadId)) throw new Error(`No thread ${threadId}`);
     if (!actor) throw new Error('A handoff needs an actor — who reviewed it?');
     if (!verdict || !verdict.trim()) throw new Error('A handoff needs the verdict text.');
@@ -629,20 +666,73 @@ function recordHandoff(threadId, { actor, verdict, packetIds = [] }) {
     db.exec('BEGIN');
     try {
         const packet = createPacket({
-            threadId, role: 'assistant', content: verdict.trim(), model: actor
+            threadId, role: 'assistant', content: verdict.trim(),
+            model: model || actor, tier
         });
 
+        const covered = [];
         for (const pid of packetIds) {
             if (pid === packet.id) continue;
-            if (getPacket(pid)) record(pid, 'reviewed', { actor, note: `via handoff packet #${packet.id}` });
+            if (!getPacket(pid)) continue;
+            record(pid, 'reviewed', { actor, note: `via handoff packet #${packet.id}` });
+            if (tier === 'remote') {
+                record(pid, 'crossed', {
+                    actor,
+                    note: `${transport} · ${model || actor} · handoff packet #${packet.id}`
+                });
+            }
+            covered.push(pid);
         }
 
         db.exec('COMMIT');
-        return { packet, signed: packetIds.length };
+        return { packet, signed: covered.length, crossed: tier === 'remote' ? covered.length : 0 };
     } catch (err) {
         db.exec('ROLLBACK');
         throw err;
     }
+}
+
+/**
+ * What has ever left the machine, for one thread or for everything.
+ *
+ * This is the query the boundary exists to make answerable. It reads the
+ * append-only log rather than any mutable field, so a packet that was moved,
+ * forked or renamed since still reports the crossing it actually made.
+ */
+function getExposure(threadId = null) {
+    const rows = db.prepare(`
+        SELECT pr.packet_id, pr.actor, pr.note, pr.created_at,
+               p.thread_id, p.role, p.tier, p.content, t.title AS thread
+        FROM provenance pr
+        JOIN packets p ON p.id = pr.packet_id
+        LEFT JOIN threads t ON t.id = p.thread_id
+        WHERE pr.event = 'crossed'
+          ${threadId ? 'AND p.thread_id = ?' : ''}
+        ORDER BY pr.id
+    `).all(...(threadId ? [Number(threadId)] : []));
+
+    const packets = new Map();
+    for (const r of rows) {
+        const entry = packets.get(r.packet_id) || {
+            packetId: r.packet_id,
+            threadId: r.thread_id,
+            thread: r.thread,
+            role: r.role,
+            preview: (r.content || '').slice(0, 120),
+            crossings: []
+        };
+        entry.crossings.push({ actor: r.actor, note: r.note, at: r.created_at });
+        packets.set(r.packet_id, entry);
+    }
+
+    const exposed = [...packets.values()];
+    return {
+        threadId: threadId ? Number(threadId) : null,
+        packets: exposed,
+        packetCount: exposed.length,
+        crossingCount: rows.length,
+        actors: [...new Set(rows.map(r => r.actor))].sort()
+    };
 }
 
 function stats() {
@@ -665,5 +755,5 @@ module.exports = {
     setThreadWorkspace, migrateWorkspaceRoot, getMeta, setMeta,
     createPacket, getPacket, getThreadPackets, movePacket, forkPacket, deletePacket,
     reviewPacket, getProvenance, getReviews, search, getTravelled, stats, subtreeIds,
-    buildBrief, recordHandoff
+    buildBrief, recordHandoff, getExposure
 };

@@ -62,6 +62,51 @@ function chat(opts) {
     return providerFor(opts.model).chat(opts);
 }
 
+/**
+ * Drain a chat into one result. For callers that want an answer rather than a
+ * stream — the boundary gate and escalation both reason once and then act.
+ *
+ * Reasoning is kept separate from content deliberately: a reasoning model's
+ * answer is not its transcript, and JSON.parse on 855 characters of "Hmm, the
+ * user asked..." followed by the actual object would fail every time.
+ */
+async function complete(opts) {
+    let content = '', thinking = '', done = null;
+    for await (const chunk of chat(opts)) {
+        if (chunk.message?.content) content += chunk.message.content;
+        if (chunk.message?.thinking) thinking += chunk.message.thinking;
+        if (chunk.done) done = chunk;
+    }
+    return {
+        content: content.trim(),
+        thinking: thinking.trim(),
+        model: opts.model,
+        tier: tierOf(opts.model),
+        usage: {
+            prompt: done?.prompt_eval_count ?? 0,
+            reply: done?.eval_count ?? 0
+        }
+    };
+}
+
+/**
+ * Pull the first JSON object out of a model's answer. Small models fence it,
+ * preface it, or apologise around it; none of that should sink a decision.
+ * Returns null rather than throwing — callers decide what an unparseable
+ * answer means, and for the gate it means "do not cross".
+ */
+function parseJson(text) {
+    if (!text) return null;
+    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    const body = fenced ? fenced[1] : text;
+    const start = body.search(/[{[]/);
+    if (start === -1) return null;
+    for (let end = body.length; end > start; end--) {
+        try { return JSON.parse(body.slice(start, end)); } catch { /* keep shrinking */ }
+    }
+    return null;
+}
+
 /** Models this install can reach right now, local and remote, for the dropdown. */
 async function list() {
     const lists = await Promise.all(PROVIDERS.map(p => p.list().catch(() => [])));
@@ -77,4 +122,4 @@ class ProviderError extends Error {
     }
 }
 
-module.exports = { chat, capabilities, list, tierOf, providerFor, ProviderError };
+module.exports = { chat, complete, parseJson, capabilities, list, tierOf, providerFor, ProviderError };

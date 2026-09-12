@@ -9,6 +9,7 @@ const path = require('path');
 const store = require('./db');
 const files = require('./files');
 const providers = require('./providers');
+const { runGate } = require('./boundary');
 
 const app = express();
 
@@ -166,6 +167,18 @@ app.post('/api/config', async (req, res) => {
     res.json(config);
 });
 
+// Which Oversight seats can cross on their own, and with which model. The model
+// ids live in .env so there is one source of truth; the markup only names actors.
+// A seat with no model configured simply is not live, and its drop falls back to
+// the manual brief — which is why the committee still works with no key at all.
+function liveSeats() {
+    return [
+        { actor: 'Nemotron Nano',  model: process.env.AIRLOCK_MODEL_CLASSIFIER },
+        { actor: 'Nemotron Super', model: process.env.AIRLOCK_MODEL_VERDICT },
+        { actor: 'Nemotron Ultra', model: process.env.AIRLOCK_MODEL_DEEP }
+    ].filter(s => s.model && process.env.NEBIUS_API_KEY);
+}
+
 // Remote-tier models, with their declared capabilities. Never throws: a missing
 // key, a network blip or a bad key all mean the same thing to the UI — no seats.
 async function remoteModels() {
@@ -207,6 +220,7 @@ app.get('/api/health', async (req, res) => {
             version,
             models: [...withCaps, ...remote],
             remoteTier: remote.length > 0,
+            seats: liveSeats(),
             localModelInstalled: models.some(m => m.name.startsWith('muse-glimmer')),
             activeModel: config.model
         });
@@ -218,6 +232,7 @@ app.get('/api/health', async (req, res) => {
             error: err.message,
             models: remote,
             remoteTier: remote.length > 0,
+            seats: liveSeats(),
             localModelInstalled: false
         });
     }
@@ -620,8 +635,99 @@ app.get('/api/threads/:id/brief.md', (req, res) => {
     }
 });
 
-// Oversight handoff — no frontier API involved. Out: a brief to carry by hand.
+/** What has crossed: one thread, or the whole desk. */
+app.get('/api/exposure', ok(() => store.getExposure()));
+app.get('/api/threads/:id/exposure', ok(req => store.getExposure(id(req))));
+
+/** The gate's ruling on a thread, without sending anything anywhere. */
+app.post('/api/threads/:id/gate', async (req, res) => {
+    try {
+        const brief = store.buildBrief(id(req), { actor: req.body?.actor || 'the committee' });
+        const gate = await runGate(brief.markdown, { model: config.model, config });
+        res.json({ gate, packets: brief.packetIds.length });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+/**
+ * Escalate a thread across the boundary, for real.
+ *
+ * Order matters and is the whole point: gate first, cross second, record third.
+ * Nothing reaches the network until the local gate has released it, and nothing
+ * is recorded as having crossed unless it actually did.
+ */
+app.post('/api/threads/:id/escalate', async (req, res) => {
+    const threadId = id(req);
+    const { actor, model, force = false } = req.body || {};
+
+    try {
+        if (!actor) throw new Error('Escalation needs an actor — which seat is this for?');
+        if (!model) throw new Error('Escalation needs a model.');
+
+        const tier = providers.tierOf(model);
+        if (tier !== 'remote') {
+            throw new Error(`${model} is on the local tier — nothing would cross, so there is nothing to gate.`);
+        }
+
+        const brief = store.buildBrief(threadId, { actor });
+        if (!brief.packetIds.length) {
+            throw new Error('Nothing to escalate — this thread has no packets yet.');
+        }
+
+        // 1. The gate. Local, deterministic, fail-closed.
+        const gate = force
+            ? { release: true, reason: 'Overridden by the operator.', concerns: [], model: config.model, forced: true }
+            : await runGate(brief.markdown, { model: config.model, config });
+
+        if (!gate.release) {
+            // Refused. Nothing has touched the network, and nothing is recorded
+            // as crossed, because nothing crossed.
+            return res.status(200).json({ escalated: false, gate, packets: brief.packetIds.length });
+        }
+
+        // 2. The crossing.
+        const verdict = await providers.complete({
+            model,
+            messages: [{ role: 'user', content: brief.markdown }],
+            config
+        });
+
+        if (!verdict.content) {
+            throw new Error(`${model} returned no verdict text.`);
+        }
+
+        // 3. The record. One transaction: the verdict packet, a `reviewed` stamp
+        // on everything the brief covered, and a `crossed` stamp on the same —
+        // because those are different facts and the audit needs both.
+        const recorded = store.recordHandoff(threadId, {
+            actor,
+            verdict: verdict.content,
+            packetIds: brief.packetIds,
+            model,
+            tier: 'remote',
+            transport: 'token-factory'
+        });
+
+        res.json({
+            escalated: true,
+            gate,
+            packet: recorded.packet,
+            signed: recorded.signed,
+            crossed: recorded.crossed,
+            model,
+            usage: verdict.usage,
+            reasoning: verdict.thinking ? verdict.thinking.length : 0
+        });
+    } catch (err) {
+        const status = err.status || 400;
+        res.status(status).json({ error: err.message });
+    }
+});
+
+// Oversight handoff, carried by hand. Out: a brief to paste wherever you like.
 // Back in: the verdict, as a packet plus signatures on what was reviewed.
+// The live path is /escalate above; this one is still how a human seat works.
 app.get('/api/threads/:id/brief', ok(req => store.buildBrief(id(req), { actor: req.query.actor })));
 app.post('/api/threads/:id/handoff', ok(req => store.recordHandoff(id(req), req.body)));
 

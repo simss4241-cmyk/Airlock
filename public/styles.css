@@ -432,6 +432,31 @@ body.dragging-thread .tray.drop-target .tray-tail {
 
 .member:hover { color: var(--accent); border-color: var(--accent); }
 
+/* A live seat crosses the boundary by itself. The dashed border on the others
+   means "you carry this"; solid means "this one goes on its own", and the
+   difference has to be legible before the drop, not after. */
+.member.live {
+    border-style: solid;
+    border-color: var(--accent);
+    color: var(--text);
+}
+.member.live::before {
+    content: '↗';
+    margin-right: 4px;
+    opacity: .7;
+}
+
+/* Mid-crossing. The gate runs first and can take a few seconds on a local
+   reasoning model, so the seat has to look busy rather than unresponsive. */
+.member.working {
+    animation: seat-working 1.1s ease-in-out infinite;
+    pointer-events: none;
+}
+@keyframes seat-working {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: .45; }
+}
+
 /* Divides the seats that cross the boundary from the ones carried by hand.
    Deliberately not .member — app.js collects actors by that exact class. */
 .member-sep {
