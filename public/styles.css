@@ -432,6 +432,15 @@ body.dragging-thread .tray.drop-target .tray-tail {
 
 .member:hover { color: var(--accent); border-color: var(--accent); }
 
+/* Divides the seats that cross the boundary from the ones carried by hand.
+   Deliberately not .member — app.js collects actors by that exact class. */
+.member-sep {
+    color: var(--line);
+    padding: 0 2px;
+    user-select: none;
+    cursor: default;
+}
+
 /* a thread is hovering over this member — drop to hand off */
 .member.over {
     color: #fff;

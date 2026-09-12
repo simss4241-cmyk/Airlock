@@ -56,13 +56,21 @@
 
 <div class="pane">
 
-    <!-- The Galactic Oversight Committee. Drop a thread on a member to hand it off. -->
+    <!-- The Galactic Oversight Committee. Drop a thread on a member to hand it off.
+         Nemotron seats cross the boundary; the rest are carried by hand. -->
     <div class="committee" id="committee">
         <span class="lane-label">Local</span>
         <span class="chip-local" id="localChip">Local · 16 GB</span>
         <span class="lane-arrow">↗</span>
         <span class="lane-label">Oversight</span>
         <div class="members" id="members">
+            <button class="member" data-actor="Nemotron Nano"
+                    title="Nemotron 3 Nano 30B — boundary checks and fast verdicts">Nano</button>
+            <button class="member" data-actor="Nemotron Super"
+                    title="Nemotron 3 Super 120B — the standard verdict">Super</button>
+            <button class="member" data-actor="Nemotron Ultra"
+                    title="Nemotron 3 Ultra 550B — deep review, 1M-token window">Ultra</button>
+            <span class="member-sep" title="Below the line: escalation by hand — brief out, verdict back in">|</span>
             <button class="member" data-actor="Claude">Claude</button>
             <button class="member" data-actor="GPT">GPT</button>
             <button class="member" data-actor="Gemini">Gemini</button>

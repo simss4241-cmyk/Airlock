@@ -1,7 +1,40 @@
-# Airlock UI
+# Airlock
 
-Local chat UI for **Meta Muse Glimmer 30B** (Apache 2.0, released 2026-08-10), served by Ollama.
-Node/Express on **:8100**, Ollama on **:11434** — same shape as Qubit (:8000) and Synth (:8080).
+**A local-first reasoning desk with an audited model boundary.**
+
+Everything runs on your machine by default. A local model answers, and the conversation
+never leaves the desk. When a thread needs more than the local model can give, escalating it
+to a larger model is an explicit, logged, signed event — not an invisible API call buried in
+a settings page. Every packet records which model touched it and which side of the boundary
+it was on, so *"what did a remote model ever see?"* is a query rather than a guess.
+
+The boundary is the product. Routing is just how it is enforced.
+
+Node/Express on **:8100**, local inference through Ollama on **:11434**. No build step, no
+CDN, no frontend dependencies.
+
+## Status
+
+Airlock is a fork of Glimmer, a working local-first chat UI and packet store. The local half
+and the record-keeping exist today; the remote tier is being built. This table is the honest
+version — clone it and check.
+
+| | |
+|---|---|
+| Local inference — streaming, reasoning channel, tools, vision | working |
+| Packet store — threads, nesting, provenance, move/fork/review | working, 89 assertions |
+| Per-thread read-only workspaces, with containment tests | working, 46 assertions |
+| Escalation briefs and recorded verdicts | working — transport is manual copy-paste |
+| Remote tier on Nebius Token Factory (Nemotron 3) | in progress |
+| Boundary classification and redaction before a packet crosses | in progress |
+| Tier recorded in provenance; "what crossed?" as a query | in progress |
+
+The local model in use is **Meta Muse Glimmer 30B** (Apache 2.0, released 2026-08-10), but
+nothing here is specific to it — any Ollama model works, and the dropdown badges each one's
+capabilities. Sibling apps for reference: Qubit (:8000), Synth (:8080).
+
+Built for the Nebius × NVIDIA Global AI Hackathon — Personal AI track.
+
 
 ## Requirements
 
@@ -10,7 +43,7 @@ Node/Express on **:8100**, Ollama on **:11434** — same shape as Qubit (:8000) 
 
 ### ⚠ Required on this GPU: `OLLAMA_FLASH_ATTENTION=0`
 
-Airlock needs **Ollama 0.32.8+** (NVIDIA/AMD support landed there; 0.32.7 and earlier
+Muse Glimmer needs **Ollama 0.32.8+** (NVIDIA/AMD support landed there; 0.32.7 and earlier
 return 412 on Windows). That part is solved.
 
 But on an RTX 5060 Ti — Blackwell, sm_120 — `llama-server` hard-crashes on load with
@@ -72,9 +105,13 @@ single server, 3 GiB costs no measurable throughput.)
 
 ```
 npm install
+cp .env.example .env                     # add your Nebius key for the remote tier
 ollama pull muse-glimmer:30b-q4_K_M      # 18 GB — blocked, see above
 start_airlock.bat
 ```
+
+The local tier needs no key and no account. `.env` is only for the remote tier — Airlock
+runs fully local without it, which is the point.
 
 ## Measured on this machine (RTX 5060 Ti 16 GB, q4_K_M, flash attention off)
 
@@ -87,7 +124,7 @@ start_airlock.bat
 | "Name one metal", reasoning **on** | 33.7 s |
 | "Name one metal", reasoning **off** | **9.1 s** |
 
-## Airlock is a reasoning model
+## The local model is a reasoning model
 
 It streams a **separate `thinking` channel** before it says anything. In one measured run
 the first *content* token arrived 48.5 s after the request, having spent the whole time
@@ -236,7 +273,7 @@ which drops a Startup-folder shortcut to `airlock-server-hidden.vbs` (node, no c
 | `tools/focus_airlock.ps1` | Finds and raises an existing Airlock window; exit code says which |
 | `public/icons/` | Generated PNGs + `airlock.ico` |
 | `tools/make_icons.py` | Redraws the whole icon set — edit colors here, re-run |
-| `tools/smoke_test.js` | 41 assertions over the store API. Run it after touching `db.js` |
+| `tools/smoke_test.js` | 89 assertions over the store API. Run it after touching `db.js` |
 | `airlock-launch.vbs` | Ensures the server is up, then opens app mode. What the icon runs |
 | `tools/install_shortcut.ps1` | Creates the pinnable Start Menu / Desktop shortcut |
 | `tools/install_autostart.ps1` | Startup-folder shortcut (`-Remove` to undo) |
@@ -249,7 +286,7 @@ Launcher paths use `%~dp0` / self-resolving paths, so the folder can be moved.
 
 - Streaming replies, Stop mid-generation
 - Markdown rendering with per-block copy buttons
-- Image attach — drag, paste, or the 🖼 button (Airlock has a perception encoder)
+- Image attach — drag, paste, or the 🖼 button (Muse Glimmer has a perception encoder)
 - Model dropdown listing every installed Ollama model, so you can A/B against qwen2.5 etc.
 - Sampling controls, defaulting to Meta's recommended **temp 1.0 / top_p 0.95 / top_k 64**
 - tok/s, time-to-first-token, prompt-token count per reply
@@ -412,8 +449,8 @@ Badges under a packet read its provenance: `from PBIS` when it was born elsewher
 
 ## The Galactic Oversight Committee
 
-Escalation with **no API, no keys, no spend.** Drag a thread onto Claude / GPT /
-Gemini and you get a portable markdown brief: the tray and thread, every packet numbered,
+Escalation as a deliberate act. Drag a thread onto a committee member and you get a
+portable markdown brief: the tray and thread, every packet numbered,
 a provenance section calling out anything born in another thread, a list of what's already
 been signed off, and a closing ask addressed to that member by name.
 
@@ -421,15 +458,42 @@ Copy it or save it as `.md`, carry it to whoever you like by hand, then paste th
 into the same dialog. Recording it:
 
 1. lands the verdict as a **real packet** in the thread, attributed to that actor — so it
-   reads in context, and the transcript says `Claude · #4`, not `Airlock`;
+   reads in context, and the transcript says `Claude · #4`, not `Local`;
 2. stamps `reviewed by <actor>` on every packet the brief covered.
 
 So you can see at a glance which thoughts are team-reviewed and which are local-only,
 without anything making a pilgrimage through a paid endpoint. The verdict packet never
 signs itself.
 
+The lane reads left to right: **Local → ↗ → Oversight**. That arrow is the boundary, and
+the seats past it are the only way anything crosses.
+
+| Seat | Transport |
+|---|---|
+| Nano · Super · Ultra | Nemotron 3 on Token Factory — live crossing (in progress) |
+| Claude · GPT · Gemini | carried by hand: brief out, verdict pasted back |
+
+Both kinds produce the same thing — a signed packet attributed to that actor — which is
+why the manual seats are worth keeping rather than replacing. A verdict is a verdict
+whoever carried it, and a router that only ever reaches one vendor isn't a router.
+
 Swap or add members by editing the `.member` buttons in `index.html` — `data-actor` is the
 only thing the code reads, and it's what gets recorded as the signature.
+
+### Where this is going
+
+The clipboard is the transport today, and that was a deliberate choice: it kept the
+escalation protocol honest while costing nothing to run. But the protocol was always the
+point, and a human ferrying markdown is just a slow implementation of it.
+
+The remote tier replaces the courier, not the protocol. A member becomes a Nemotron 3
+model on Nebius Token Factory — Nano deciding whether a thread warrants escalation at all
+and what gets redacted before it crosses, Super returning the standard verdict, Ultra for
+threads that need a million-token window. What lands is still a signed packet attributed
+to that actor, and every crossing still writes a provenance row.
+
+That is the whole design: the boundary was already audited when nothing crossed it
+automatically. Making the crossing automatic is what makes the audit worth having.
 
 ## Physics
 
@@ -506,7 +570,7 @@ a wall-clock timeout so nothing leaks when no frame ever comes.
 
 ## Workspace file access
 
-Airlock is tuned for tool calling, so each saved thread gets its own read-only **workspace
+Muse Glimmer is tuned for tool calling, so each saved thread gets its own read-only **workspace
 root**. Select a thread, click the composer's **⛁ files** pill, then use Browse… or paste a
 path and press Enter. Switching threads switches the root automatically; clearing one
 thread's root does not affect any other thread. Scratch chats have no workspace.
@@ -625,8 +689,8 @@ still go to the perception encoder as base64.
 
 - **Trays as physical bays.** They highlight and accept drops, but they don't render as
   depth-having containers, and packets don't have inertia or snap-to-grid.
-- **Live frontier API calls.** Deliberate, per the handoff design above. If that changes,
-  liAIseCo already has the keyed-call pattern to copy.
+- **Live remote-tier calls.** In progress — see *Where this is going* above. Until they
+  land, escalation works, but a human is the transport.
 - **Write access or a shell.** File tools are read-only on purpose. Qubit has a shell loop
   (`qubit-chat/server.js`) if that's ever wanted — it should stay a deliberate decision.
 - **Tool results as packets.** Tool calls render as cards in the transcript but aren't stored
@@ -657,7 +721,7 @@ Streaming, markdown, code copy, Stop, error surfacing, stats, and the image wire
 (base64, `data:` prefix stripped, attached to the last user turn) all tested against
 `qwen2.5:7b` at 84 tok/s. Palette contrast verified in-browser after the recolor.
 
-Store: `tools/smoke_test.js` — **87/87**. Covers move-with-subtree, fork tethering, nesting,
+Store: `tools/smoke_test.js` — **89/89**. Covers move-with-subtree, fork tethering, nesting,
 cycle guards, review signatures, date-window search, cascade-on-delete, brief rendering,
 handoff recording, rename, re-tray, thread reorder and tray reorder (both with clamping and
 clean 0..n renumbering), and the `brief.md` download headers — every refusal path included.

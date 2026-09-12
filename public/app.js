@@ -141,8 +141,9 @@ function render() {
                </div>`
             : `<div class="empty">
                    <h2>Airlock is idle</h2>
-                   <p>30B agentic model, running entirely on your machine.<br>
-                   Ask it something, or drop an image in — it has a perception encoder.</p>
+                   <p>Answering locally, on your machine. Nothing leaves the desk unless
+                   you send it across the boundary.<br>
+                   Ask something, or drop an image in — the local model sees.</p>
                    <p class="stats">Pick a thread on the left to save this as packets.</p>
                </div>`;
         return;
