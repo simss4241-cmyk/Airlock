@@ -3,6 +3,7 @@
 const $ = id => document.getElementById(id);
 
 const el = {
+    demoNotice: $('demoNotice'),
     messages: $('messages'), main: $('main'), input: $('input'), send: $('send'),
     model: $('model'), dot: $('dot'), statusText: $('statusText'), hint: $('hint'),
     attach: $('attach'), file: $('file'), attached: $('attached'), composer: $('composer'),
@@ -404,6 +405,9 @@ async function refreshHealth() {
         // so with no key configured the committee behaves exactly as it always did.
         liveSeats = Object.fromEntries((h.seats || []).map(s => [s.actor, s.model]));
         modelTier = Object.fromEntries(h.models.map(m => [m.name, m.tier || 'local']));
+
+        // A shared instance says so, every load. There is no dismiss control.
+        if (el.demoNotice) el.demoNotice.hidden = !h.demo;
         paintSeats();
 
         // Grouped by tier, because which side of the boundary a model sits on is the

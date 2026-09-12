@@ -523,6 +523,13 @@ in browser history.
 is not per-user isolation — the store is a single SQLite file with no user
 dimension, and giving it one is a real piece of work rather than a flag.
 
+Which is why `AIRLOCK_DEMO=1` exists. It shows a permanent banner saying the
+instance is shared and anything typed into it is visible to other visitors.
+There is no dismiss control, deliberately: an application about knowing where
+your data goes does not get to let people hide the notice explaining that this
+particular copy is shared. Set it on any instance more than one person can
+reach.
+
 Two more things a hosted build does not inherit from the desktop one:
 
 - **Per-thread workspaces are Windows-only.** The folder picker shells out to

@@ -56,6 +56,15 @@
 
 <div class="pane">
 
+    <!-- Shown only when AIRLOCK_DEMO is set. Not dismissible on purpose: an app
+         about knowing where your data goes cannot let people hide the notice
+         that says this particular instance is shared. -->
+    <div class="demo-notice" id="demoNotice" hidden>
+        <b>Shared demo.</b> Everything you type here is visible to other visitors, and
+        the audit trail is shared too. Run Airlock locally for private use — the local
+        tier needs no account and no key.
+    </div>
+
     <!-- The Galactic Oversight Committee. Drop a thread on a member to hand it off.
          Nemotron seats cross the boundary; the rest are carried by hand. -->
     <div class="committee" id="committee">

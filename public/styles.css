@@ -49,6 +49,19 @@ select, input, textarea, button {
 
 .spacer { flex: 1; }
 
+/* The shared-demo notice. Amber rather than red: this is a statement of fact
+   about the instance, not an error the viewer can fix. */
+.demo-notice {
+    flex: none;
+    padding: 9px 16px;
+    background: #3b2f0b;
+    border-bottom: 1px solid #6b5410;
+    color: #fde68a;
+    font-size: 12px;
+    line-height: 1.5;
+}
+.demo-notice b { color: #fef3c7; }
+
 /* ── Shell: 300px rail + working pane ── */
 .app-shell {
     display: grid;

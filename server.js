@@ -157,7 +157,9 @@ app.use('/api', auth.guard);
 
 // Lets the page discover whether it needs a token before it asks for anything
 // else, so an unauthorised visitor sees a prompt rather than a wall of 401s.
-app.get('/api/access', (req, res) => res.json({ ok: true, ...auth.remoteSpend() }));
+app.get('/api/access', (req, res) => res.json({
+    ok: true, demo: Boolean(process.env.AIRLOCK_DEMO), ...auth.remoteSpend()
+}));
 
 async function loadConfig() {
     try {
@@ -257,6 +259,7 @@ app.get('/api/health', async (req, res) => {
             models: [...withCaps, ...remote],
             remoteTier: remote.length > 0,
             seats: liveSeats(),
+            demo: Boolean(process.env.AIRLOCK_DEMO),
             localModelInstalled: models.some(m => m.name.startsWith('muse-glimmer')),
             activeModel: config.model
         });
@@ -269,6 +272,7 @@ app.get('/api/health', async (req, res) => {
             models: remote,
             remoteTier: remote.length > 0,
             seats: liveSeats(),
+            demo: Boolean(process.env.AIRLOCK_DEMO),
             localModelInstalled: false
         });
     }
