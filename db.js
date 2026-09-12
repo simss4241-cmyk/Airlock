@@ -358,7 +358,7 @@ function createPacket({ threadId, role, content, model = null, images = null, pa
         nextPosition(threadId, parentId), now()
     ).lastInsertRowid;
 
-    record(id, 'created', { to: threadId, actor: role === 'assistant' ? model : 'nova' });
+    record(id, 'created', { to: threadId, actor: role === 'assistant' ? model : 'you' });
     return getPacket(id);
 }
 
@@ -414,7 +414,7 @@ function subtreeIds(id) {
  * Drag = move. The packet physically leaves, and its whole subtree goes with it.
  * origin_thread_id is left untouched — that's where the thought was born.
  */
-function movePacket(id, { toThreadId, parentId = null, actor = 'nova' }) {
+function movePacket(id, { toThreadId, parentId = null, actor = 'you' }) {
     const packet = getPacket(id);
     if (!packet) throw new Error(`No packet ${id}`);
 
@@ -448,7 +448,7 @@ function movePacket(id, { toThreadId, parentId = null, actor = 'nova' }) {
  * Alt+drag = fork. Duplicates the packet and its subtree, and the copy keeps a
  * tether back to the original via forked_from.
  */
-function forkPacket(id, { toThreadId = null, parentId = null, actor = 'nova' } = {}) {
+function forkPacket(id, { toThreadId = null, parentId = null, actor = 'you' } = {}) {
     const src = getPacket(id);
     if (!src) throw new Error(`No packet ${id}`);
 
@@ -567,7 +567,7 @@ function getThread(id) {
 /**
  * Oversight handoff, part one: render a thread as a portable brief.
  *
- * Deliberately plain markdown and deliberately not an API call. Nova carries this to
+ * Deliberately plain markdown. For a manual seat, a person carries this to
  * whichever frontier model they like, by hand, at zero cost — the committee gets a vote
  * without every thought making a pilgrimage through a paid endpoint.
  */

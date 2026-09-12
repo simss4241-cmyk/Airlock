@@ -455,6 +455,35 @@ Every packet shows its id in the label (`You · #12`) so a brief can refer to it
 Badges under a packet read its provenance: `from PBIS` when it was born elsewhere, `1 hop`,
 `nested`, `reviewed by Claude`, `oversight verdict`.
 
+## Settings, and which of them cross
+
+Four sampling controls sit in Settings, and only two of them mean anything
+remotely. The panel says so, because a control that silently does nothing is
+worse than one that isn't there.
+
+| Setting | Local | Remote |
+|---|---|---|
+| Temperature | yes | yes |
+| Top P | yes | yes |
+| Top K | yes | **not sent** — not in the OpenAI schema, and a strict endpoint may reject the request over it |
+| Context (`num_ctx`) | yes | **not sent** — it is Ollama's KV-cache budget and has no remote meaning |
+
+### ⚠ The system prompt crosses
+
+It is prepended to every turn, so when an Oversight model is selected it travels
+with the conversation. That makes it the one setting which is not configuration
+at all but *content* — and the panel warns accordingly.
+
+The shipped default therefore names no person and no machine. It also earns its
+length, which a two-line prompt did not: it tells the model the single thing it
+cannot infer from the conversation, which is that an answer here is not a chat
+message but a packet, stored in a thread, read later out of order, possibly by a
+reviewer who was never present for the exchange. Writing for that reader is a
+different job from writing a reply.
+
+It costs about 157 tokens a turn. That is the right trade against answers that
+still make sense a month later.
+
 ## The gate
 
 Escalation crosses a line, so something has to decide whether it may. That

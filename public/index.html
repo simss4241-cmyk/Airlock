@@ -124,7 +124,12 @@
 
             <div class="field">
                 <label for="sys">System prompt</label>
-                <textarea id="sys"></textarea>
+                <textarea id="sys" rows="8"></textarea>
+                <p class="note">
+                    Sent with every message. When an Oversight model is selected it
+                    <b>crosses the boundary</b> along with the conversation — so keep
+                    names, paths and anything private out of it.
+                </p>
             </div>
             <div class="grid">
                 <div class="field">
@@ -145,9 +150,17 @@
                 </div>
             </div>
             <p class="note">
-                Meta's recommended sampling for Muse Glimmer is <b>1.0 / 0.95 / 64</b>.
-                Context is capped low on purpose — on 16&nbsp;GB of VRAM a large KV cache
-                pushes weights out to system RAM and generation slows to a crawl.
+                <b>Temperature</b> and <b>Top&nbsp;P</b> apply to both tiers.
+                <b>Top&nbsp;K</b> and <b>Context</b> are local only: <code>num_ctx</code> is
+                Ollama's KV-cache budget and has no remote meaning, and <code>top_k</code>
+                is not part of the OpenAI schema the remote tier speaks — neither is sent
+                across the boundary.
+            </p>
+            <p class="note">
+                Context trades speed for room. The KV cache competes with the model's own
+                weights for VRAM, and once weights spill to system RAM generation slows
+                sharply — so raise it when a task needs the room rather than by default.
+                Muse Glimmer's recommended sampling is <b>1.0 / 0.95 / 64</b>.
             </p>
         </div>
         <div class="dlg-foot">
