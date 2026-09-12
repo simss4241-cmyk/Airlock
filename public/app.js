@@ -20,6 +20,57 @@ const el = {
     wsThread: $('wsThread'), tokenPill: $('tokenPill')
 };
 
+// ─────────────────────────── access ───────────────────────────
+//
+// A hosted instance sets AIRLOCK_TOKEN and every /api call must carry it. There
+// are fourteen fetch call sites in this file, so the header is attached by
+// wrapping fetch once rather than by editing each of them: for an access check,
+// "no call site can be missed" is worth more than avoiding a little indirection.
+//
+// Local instances set no token and this does nothing at all.
+
+const TOKEN_KEY = 'airlock.token';
+
+(function claimTokenFromUrl() {
+    const fromUrl = new URLSearchParams(location.search).get('t');
+    if (!fromUrl) return;
+    try { localStorage.setItem(TOKEN_KEY, fromUrl); } catch { /* private window */ }
+    // Out of the address bar, so it stops appearing in history and in screenshots.
+    const clean = new URL(location.href);
+    clean.searchParams.delete('t');
+    history.replaceState(null, '', clean.pathname + clean.search + clean.hash);
+})();
+
+const accessToken = () => {
+    try { return localStorage.getItem(TOKEN_KEY) || ''; } catch { return ''; }
+};
+
+const nativeFetch = window.fetch.bind(window);
+window.fetch = (input, init = {}) => {
+    const url = typeof input === 'string' ? input : input?.url || '';
+    const token = accessToken();
+    if (!token || !url.startsWith('/api')) return nativeFetch(input, init);
+    return nativeFetch(input, {
+        ...init,
+        headers: { ...(init.headers || {}), 'X-Airlock-Token': token }
+    });
+};
+
+/** Ask for a token once, when the server says one is needed. */
+let askingForToken = false;
+async function requireToken() {
+    if (askingForToken) return;
+    askingForToken = true;
+    const entered = window.prompt(
+        'This Airlock instance needs an access token.\n\nPaste it to continue:');
+    if (entered && entered.trim()) {
+        try { localStorage.setItem(TOKEN_KEY, entered.trim()); } catch { /* ignore */ }
+        location.reload();
+        return;
+    }
+    askingForToken = false;
+}
+
 const DT_THREAD = 'application/x-airlock-thread';
 const DT_PACKET = 'application/x-airlock-packet';
 const DT_TRAY = 'application/x-airlock-tray';
@@ -324,7 +375,18 @@ function scrollDown() {
 
 async function refreshHealth() {
     try {
-        const h = await (await fetch('/api/health')).json();
+        const probe = await fetch('/api/health');
+
+        // A hosted instance answers 401 until a token is presented. Ask for one
+        // rather than rendering an app that cannot load anything.
+        if (probe.status === 401) {
+            el.dot.className = 'dot warn';
+            el.statusText.textContent = 'token required';
+            await requireToken();
+            return;
+        }
+
+        const h = await probe.json();
 
         if (!h.ollama) {
             el.dot.className = 'dot bad';

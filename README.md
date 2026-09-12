@@ -31,6 +31,7 @@ version — clone it and check.
 | Tier recorded per packet; "what crossed?" as a query | working |
 | Escalation driven by the router rather than the clipboard | working |
 | Redaction — crossing a brief with the sensitive parts removed | in progress |
+| Access token + remote spend cap for hosting | working, 26 assertions |
 | Hosted demo build | in progress |
 
 The local model in use is **Meta Muse Glimmer 30B** (Apache 2.0, released 2026-08-10), but
@@ -280,8 +281,10 @@ which drops a Startup-folder shortcut to `airlock-server-hidden.vbs` (node, no c
 | `providers/` | One streaming contract, two tiers. `index.js` documents the chunk shape |
 | `tools/smoke_test.js` | 89 assertions over the store API. Run it after touching `db.js` |
 | `boundary.js` | The gate. Local-only, deterministic, fails closed |
+| `auth.js` | Access token and remote spend cap. Off unless configured |
 | `tools/provider_test.js` | 34 assertions over the provider contract. Run it after touching `providers/` |
-| `tools/boundary_test.js` | 50 assertions over the gate, both crossing paths and the audit trail |
+| `tools/boundary_test.js` | 59 assertions over the gate, both crossing paths and the audit trail |
+| `tools/auth_test.js` | 26 assertions over the access guard and the spend cap |
 | `airlock-launch.vbs` | Ensures the server is up, then opens app mode. What the icon runs |
 | `tools/install_shortcut.ps1` | Creates the pinnable Start Menu / Desktop shortcut |
 | `tools/install_autostart.ps1` | Startup-folder shortcut (`-Remove` to undo) |
@@ -483,6 +486,50 @@ different job from writing a reply.
 
 It costs about 157 tokens a turn. That is the right trade against answers that
 still make sense a month later.
+
+## Hosting it
+
+Airlock was built as a desktop app: one person, one machine, no login. Hosting
+inverts every one of those assumptions, so two environment variables exist and
+both are **unset by default**.
+
+| Variable | Unset (local) | Set (hosted) |
+|---|---|---|
+| `AIRLOCK_TOKEN` | every route open | `/api/*` requires the token, as an `X-Airlock-Token` header or an `airlock_token` cookie |
+| `AIRLOCK_REMOTE_BUDGET` | remote calls uncapped | that many remote calls per process, then the local tier only |
+
+Conditional rather than always-on, deliberately. Auth that cannot be turned off
+would make every local user store a credential to talk to their own machine, and
+the reliable outcome of that is a token committed to a repository.
+
+The server says which posture it is in at boot, because an unauthenticated
+hosted instance is a mistake worth shouting about:
+
+```
+  auth      -> OPEN. Correct for localhost; set AIRLOCK_TOKEN before hosting.
+  remote    -> uncapped. Set AIRLOCK_REMOTE_BUDGET before hosting.
+```
+
+Static files stay open even when the token is set: the page has to load in order
+to ask for one. It ships no data of its own — everything comes from `/api`. A
+`?t=<token>` query parameter is claimed into `localStorage` and then stripped
+from the address bar, so a link can be handed out once without the token living
+in browser history.
+
+### ⚠ A shared token is not multi-tenancy
+
+`AIRLOCK_TOKEN` answers "may you use this instance", not "who are you".
+**Everyone holding it sees the same packets.** That is honest for a demo and it
+is not per-user isolation — the store is a single SQLite file with no user
+dimension, and giving it one is a real piece of work rather than a flag.
+
+Two more things a hosted build does not inherit from the desktop one:
+
+- **Per-thread workspaces are Windows-only.** The folder picker shells out to
+  PowerShell and WinForms, so file tools do not exist on a Linux host.
+- **The local tier needs a local model.** A hosted instance has no Ollama unless
+  one is deployed beside it, so "local" there means a small model on the same
+  host rather than on the viewer's machine.
 
 ## The gate
 

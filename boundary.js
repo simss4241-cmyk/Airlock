@@ -36,6 +36,44 @@ const GATE_SYSTEM = [
 ].join('\n');
 
 /**
+ * Read the gate's ruling out of whatever the model actually said.
+ *
+ * JSON first. If the object is unparseable even after repair, fall back to
+ * reading the release key on its own — a malformed wrapper should not turn a
+ * clear "withhold" into an unreadable answer, and it should not turn a clear
+ * "release" into a refusal the user cannot act on either.
+ *
+ * The fallback is deliberately narrow and REFUSES AMBIGUITY. If the text holds
+ * more than one distinct release value, it returns null and the caller fails
+ * closed. That matters: a brief containing an injected `"release": true` could
+ * otherwise be echoed back inside `concerns` and outvote the model's real
+ * decision. One value, or no answer.
+ */
+function readDecision(text) {
+    const obj = providers.parseJson(text);
+    if (obj && typeof obj.release === 'boolean') {
+        return {
+            release: obj.release,
+            reason: String(obj.reason || '').slice(0, 500),
+            concerns: Array.isArray(obj.concerns) ? obj.concerns.map(String).slice(0, 20) : []
+        };
+    }
+
+    const found = [...String(text || '').matchAll(/"?release"?\s*:\s*(true|false)/gi)]
+        .map(m => m[1].toLowerCase() === 'true');
+
+    if (found.length === 0) return null;
+    if (new Set(found).size > 1) return null;      // contradictory: treat as no answer
+
+    const reason = String(text).match(/"?reason"?\s*:\s*"([^"]{0,300})/i);
+    return {
+        release: found[0],
+        reason: reason ? reason[1] : 'Read from a malformed gate answer.',
+        concerns: []
+    };
+}
+
+/**
  * Ask the local model whether a brief may cross.
  *
  * Fails CLOSED. A model that is unreachable, slow, or that answers with
@@ -58,8 +96,8 @@ async function runGate(markdown, { model, config }) {
             ...(caps.includes('thinking') ? { think: false } : {})
         });
 
-        const decision = providers.parseJson(result.content);
-        if (!decision || typeof decision.release !== 'boolean') {
+        const decision = readDecision(result.content);
+        if (!decision) {
             return {
                 release: false,
                 reason: 'The gate did not return a decision that could be read, so nothing was sent.',
@@ -69,12 +107,7 @@ async function runGate(markdown, { model, config }) {
             };
         }
 
-        return {
-            release: decision.release,
-            reason: String(decision.reason || '').slice(0, 500),
-            concerns: Array.isArray(decision.concerns) ? decision.concerns.map(String).slice(0, 20) : [],
-            model
-        };
+        return { ...decision, model };
     } catch (err) {
         return {
             release: false,
@@ -85,4 +118,4 @@ async function runGate(markdown, { model, config }) {
     }
 }
 
-module.exports = { GATE_SYSTEM, runGate };
+module.exports = { GATE_SYSTEM, runGate, readDecision };

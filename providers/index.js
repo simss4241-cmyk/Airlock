@@ -95,14 +95,64 @@ async function complete(opts) {
  * Returns null rather than throwing — callers decide what an unparseable
  * answer means, and for the gate it means "do not cross".
  */
+/**
+ * Repair the malformations small models actually produce, without inventing
+ * content. Three of them, in order of how often they bite:
+ *
+ *   1. Lone backslashes. A model quoting a Windows path writes "C:\work" as
+ *      "C:\work", and \w is not a legal JSON escape, so the whole object is
+ *      unparseable. This is the common case here: briefs about this project are
+ *      full of Windows paths.
+ *   2. Trailing commas before } or ].
+ *   3. Smart quotes where ASCII quotes belong.
+ */
+function repairJson(text) {
+    return text
+        // Escape a backslash that is not already starting a valid JSON escape.
+        // A model quoting C:\\work writes a lone \w, which is not legal JSON.
+        .replace(/\\(?!["\\/bfnrtu])/g, '\\\\')
+        // Smart quotes where ASCII quotes belong.
+        .replace(/[\u201c\u201d]/g, '\"')
+        // Trailing comma before a closing bracket.
+        .replace(/,\s*([}\]])/g, '$1');
+}
+
+/**
+ * Pull the first JSON object out of a model's answer. Small models fence it,
+ * preface it, apologise around it, and quote Windows paths inside it; none of
+ * that should sink a decision.
+ *
+ * Returns null rather than throwing. Callers decide what an unreadable answer
+ * means — and for the gate it means "do not cross".
+ */
 function parseJson(text) {
     if (!text) return null;
     const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
     const body = fenced ? fenced[1] : text;
     const start = body.search(/[{[]/);
     if (start === -1) return null;
-    for (let end = body.length; end > start; end--) {
-        try { return JSON.parse(body.slice(start, end)); } catch { /* keep shrinking */ }
+
+    const slice = body.slice(start);
+
+    // Only a closing bracket can end a valid object, so try those positions
+    // rather than every character.
+    //
+    // Recomputed per candidate, not once: repairing changes the string's length
+    // (escaping doubles backslashes, dropping a trailing comma shortens it), so
+    // offsets taken from the original would truncate the repaired JSON
+    // mid-string and fail for a reason that has nothing to do with the model.
+    const endsFor = str => {
+        const ends = [str.length];
+        for (let i = str.length - 1; i >= 0; i--) {
+            if (str[i] === '}' || str[i] === ']') ends.push(i + 1);
+        }
+        return ends;
+    };
+
+    for (const candidate of [slice, repairJson(slice)]) {
+        for (const end of endsFor(candidate)) {
+            try { return JSON.parse(candidate.slice(0, end)); } catch { /* try the next */ }
+        }
     }
     return null;
 }
@@ -122,4 +172,4 @@ class ProviderError extends Error {
     }
 }
 
-module.exports = { chat, complete, parseJson, capabilities, list, tierOf, providerFor, ProviderError };
+module.exports = { chat, complete, parseJson, repairJson, capabilities, list, tierOf, providerFor, ProviderError };

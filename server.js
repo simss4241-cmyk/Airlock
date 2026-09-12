@@ -10,6 +10,7 @@ const store = require('./db');
 const files = require('./files');
 const providers = require('./providers');
 const { runGate } = require('./boundary');
+const auth = require('./auth');
 
 const app = express();
 
@@ -147,7 +148,16 @@ function summarise(name, args, result, ok) {
 let config = { ...DEFAULTS };
 
 app.use(express.json({ limit: '32mb' }));  // images ride along as base64
+
+// Static assets stay open deliberately: the page must be able to load in order
+// to prompt for a token. It ships no data of its own — everything comes from
+// /api, which is guarded.
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/api', auth.guard);
+
+// Lets the page discover whether it needs a token before it asks for anything
+// else, so an unauthorised visitor sees a prompt rather than a wall of 401s.
+app.get('/api/access', (req, res) => res.json({ ok: true, ...auth.remoteSpend() }));
 
 async function loadConfig() {
     try {
@@ -352,6 +362,15 @@ app.post('/api/chat', async (req, res) => {
     try {
         for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
             const lastRound = round === MAX_TOOL_ROUNDS;   // stop offering tools; force an answer
+
+            if (tier === 'remote' && round === 0) {
+                const over = auth.spendRemote();
+                if (over) {
+                    if (!res.headersSent) return res.status(429).json({ error: over });
+                    send({ error: over });
+                    break;
+                }
+            }
 
             // One generator whatever the tier: the provider layer has already
             // normalised the remote stream into this same chunk shape.
@@ -763,6 +782,9 @@ app.post('/api/threads/:id/escalate', async (req, res) => {
         }
 
         // 2. The crossing.
+        const over = auth.spendRemote();
+        if (over) return res.status(429).json({ error: over, gate });
+
         const verdict = await providers.complete({
             model,
             messages: [{ role: 'user', content: brief.markdown }],
@@ -868,6 +890,7 @@ loadConfig().then(() => {
         console.log(`  Airlock is running -> http://localhost:${PORT}`);
         console.log(`  Model: ${config.model}   ctx: ${config.num_ctx}`);
         console.log(`  Store: ${s.packets} packets in ${s.threads} threads / ${s.folders} trays`);
+        console.log(auth.describe(PORT));
         console.log('');
     });
 });
