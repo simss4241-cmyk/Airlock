@@ -224,21 +224,30 @@ a local model — but it is never invisible. The crossing note carries
 the verdict packet naming it a bypass. An override that leaves no trace is the
 one thing an audit trail must not permit.
 
-## Seats that cross by themselves
+## Seats
 
-The Oversight lane now has two kinds of seat, and the difference is visible
-before you drop rather than after:
+Three seats, one per Nemotron tier. Drop a thread on one — or click it with a
+thread open — and it gates locally, crosses to Token Factory, and records the
+crossing.
 
-| Seat | Border | What a drop does |
+| Seat | Model | For |
 |---|---|---|
-| Nano · Super · Ultra | solid, with `↗` | gates locally, calls Token Factory, records the crossing |
-| Claude · GPT · Gemini | dashed | opens the brief for you to carry by hand |
+| ↗ Nano | Nemotron 3 Nano 30B | fast verdicts, cheap enough to use freely |
+| ↗ Super | Nemotron 3 Super 120B | the standard review |
+| ↗ Ultra | Nemotron 3 Ultra 550B | deep review, a million-token window |
 
-Which seats are live comes from `.env` by way of `/api/health`, so the model ids
+Which seats exist comes from `.env` by way of `/api/health`, so the model ids
 have one home and the markup only names actors. **A seat with no model
-configured is simply not live** — with no key at all, every seat falls back to
-the manual brief and the committee behaves exactly as it did before any of this
-existed.
+configured is not live**, so with no key at all the lane is empty rather than
+misleading.
+
+The manual path — `GET /api/threads/:id/brief` out, `POST
+/api/threads/:id/handoff` back — still exists and is still tested. It records a
+`crossed` event exactly like an API call does, because a brief pasted into
+someone else's chat window exposes the same content and only the carrier
+differs. It simply has no seat in the lane any more: this is a Nemotron desk, and
+three tiers plus three vendor buttons made the lane read like a vendor list
+rather than an escalation ladder.
 
 ## Two tiers, one stream
 

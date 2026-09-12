@@ -49,6 +49,27 @@ select, input, textarea, button {
 
 .spacer { flex: 1; }
 
+/* Transient feedback. Anchored to the pane rather than placed in the committee
+   bar, because that bar scrolls horizontally and took every message with it. */
+.toast {
+    position: absolute;
+    left: 50%;
+    bottom: 92px;
+    transform: translateX(-50%);
+    max-width: min(680px, calc(100% - 32px));
+    padding: 9px 14px;
+    border-radius: 10px;
+    background: #131033;
+    border: 1px solid var(--accent-dim);
+    color: var(--text);
+    font-size: 12.5px;
+    line-height: 1.5;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+    z-index: 40;
+    pointer-events: none;      /* never in the way of a drop */
+    white-space: pre-wrap;
+}
+
 /* The shared-demo notice. Amber rather than red: this is a statement of fact
    about the instance, not an error the viewer can fix. */
 .demo-notice {
@@ -397,6 +418,8 @@ body.dragging-thread .tray.drop-target .tray-tail {
 }
 
 /* ── Committee lane ── */
+.pane { position: relative; }
+
 .committee {
     flex: none;
     display: flex;

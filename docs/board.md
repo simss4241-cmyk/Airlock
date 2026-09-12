@@ -183,12 +183,14 @@ the seats past it are the only way anything crosses.
 
 | Seat | Transport |
 |---|---|
-| Nano · Super · Ultra | Nemotron 3 on Token Factory — live crossing (in progress) |
-| Claude · GPT · Gemini | carried by hand: brief out, verdict pasted back |
+| Nano · Super · Ultra | Nemotron 3 on Token Factory — gated locally, then live |
 
-Both kinds produce the same thing — a signed packet attributed to that actor — which is
-why the manual seats are worth keeping rather than replacing. A verdict is a verdict
-whoever carried it, and a router that only ever reaches one vendor isn't a router.
+The lane used to seat Claude, GPT and Gemini alongside them for manual handoff.
+That path still exists at the API and is still tested — a brief carried by hand records
+a `crossed` event exactly like an API call, because it exposes the same content and only
+the carrier differs. But three tiers plus three vendor buttons made the lane read as a
+vendor list rather than an escalation ladder, so the buttons went and the mechanism
+stayed.
 
 Swap or add members by editing the `.member` buttons in `index.html` — `data-actor` is the
 only thing the code reads, and it's what gets recorded as the signature.

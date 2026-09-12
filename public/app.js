@@ -3,7 +3,7 @@
 const $ = id => document.getElementById(id);
 
 const el = {
-    demoNotice: $('demoNotice'),
+    demoNotice: $('demoNotice'), toast: $('toast'),
     messages: $('messages'), main: $('main'), input: $('input'), send: $('send'),
     model: $('model'), dot: $('dot'), statusText: $('statusText'), hint: $('hint'),
     attach: $('attach'), file: $('file'), attached: $('attached'), composer: $('composer'),
@@ -75,7 +75,7 @@ async function requireToken() {
 const DT_THREAD = 'application/x-airlock-thread';
 const DT_PACKET = 'application/x-airlock-packet';
 const DT_TRAY = 'application/x-airlock-tray';
-const IDLE_HINT = 'drag a thread up here';
+// The lane hint is static markup now; nothing in JS rewrites it.
 
 let messages = [];          // {role, content, images?: [dataUrl], stats?, error?}
 let pending = [];           // attachments staged for the next message
@@ -316,7 +316,7 @@ function render() {
             draggingPacket = null;
             clearDragChip();
             clearTrails();
-            flash(IDLE_HINT, 1);
+            clearFlash();
             el.messages.querySelectorAll('.nest-target')
                 .forEach(n => n.classList.remove('nest-target'));
         });
@@ -359,10 +359,29 @@ function render() {
 let flashTimer;
 
 /** Transient status in the lane — cheaper than a toast system, and it reads in place. */
+/**
+ * Transient feedback.
+ *
+ * This used to write into the lane hint, which sits at the right end of the
+ * committee bar — and that bar scrolls horizontally, so on a narrow window every
+ * message was rendered off-screen. A drag that gated, escalated and reported
+ * back looked exactly like a drag that did nothing.
+ */
 function flash(msg, ms = 4000) {
-    el.laneHint.textContent = msg;
+    if (el.toast) {
+        el.toast.textContent = msg;
+        el.toast.hidden = false;
+    }
     clearTimeout(flashTimer);
-    flashTimer = setTimeout(() => { el.laneHint.textContent = IDLE_HINT; }, ms);
+    flashTimer = setTimeout(() => {
+        if (el.toast) el.toast.hidden = true;
+    }, ms);
+}
+
+/** Dismiss the toast now. The lane hint is static, so there is nothing to restore. */
+function clearFlash() {
+    clearTimeout(flashTimer);
+    if (el.toast) el.toast.hidden = true;
 }
 
 function scrollDown() {
@@ -1284,7 +1303,7 @@ function wireThreadDnd(row) {
         el.trays.querySelectorAll('.drop-target').forEach(n => n.classList.remove('drop-target'));
         document.body.classList.remove('dragging-thread');
         draggingThread = null;
-        flash(IDLE_HINT, 1);
+        clearFlash();
     });
 
     const wants = e => e.dataTransfer.types.includes(DT_PACKET);
@@ -1411,7 +1430,7 @@ function wireTrayDnd(tray) {
         clearDragChip();
         clearTrails();
         draggingTray = null;
-        flash(IDLE_HINT, 1);
+        clearFlash();
     });
 
     // ── drop target ──
