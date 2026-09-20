@@ -243,10 +243,16 @@ function render() {
         // Nested packets sit indented on a connector rail, so containment is visible.
         const nest = m.depth ? ` data-depth="${m.depth}" style="margin-left:${m.depth * 24}px"` : '';
 
-        return `<div class="msg ${m.role}"${drag}${nest}>
+        // The tier is on the element, not just in a badge: a reply that came from across
+        // the boundary should be readable as such from the speaker line alone.
+        const tier = m.role === 'assistant' && m.tier === 'remote' ? ' remote' : '';
+
+        return `<div class="msg ${m.role}${tier}"${drag}${nest}>
                     <span class="who"${m.packetId ? ' draggable="true"' : ''}>${escapeHtml(speaker(m))}${
                         m.packetId
                             ? ` · #${m.packetId}<span class="grip" aria-hidden="true">⠿ drag</span>`
+                              + `<button class="prov-copy" type="button"`
+                              + ` title="Copy this with its provenance — works where a drag doesn't">⧉ copy</button>`
                             : ''}</span>
                     ${body}
                     ${badges(m)}
@@ -267,20 +273,23 @@ function render() {
 
         const handle = node.querySelector('.who[draggable]');
 
+        // A button inside the handle does not start a drag (form controls aren't draggable),
+        // so the two gestures coexist on one line without fighting each other.
+        node.querySelector('.prov-copy')?.addEventListener('click', ev => {
+            ev.stopPropagation();
+            const msg = messages.find(x => x.packetId === packetId);
+            if (msg) copyWithProvenance(msg, packetId, ev.currentTarget);
+        });
+
         handle?.addEventListener('dragstart', e => {
             const dt = e.dataTransfer;
             dt.setData(DT_PACKET, String(packetId));
 
             // Drop into another model's input box, or any text field, and the thought
-            // itself lands as text. A short header so the receiving side has context.
+            // itself lands as text — carrying the model that produced it and which side of
+            // the boundary it ran on. See provenanceOf().
             const msg = messages.find(x => x.packetId === packetId);
-            if (msg) {
-                const head = [`Airlock packet #${packetId}`];
-                if (activeThread) head.push(`thread: ${activeThread.title}`);
-                if (msg.origin && msg.origin !== activeThread?.title) head.push(`born in ${msg.origin}`);
-                if (msg.reviewers) head.push(`reviewed by ${msg.reviewers}`);
-                dt.setData('text/plain', `[${head.join(' · ')}]\n\n${msg.content}`);
-            }
+            if (msg) offerAsText(dt, exportText(msg, packetId), exportHtml(msg, packetId));
 
             // Shift = export a file instead. DownloadURL turns the whole drag into a FILE
             // drag as far as the OS is concerned, which makes chat inputs show a drop
@@ -896,7 +905,7 @@ function flatten(nodes, depth = 0, out = []) {
     for (const p of nodes) {
         out.push({
             role: p.role, content: p.content, images: p.images || [],
-            packetId: p.id, depth, model: p.model,
+            packetId: p.id, depth, model: p.model, tier: p.tier,
             origin: p.origin_thread_title, reviewers: p.reviewers, hops: p.hops
         });
         if (p.children?.length) flatten(p.children, depth + 1, out);
@@ -924,6 +933,11 @@ async function selectThread(id, title) {
     await loadTree();
     render();
     scrollDown();
+
+    // A thread can also be a duet — two participants over this same packet log. duet.js
+    // decides whether to take the pane over; the classic view above is built either way,
+    // so switching back is instant and nothing here needs to know which is on screen.
+    await window.duetUI?.onThread(activeThread);
 }
 
 function leaveThread() {
@@ -934,6 +948,7 @@ function leaveThread() {
     el.threadPill.hidden = true;
     paintWorkspace();
     renderRail();
+    window.duetUI?.onThread(null);
 }
 
 /** Persist one turn as a packet. No-op when no thread is selected. */
@@ -976,10 +991,13 @@ const centreOf = node => {
 
 // ── cursor trails ──
 // Colour is the affordance: you can see what a drop will do before you let go.
+// Same semantic as the rest of the palette: green stays on this machine, steel is a
+// board operation, amber leaves. A .md dragged to the desktop really does leave, so it
+// wears the crossing colour for the same reason the Oversight lane does.
 const TRAIL = {
-    move:   ['#a855f7', '#6d28d9'],   // purple — packet leaves, lands there
-    fork:   ['#2dd4bf', '#115e59'],   // teal   — copy, keeps a tether to the original
-    export: ['#fbbf24', '#b45309']    // amber  — leaving the app as a .md file
+    move:   ['#76b900', '#4a7a00'],   // green — packet moves, still on this desk
+    fork:   ['#b9c2cc', '#5b6672'],   // steel — a copy, tethered to the original
+    export: ['#ffb020', '#b8760a']    // amber — leaving the app as a .md file
 };
 
 const MAX_TRAIL = 36;        // hard cap; streaks overlap more than dots did
@@ -1124,7 +1142,7 @@ function comet(from, to, { fork = false } = {}) {
     node.style.top = `${a.y}px`;
     node.style.width = `${Math.min(110, Math.max(30, dist * 0.4))}px`;
     node.style.transformOrigin = 'left center';
-    if (fork) node.style.background = 'linear-gradient(90deg, transparent, #2dd4bf)';
+    if (fork) node.style.background = 'linear-gradient(90deg, transparent, #b9c2cc)';
     document.body.appendChild(node);
 
     const deg = Math.atan2(dy, dx) * 180 / Math.PI;
@@ -1242,6 +1260,124 @@ async function warmBrief(threadId) {
     }
 }
 
+// ─────────────────── what a packet says about itself on the way out ───────────────────
+
+/**
+ * The provenance line that travels with a thought when it leaves Airlock.
+ *
+ * Dropped into somebody else's chat box, an answer arrives stripped of everything that
+ * makes it auditable unless we attach it here: which model produced it, whether that model
+ * ran on this machine or across the boundary, and which packet it was so the claim can be
+ * traced back. "Some AI said so" is precisely the failure this desk exists to prevent, and
+ * it is the exported copy — the one that ends up in a doc, a review, a ticket — where that
+ * failure actually happens.
+ */
+function provenanceOf(m, packetId) {
+    const bits = [`Airlock packet #${packetId}`];
+    if (activeThread) bits.push(`thread: ${activeThread.title}`);
+
+    if (m.role === 'user') {
+        bits.push('written by the operator');
+    } else {
+        bits.push(`model: ${m.model || 'unnamed local model'}`);
+        // Stated outright, because it is the one fact a reader cannot recover downstream.
+        bits.push(m.tier === 'remote' ? 'ran off-machine' : 'ran on local hardware');
+    }
+
+    if (m.origin && m.origin !== activeThread?.title) bits.push(`born in ${m.origin}`);
+    if (m.reviewers) bits.push(`reviewed by ${m.reviewers}`);
+    return bits.join(' · ');
+}
+
+const exportText = (m, packetId) => `[${provenanceOf(m, packetId)}]\n\n${m.content}`;
+
+/**
+ * The same content as HTML, for editors that ignore text/plain when HTML is also on offer.
+ *
+ * Deliberately NOT a <pre>: a rich editor renders that as a code block, and a quoted answer
+ * is prose, not code. <br> keeps the line breaks without changing what the thing is.
+ */
+const asHtml = text => `<div>${escapeHtml(text).replace(/\n/g, '<br>')}</div>`;
+
+const exportHtml = (m, packetId) =>
+    `<div><i>[${escapeHtml(provenanceOf(m, packetId))}]</i><br><br>`
+    + `${escapeHtml(m.content).replace(/\n/g, '<br>')}</div>`;
+
+/**
+ * Offer a drag in every flavour a drop target might actually read.
+ *
+ * Chat composers stopped being textareas years ago; they are rich editors (ProseMirror,
+ * Lexical, Quill, Slate) whose drop handlers look for text/html first and fall back to
+ * text/plain only when no HTML is on offer. Setting text/plain alone is why this drag lands
+ * in some apps and silently does nothing in others.
+ *
+ * Note what is deliberately NOT set here: text/uri-list. A target that accepts links would
+ * insert the URL in place of the text, and the URL is on localhost — meaningless to anyone
+ * but this machine. Offering it would trade a working paste for a dead link.
+ */
+function offerAsText(dt, text, html = asHtml(text)) {
+    dt.setData('text/plain', text);
+    dt.setData('text/html', html);
+}
+
+/**
+ * Copy, for the many drop targets that will never accept a drag.
+ *
+ * Whether a drag works is entirely the receiving page's call — some composers only take
+ * files, some take nothing at all — and no amount of correctness on this end changes that.
+ * The clipboard has no such veto, so everything draggable here is also copyable.
+ */
+async function copyWithProvenance(m, packetId, btn) {
+    const text = exportText(m, packetId);
+
+    const done = () => {
+        if (!btn) return;
+        btn.textContent = 'copied';
+        setTimeout(() => { btn.textContent = '⧉ copy'; }, 1400);
+    };
+
+    try {
+        // Both flavours, same reasoning as the drag: rich editors prefer the HTML.
+        if (navigator.clipboard?.write && window.ClipboardItem) {
+            await navigator.clipboard.write([new ClipboardItem({
+                'text/plain': new Blob([text], { type: 'text/plain' }),
+                'text/html': new Blob([exportHtml(m, packetId)], { type: 'text/html' })
+            })]);
+        } else {
+            await navigator.clipboard.writeText(text);
+        }
+        return done();
+    } catch {
+        // The async clipboard is permission-gated and a browser may simply say no —
+        // observed denied outright in an automation profile. Fall through rather than
+        // report failure, because the old synchronous path asks no permission at all.
+    }
+
+    if (legacyCopy(text)) return done();
+    flash('Could not reach the clipboard — the text is in the drag instead.', 4000);
+}
+
+/**
+ * execCommand('copy'), kept alive on purpose.
+ *
+ * Deprecated, and still the only copy that works when clipboard-write is denied: it rides
+ * the user's gesture instead of asking for a permission. Plain text only — the HTML
+ * flavour is a nicety, being able to copy at all is not.
+ */
+function legacyCopy(text) {
+    const pad = document.createElement('textarea');
+    pad.value = text;
+    pad.setAttribute('readonly', '');
+    pad.style.cssText = 'position:fixed;top:-1000px;left:-1000px;opacity:0';
+    document.body.appendChild(pad);
+    pad.select();
+
+    let copied = false;
+    try { copied = document.execCommand('copy'); } catch { copied = false; }
+    pad.remove();
+    return copied;
+}
+
 // ─────────────────── drag & drop: threads out, packets across ───────────────────
 
 /**
@@ -1260,8 +1396,9 @@ function wireThreadDnd(row) {
 
         dt.setData(DT_THREAD, String(threadId));
 
-        // Drop into a text field or another model's chat box → pastes the brief.
-        dt.setData('text/plain', briefCache.get(threadId)
+        // Drop into a text field or another model's chat box → pastes the brief. Offered as
+        // HTML too, because a rich composer reads that first and ignores the plain text.
+        offerAsText(dt, briefCache.get(threadId)
             || `Airlock thread "${title}" — open ${location.origin} to read it.`);
 
         // Shift = export a file instead. Setting DownloadURL makes the OS treat this as a
@@ -1996,6 +2133,12 @@ el.model.onchange = async () => {
 };
 
 el.hint.textContent = 'images + tool use supported';
+
+// The picker is hidden in duet mode (each pane has its own), but in the single-pane view
+// it is still doing more than its label suggests — including choosing the gatekeeper when
+// the selection is local. Say so on hover rather than leaving that to be discovered.
+el.model.title = 'Model for the single-pane view. Also seeds new threads, and — when it '
+    + 'is a local model — it is the one that rules on crossings.';
 
 (async () => {
     restore();

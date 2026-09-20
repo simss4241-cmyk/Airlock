@@ -11,6 +11,8 @@ const files = require('./files');
 const providers = require('./providers');
 const { runGate } = require('./boundary');
 const auth = require('./auth');
+const duet = require('./duet-store');
+const { generate: generateDuet, queueState } = require('./duet-runner');
 
 const app = express();
 
@@ -38,6 +40,11 @@ const DEFAULTS = {
     // point, but on a partially-offloaded 30B it costs ~3.7x the wall clock for simple
     // questions (measured: 33.7s vs 9.1s for a two-word answer). Toggleable per taste.
     think: true,
+    // How many duet generations may run at once on the LOCAL tier. One is not timidity:
+    // two 30B streams on 16 GB of VRAM is slower than running them back to back, and the
+    // queue is visible in the UI so the wait is honest rather than mysterious. The remote
+    // tier is not throttled by this — see queueFor() in duet-runner.js.
+    maxConcurrent: 1,
     // NOTE: `workspaceRoot` and `tools` are deliberately absent, and this list is also the
     // allowlist for POST /api/config. Workspaces are per-thread and live in the database, so
     // the retired global root cannot be written back here and re-migrated; and whether tools
@@ -159,6 +166,24 @@ app.use(express.json({ limit: '32mb' }));  // images ride along as base64
 // to prompt for a token. It ships no data of its own — everything comes from
 // /api, which is guarded.
 app.use(express.static(path.join(__dirname, 'public')));
+
+/**
+ * Who is answering on this port.
+ *
+ * Mounted BEFORE the auth guard, and deliberately so: this is what the launchers use to
+ * tell "Airlock is already running" apart from "something else has the port", and a
+ * launcher has no token to present. It reveals nothing — the page's <title> already says
+ * Airlock to anyone who opens it.
+ *
+ * It exists because it was needed. Airlock is a fork of Glimmer and the two shared port
+ * 8100 for a while; both launchers checked only whether *something* was listening, so
+ * whichever app started first quietly owned both desktop shortcuts — clicking Airlock
+ * opened Glimmer, in a window titled Glimmer, and the .bat cheerfully reported "Airlock
+ * server is already running". Glimmer has since moved to :8101, but a socket check that
+ * cannot name what answered is the actual bug and this is the fix for it.
+ */
+app.get('/api/whoami', (req, res) => res.json({ app: 'airlock', port: PORT }));
+
 app.use('/api', auth.guard);
 
 // Lets the page discover whether it needs a token before it asks for anything
@@ -749,6 +774,115 @@ app.get('/api/fs/list', fsRoute(req => files.listDirectory(requestWorkspace(req)
 app.get('/api/fs/read', fsRoute(req => files.readTextFile(requestWorkspace(req), req.query.path)));
 app.get('/api/fs/find', fsRoute(req => files.findFiles(requestWorkspace(req), req.query.q)));
 
+// ─────────────────────── Duet: two participants, one conversation ───────────────────────
+//
+// The thread is the conversation; the panes are filtered views over it. Nothing here keeps
+// a second log, and nothing here talks to a model directly — duet-runner.js orchestrates,
+// providers/ transports, and boundary.js rules on anything that would leave the machine.
+//
+// ⚠ A duet crossing exposes the OTHER participant's words too. Asking a remote participant
+// sends it the shared conversation, so the gate reads the whole assembled context and the
+// crossing is recorded against every packet that was actually in it. See duet-runner.js.
+
+const duetRoute = handler => async (req, res) => {
+    try {
+        res.json(await handler(req));
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+};
+
+/** Everything a client needs to paint both panes, in one round trip. */
+async function duetState(threadId) {
+    const thread = store.getThread(Number(threadId));
+    if (!thread) throw new Error(`No thread ${threadId}`);
+
+    const participants = duet.getParticipants(thread.id).map(p => ({
+        ...p,
+        // Resolved here, never stored and never accepted from the client: which side of
+        // the boundary a participant sits on is a fact about its model id.
+        tier: p.model ? providers.tierOf(p.model) : null
+    }));
+
+    return {
+        thread: { id: thread.id, title: thread.title, folder: thread.folder_name },
+        enabled: participants.length > 0,
+        userName: duet.USER_NAME,
+        participants,
+        messages: participants.length ? duet.getConversation(thread.id) : [],
+        queue: queueState()
+    };
+}
+
+app.get('/api/duet/:id', duetRoute(req => duetState(req.params.id)));
+
+app.post('/api/duet/:id/enable', duetRoute(async req => {
+    // Same seating as thread creation: one participant here, one across the boundary.
+    // This route used to put config.model in BOTH slots, so a thread seated through it
+    // opened as two copies of the same model — which is a chat with itself, and on a
+    // keyed machine two copies of a REMOTE one.
+    duet.ensureDuet(req.params.id, {
+        models: req.body?.model
+            ? { a: req.body.model, b: req.body.model }
+            : await defaultParticipantModels()
+    });
+    return duetState(req.params.id);
+}));
+
+app.patch('/api/duet/participants/:id', duetRoute(req => {
+    const updated = duet.updateParticipant(req.params.id, req.body);
+    return { ...updated, tier: updated.model ? providers.tierOf(updated.model) : null };
+}));
+
+/**
+ * Send to one participant, and stream its reply.
+ *
+ * NDJSON rather than SSE, matching /api/chat — one JSON object per line, each tagged with
+ * the message id it belongs to, so a client running both panes at once never has to guess
+ * whose token it just received. Closing the response is the stop signal, as on /api/chat.
+ */
+app.post('/api/duet/:id/send', async (req, res) => {
+    const controller = new AbortController();
+
+    // Hang the abort off the *response*, never the request: express.json() drains the body
+    // and Node then destroys the consumed stream, so `req` fires 'close' long before a
+    // model is reached.
+    res.on('close', () => {
+        if (!res.writableEnded) controller.abort();
+    });
+
+    let streaming = false;
+    const emit = event => {
+        if (!streaming) {
+            streaming = true;
+            res.setHeader('Content-Type', 'application/x-ndjson');
+            res.setHeader('Cache-Control', 'no-cache');
+            res.flushHeaders();
+        }
+        res.write(JSON.stringify(event) + '\n');
+    };
+
+    try {
+        await generateDuet({
+            threadId: Number(req.params.id),
+            participantId: Number(req.body.participantId),
+            text: req.body.text,
+            clientRequestId: req.body.clientRequestId,
+            retryOf: req.body.retryOf ? Number(req.body.retryOf) : null,
+            config,
+            signal: controller.signal,
+            emit
+        });
+        res.end();
+    } catch (err) {
+        // Validation failures land here — before any token exists, so they can still be a
+        // plain 400 the client shows against the composer.
+        if (!streaming) return res.status(400).json({ error: err.message });
+        emit({ type: 'error', error: err.message });
+        res.end();
+    }
+});
+
 // ─────────────────────── Packet store ───────────────────────
 // Thin HTTP over db.js. Deliberately no drag-and-drop semantics here — "move",
 // "fork", "nest" and "review" are store operations, so the board UI (whenever it
@@ -775,11 +909,59 @@ app.post('/api/folders', ok(req => {
 }));
 app.delete('/api/folders/:id', ok(req => (store.deleteFolder(id(req)), { ok: true })));
 
-app.post('/api/threads', ok(req => {
-    const { folderId, title } = req.body;
-    if (!folderId || !title) throw new Error('A thread needs folderId and title.');
-    return store.createThread(folderId, title);
-}));
+/**
+ * What a brand new duet opens with: one participant on this machine, one across the
+ * boundary.
+ *
+ * That pairing is the product, not a nicety. Two local participants is a chat with itself;
+ * two remote ones is a desk that has quietly stopped being local-first. Opening with one
+ * of each means the very first thing on screen demonstrates what Airlock is for, and the
+ * chamber underneath immediately has something to show.
+ *
+ * Degrades honestly: with no Nebius key both slots are local, and with no Ollama models
+ * both are whatever the config opens on.
+ */
+async function defaultParticipantModels() {
+    const local = await require('./providers/ollama').list().catch(() => []);
+    const biggestLocal = local.length
+        ? local.slice().sort((a, b) => (b.size || 0) - (a.size || 0))[0].id
+        : null;
+
+    const configured = config.model || null;
+    const configuredIsRemote = configured && providers.tierOf(configured) === 'remote';
+
+    // Prefer the configured model for whichever side it belongs to, so the picker the
+    // user already set is honoured rather than silently overridden.
+    const a = (configured && !configuredIsRemote) ? configured : (biggestLocal || configured);
+    const b = configuredIsRemote ? configured
+        : (process.env.NEBIUS_API_KEY && process.env.AIRLOCK_MODEL_VERDICT) || a;
+
+    return { a, b };
+}
+
+app.post('/api/threads', async (req, res) => {
+    try {
+        const { folderId, title } = req.body;
+        if (!folderId || !title) throw new Error('A thread needs folderId and title.');
+
+        const thread = store.createThread(folderId, title);
+
+        // Every thread is a duet. Two participants over one conversation is the shape of
+        // this app, not a mode you switch into — so they exist from the moment the thread
+        // does, and the UI never has to ask whether this thread "is" one.
+        try {
+            duet.ensureDuet(thread.id, { models: await defaultParticipantModels() });
+        } catch (err) {
+            // A thread without participants still works as a single-pane chat, so this
+            // must not be able to fail thread creation.
+            console.error('could not seat participants:', err.message);
+        }
+
+        res.json(thread);
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
 app.delete('/api/threads/:id', ok(req => (store.deleteThread(id(req)), { ok: true })));
 app.get('/api/threads/:id/packets', ok(req => store.getThreadPackets(id(req))));
 
@@ -825,7 +1007,7 @@ app.get('/api/threads/:id/exposure', ok(req => store.getExposure(id(req))));
 app.post('/api/threads/:id/gate', async (req, res) => {
     try {
         const brief = store.buildBrief(id(req), { actor: req.body?.actor || 'the committee' });
-        const gate = await runGate(brief.markdown, { model: config.model, config });
+        const gate = await runGate(brief.markdown, { config });
         res.json({ gate, packets: brief.packetIds.length });
     } catch (err) {
         res.status(400).json({ error: err.message });
@@ -957,6 +1139,11 @@ app.get('/api/packets/:id/packet.md', (req, res) => {
         const lines = [`# Airlock packet #${p.id}`, ''];
         lines.push(`Thread: **${thread?.title ?? '?'}** · tray: ${thread?.folder_name ?? '?'} · `
             + `role: ${p.role}${p.model ? ` · model: ${p.model}` : ''}`);
+        // Which side of the boundary produced it, said in the exported file too — the drag
+        // header carries this, and a file that omitted it would contradict the paste.
+        if (p.role === 'assistant') {
+            lines.push(`Ran: ${p.tier === 'remote' ? '**off-machine**' : 'on local hardware'}`);
+        }
         if (origin) lines.push(`Born in: **${origin.title}**`);
         if (reviews.length) lines.push(`Reviewed by: ${reviews.map(r => r.actor).join(', ')}`);
         lines.push('', '---', '', p.content, '');
@@ -973,11 +1160,47 @@ app.post('/api/packets/:id/move', ok(req => store.movePacket(id(req), req.body))
 app.post('/api/packets/:id/fork', ok(req => store.forkPacket(id(req), req.body)));
 app.post('/api/packets/:id/review', ok(req => store.reviewPacket(id(req), req.body)));
 
-loadConfig().then(() => {
+/**
+ * Seat participants on threads that predate "every thread is a duet".
+ *
+ * Once, behind a marker, at boot — NOT lazily when a thread is opened. Creating rows as a
+ * side effect of a GET is the kind of thing that works until two windows open the same
+ * thread at once, and it also means a read-only glance at somebody's board quietly
+ * rewrites it. A migration says what it is and can be reasoned about afterwards.
+ */
+async function seatExistingThreads() {
+    if (store.getMeta('duet_all_threads')) return 0;
+
+    const models = await defaultParticipantModels();
+    let seated = 0;
+
+    for (const folder of store.getTree()) {
+        for (const thread of folder.threads) {
+            if (duet.isDuet(thread.id)) continue;
+            try { duet.ensureDuet(thread.id, { models }); seated++; } catch { /* skip */ }
+        }
+    }
+
+    store.setMeta('duet_all_threads', `${seated} thread(s) seated at ${new Date().toISOString()}`);
+    return seated;
+}
+
+loadConfig().then(async () => {
+    // A duet reply left mid-stream by a crash or a restart is neither finished nor
+    // abandoned, and until it is settled it would sit in the UI as a permanently
+    // thinking pane.
+    const stranded = duet.resetStaleGenerations();
+    const seated = await seatExistingThreads().catch(err => {
+        console.error('could not seat existing threads:', err.message);
+        return 0;
+    });
+
     app.listen(PORT, () => {
         const s = store.stats();
         console.log('');
         console.log(`  Airlock is running -> http://localhost:${PORT}`);
+        if (stranded) console.log(`  Settled ${stranded} duet generation(s) stranded by the last shutdown`);
+        if (seated) console.log(`  Seated participants on ${seated} existing thread(s)`);
         console.log(config.model
             ? `  Model: ${config.model}   ctx: ${config.num_ctx}`
             : '  Model: none reachable. Pull an Ollama model, or set NEBIUS_API_KEY.');

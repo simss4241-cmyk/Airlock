@@ -28,3 +28,6 @@ airlock-config.json
 
 # Local editor/agent tooling
 .claude/
+
+# Python bytecode from tools/make_icons.py
+__pycache__/

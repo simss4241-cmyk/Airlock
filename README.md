@@ -14,7 +14,10 @@ a guess — and a crossing by hand counts exactly the same as one over an API.
 
 The boundary is the product. Routing is only how it is enforced.
 
-Node/Express on **:8100**, local inference through Ollama on **:11434**. No build
+Node/Express on **:8100**, local inference through Ollama on **:11434**. Glimmer, the
+project this was forked from, used to default to :8100 as well and now uses :8101 — the
+launchers here ask `/api/whoami` who is actually answering rather than trusting an open
+socket, because for a while whichever app started first silently owned both shortcuts. No build
 step, no CDN, no frontend dependencies, and one npm package.
 
 ## Status
@@ -31,16 +34,18 @@ what leaves it. This table is the honest version — clone it and check.
 | Remote tier on Nebius Token Factory (Nemotron 3) | working, 34 assertions |
 | One streaming contract across both tiers | working |
 | Model dropdown grouped by tier, capability-badged | working |
-| Local gate rules before anything crosses, and fails closed | working, 59 assertions |
+| Local gate rules before anything crosses, and fails closed | working, 65 assertions |
 | Tier recorded per packet; "what crossed?" as a query | working |
 | Escalation by router **and** by hand, both recorded as crossings | working |
 | Access token + remote spend cap for hosting | working, 26 assertions |
+| Duet — two addressable participants over one conversation | working, 72 assertions |
+| Gate consent revoked with its thread; recycled ids inherit nothing | working, 14 assertions |
 | Redaction — crossing a brief with the sensitive parts stripped | not built |
 | Per-turn gating (a secret typed on turn nine is not caught) | not built |
 | Per-visitor isolation (a shared token is not multi-tenancy) | not built |
 | Hosted demo build | not built |
 
-**254 assertions across six suites.** Run them:
+**346 assertions across nine suites.** Run them:
 
 ```
 npm start                          # in one terminal
@@ -50,10 +55,21 @@ node tools/provider_test.js        # both tiers
 node tools/auth_test.js            # access guard, spend cap
 node tools/files_test.js           # workspace containment
 node tools/workspace_test.js       # migrations
+node tools/duet_context_test.js    # what each participant is shown
+node tools/duet_test.js            # two panes, one conversation
+node tools/clearance_test.js       # gate consent does not outlive its thread
 ```
 
 The remote suites **skip** rather than fail without a Nebius key, so the tests
-run on a clean clone with no credentials.
+run on a clean clone with no credentials. `duet_test.js` additionally skips the
+remote crossing unless `AIRLOCK_DUET_TEST_REMOTE=1`, because that one spends real
+credits and a test suite should not do that without being asked.
+
+⚠ The gate's ruling is a model's judgement, so `boundary_test.js` can occasionally
+withhold a message it should release. That is reported as a failure and the dependent
+assertions are marked `skip` — it no longer silently truncates the run. Naming a small,
+quick local model in `AIRLOCK_GATE_MODEL` makes it both faster and steadier; without one
+the gate falls back to your largest installed model, which on a 16 GB card may be a 30B.
 
 Built for the Nebius × NVIDIA Global AI Hackathon — Personal AI track.
 
@@ -126,6 +142,17 @@ means anything. **A remote gate cannot gate remoteness.**
 
 So the gatekeeper runs on the machine it protects, and the remote tier keeps the
 job it is actually good at: reasoning about what the gate released.
+
+**This is now enforced rather than merely intended.** It was not, for a while: all
+three call sites passed `config.model` to `runGate`, and `pickDefaultModel()` returns a
+Nemotron id whenever a Nebius key is present — so on a configured machine the gate was
+running *remotely*, and nothing failed, because a remote model answers the gate prompt
+perfectly well. It just answers it after the content has already crossed.
+
+`runGate` now resolves a local model itself, and **refuses** if it is handed a remote one.
+`AIRLOCK_GATE_MODEL` names which local model does the job; unset, it uses the current
+model when that is local, otherwise the largest installed one. Prefer something small and
+quick — the gate is a short yes/no standing between you and your first remote reply.
 
 ### It fails closed
 
@@ -440,6 +467,7 @@ idea.
 | [docs/local-tier.md](docs/local-tier.md) | Ollama setup, the Blackwell flash-attention fight, VRAM budgeting, the reasoning channel, the token counter, the taskbar launcher |
 | [docs/board.md](docs/board.md) | The packet store's schema and rules, every drag gesture, cross-app drag payloads, the motion design, the palette |
 | [docs/workspaces.md](docs/workspaces.md) | Per-thread read-only file access and its containment tests (Windows only) |
+| [docs/duet.md](docs/duet.md) | Two participants over one conversation: what each is shown, why a crossing exposes the other's words, the queue, the lifecycle |
 | [docs/verification.md](docs/verification.md) | What was verified by hand, when, and what was not |
 
 ## Licence

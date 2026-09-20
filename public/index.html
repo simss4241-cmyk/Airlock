@@ -7,7 +7,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/favicon.png" sizes="any">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<meta name="theme-color" content="#0b1120">
+<meta name="theme-color" content="#0b0d10">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -17,21 +17,19 @@
 <aside class="sidebar">
     <div class="brand-block">
         <div class="brand">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="1.8"
-                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <defs>
-                    <linearGradient id="gl" x1="0" y1="1" x2="1" y2="0">
-                        <stop offset="0%" stop-color="#2dd4bf"/>
-                        <stop offset="55%" stop-color="#a855f7"/>
-                        <stop offset="100%" stop-color="#6d28d9"/>
-                    </linearGradient>
-                </defs>
-                <path d="M12 2.5 13.9 9 20.5 11 13.9 13 12 19.5 10.1 13 3.5 11 10.1 9Z" stroke="url(#gl)"/>
-                <path d="M18.5 3.5v3M20 5h-3" stroke="#2dd4bf"/>
+            <!-- A hatch seal, matching the taskbar icon: a heavy ring split by a seam,
+                 green on the inside half and amber on the outside. It is the boundary,
+                 which is what this app is. The sparkle it replaced was Glimmer's, and
+                 said nothing about a pressure door. -->
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="3"
+                 stroke-linecap="butt" aria-hidden="true">
+                <path d="M11.3 4.03 A 8 8 0 0 0 11.3 19.97" stroke="#76b900"/>
+                <path d="M12.7 4.03 A 8 8 0 0 1 12.7 19.97" stroke="#ffb020"/>
+                <circle cx="12" cy="12" r="1.7" fill="#e6e9ed" stroke="none"/>
             </svg>
             <h1>Airlock</h1>
         </div>
-        <p class="tagline">Runs local. Packs thoughts.</p>
+        <p class="tagline">Local by default. Crossings on the record.</p>
 
         <div class="pill-row">
             <span class="pill" id="status"><span class="dot" id="dot"></span><span id="statusText">checking…</span></span>
@@ -83,6 +81,8 @@
                     title="Nemotron 3 Ultra 550B — deep review, 1M-token window">Ultra</button>
         </div>
         <span class="spacer"></span>
+        <button class="pill pill-btn" id="duetToggle" hidden
+                title="Two named participants sharing this one conversation, each with its own pane">⇄ duet</button>
         <span class="pill" id="threadPill" hidden><span id="threadName"></span></span>
         <span class="lane-hint" id="laneHint">drag a thread up here</span>
     </div>
@@ -96,6 +96,40 @@
     <main id="main">
         <div class="wrap" id="messages"></div>
     </main>
+
+    <!-- Duet: two addressable participants over the SAME thread. The panes are filtered
+         views of one log, never two conversations. A participant pointed at a remote
+         model crosses the boundary with the WHOLE shared conversation, gated locally
+         first — see public/duet.js and duet-runner.js. -->
+    <section class="duet" id="duet" hidden data-slot="a">
+        <div class="duet-tabs" id="duetTabs"></div>
+        <div class="duet-grid" id="duetGrid"></div>
+
+        <!-- The airlock itself: the one chamber both doors open onto.
+             This is the shared conversation, and it is deliberately NOT behind a
+             button. Two panes with the shared log hidden read as two separate chats;
+             the whole claim of this app is that they are one conversation, so the
+             thing that makes them one is on screen at all times. It is also where
+             crossings become visible — a row that left this machine says so. -->
+        <section class="airlock" id="airlockRail">
+            <header class="airlock-head" id="airlockHead">
+                <svg class="airlock-mark" width="13" height="13" viewBox="0 0 24 24"
+                     fill="none" stroke-width="4" stroke-linecap="butt" aria-hidden="true">
+                    <path d="M11 4.2 A 7.8 7.8 0 0 0 11 19.8" stroke="#76b900"/>
+                    <path d="M13 4.2 A 7.8 7.8 0 0 1 13 19.8" stroke="#ffb020"/>
+                </svg>
+                <span class="airlock-title">Airlock</span>
+                <span class="airlock-sub" id="airlockSub"></span>
+                <span class="spacer"></span>
+                <span class="airlock-legend">
+                    <span class="key local">local</span>
+                    <span class="key crossed">↗ crossed</span>
+                </span>
+                <button class="icon-btn sm" id="airlockToggle" title="Collapse the chamber">▾</button>
+            </header>
+            <div class="airlock-log" id="airlockLog"></div>
+        </section>
+    </section>
 
     <footer>
         <div class="composer" id="composer">
@@ -217,5 +251,6 @@
 </dialog>
 
 <script src="app.js"></script>
+<script src="duet.js"></script>
 </body>
 </html>

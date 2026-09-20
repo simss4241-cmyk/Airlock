@@ -1,24 +1,40 @@
-/* Palette - teal/purple, five tokens:
-   #0b1120 ink · #022c43 deep teal · #115e59 teal · #6d28d9 violet · #a855f7 purple */
+/* Palette — machined graphite, NVIDIA green, caution amber.
+   
+   Colour is SEMANTIC here, not decorative. The old scheme was inherited from Glimmer,
+   where teal meant "you" and purple meant "the assistant" — pretty, and it told you
+   nothing. On this desk the one thing you must be able to read at a glance is which side
+   of the boundary something is on, so that is what colour is spent on:
+
+     green  #76b900   local tier — on this machine, nothing has left
+     amber  #ffb020   across the boundary — a crossing, or about to be one
+     red    #ff5a5f   refused, failed, blocked
+
+   Everything else is steel and stays out of the way. Green is NVIDIA's, which is the
+   right green for a desk built around Nemotron. */
 :root {
-    --bg: #0b1120;
-    --panel: #101a2e;
-    --panel-2: #16233c;
-    --line: #1e3454;
-    --text: #e8ecf5;
-    --muted: #8ba3bd;
+    --bg: #0b0d10;            /* graphite, not navy — a machine, not a night sky */
+    --panel: #121519;
+    --panel-2: #171b21;
+    --line: #262c34;          /* a machined edge, one value lighter than the panel */
+    --text: #e6e9ed;
+    --muted: #8b949e;
 
-    --accent: #a855f7;        /* purple — assistant, primary actions */
-    --accent-deep: #6d28d9;   /* violet — focus rings, gradients */
-    --accent-dim: #40257a;    /* muted violet border */
+    --accent: #76b900;        /* NVIDIA green — local tier, primary actions, nominal */
+    --accent-deep: #5c8f00;   /* pressed states and gradients */
+    --accent-dim: #33470f;    /* muted green border */
 
-    --teal: #115e59;
-    --teal-bright: #2dd4bf;   /* user label, healthy status */
-    --user: #022c43;          /* user bubble — deep teal */
-    --user-line: #0d4a56;
+    --cross: #ffb020;         /* amber — anything that crossed, or is about to */
+    --cross-deep: #b8760a;
+    --cross-dim: #4a3410;
 
-    --danger: #f43f5e;
-    --radius: 12px;
+    --ok: #76b900;            /* healthy / reachable / local */
+    --user: #1b2027;          /* your own bubble: steel, deliberately uncoloured —
+                                 colour is reserved for the boundary */
+    --user-line: #2e3742;
+    --user-text: #b9c2cc;
+
+    --danger: #ff5a5f;
+    --radius: 6px;            /* tighter than the old 12px: machined, not pillowy */
 }
 
 * { box-sizing: border-box; }
@@ -59,7 +75,7 @@ select, input, textarea, button {
     max-width: min(680px, calc(100% - 32px));
     padding: 9px 14px;
     border-radius: 10px;
-    background: #131033;
+    background: #14181d;
     border: 1px solid var(--accent-dim);
     color: var(--text);
     font-size: 12.5px;
@@ -91,7 +107,7 @@ select, input, textarea, button {
 }
 
 .sidebar {
-    background: linear-gradient(180deg, #0c1424, #0e1729);
+    background: linear-gradient(180deg, #0e1115, #101419);
     border-right: 1px solid var(--line);
     box-shadow: inset -1px 0 0 rgba(45, 212, 191, .08);
     padding: 16px 12px 12px;
@@ -116,7 +132,7 @@ select, input, textarea, button {
     letter-spacing: .3px;
 }
 
-.brand svg { filter: drop-shadow(0 0 7px rgba(168, 85, 247, .55)); }
+.brand svg { filter: drop-shadow(0 0 6px rgba(118, 185, 0, .35)); }
 
 .tagline {
     margin: 0;
@@ -156,7 +172,7 @@ select, input, textarea, button {
     transition: border-color .15s ease, color .15s ease;
 }
 
-.pill-btn:hover { border-color: var(--teal-bright); color: var(--text); }
+.pill-btn:hover { border-color: var(--ok); color: var(--text); }
 
 .dot {
     width: 7px;
@@ -166,9 +182,9 @@ select, input, textarea, button {
     flex: none;
 }
 
-.dot.ok   { background: var(--teal-bright); box-shadow: 0 0 6px #2dd4bf99; }
-.dot.warn { background: var(--accent); box-shadow: 0 0 6px #a855f799; }
-.dot.bad  { background: var(--danger); box-shadow: 0 0 6px #f43f5e99; }
+.dot.ok   { background: var(--ok); box-shadow: 0 0 6px #76b90099; }
+.dot.warn { background: var(--accent); box-shadow: 0 0 6px #76b90099; }
+.dot.bad  { background: var(--danger); box-shadow: 0 0 6px #ff5a5f99; }
 
 select {
     background: var(--panel-2);
@@ -196,7 +212,7 @@ select {
 .icon-btn.toggle.on {
     color: var(--accent);
     border-color: var(--accent-dim);
-    background: #1a1233;
+    background: #16210a;
 }
 
 /* ── Tray rail ── */
@@ -244,12 +260,14 @@ select {
     font-size: 10.5px;
     letter-spacing: .9px;
     text-transform: uppercase;
-    color: var(--teal-bright);
+    /* Steel, not green. A tray name is filing, not a boundary fact — spending the
+       tier colour on it would make the one thing green is supposed to mean quieter. */
+    color: var(--muted);
     cursor: grab;
     border-radius: 6px;
 }
 
-.tray-name:hover { background: #0d2233; }
+.tray-name:hover { background: #171c22; }
 .tray.dragging { opacity: .4; }
 
 /* where the dragged tray will land */
@@ -261,8 +279,8 @@ select {
     right: 0;
     height: 2px;
     border-radius: 2px;
-    background: var(--teal-bright);
-    box-shadow: 0 0 8px var(--teal-bright);
+    background: var(--ok);
+    box-shadow: 0 0 8px var(--ok);
 }
 
 .tray.insert-above::before { top: -5px; }
@@ -301,7 +319,7 @@ body.dragging-thread .tray-tail.vacant { height: auto; border-color: var(--accen
 
 body.dragging-thread .tray.drop-target .tray-tail {
     border-color: var(--accent);
-    background: #1b1436;
+    background: #1a2210;
 }
 
 .thread {
@@ -343,8 +361,8 @@ body.dragging-thread .tray.drop-target .tray-tail {
 /* a packet is hovering over this thread — it will land here */
 .thread.drop-target {
     border-color: var(--accent);
-    background: #1b1436;
-    box-shadow: 0 0 12px #a855f73d;
+    background: #1a2210;
+    box-shadow: 0 0 12px #76b9003d;
 }
 
 .thread .count {
@@ -372,17 +390,17 @@ body.dragging-thread .tray.drop-target .tray-tail {
 }
 
 .thread:hover .row-x, .tray-name:hover .row-x { opacity: .7; }
-.row-x:hover { opacity: 1 !important; color: var(--danger); background: #2a1220; }
+.row-x:hover { opacity: 1 !important; color: var(--danger); background: #241417; }
 
 /* a thread is hovering over this tray — drop to re-file it */
 .tray.drop-target {
-    outline: 1px dashed var(--teal-bright);
+    outline: 1px dashed var(--ok);
     outline-offset: 3px;
     border-radius: 10px;
-    background: #08202c;
+    background: #18220f;
 }
 
-.tray.drop-target > .tray-name { color: var(--teal-bright); }
+.tray.drop-target > .tray-name { color: var(--ok); }
 
 /* inline rename */
 .rename-input {
@@ -401,7 +419,7 @@ body.dragging-thread .tray.drop-target .tray-tail {
 /* something just landed here */
 @keyframes settle {
     0%   { transform: scale(1); }
-    35%  { transform: scale(1.055); box-shadow: 0 0 16px #a855f77a; }
+    35%  { transform: scale(1.055); box-shadow: 0 0 16px #76b9007a; }
     100% { transform: scale(1); }
 }
 
@@ -426,7 +444,7 @@ body.dragging-thread .tray.drop-target .tray-tail {
     align-items: center;
     gap: 10px;
     padding: 9px 16px;
-    background: linear-gradient(90deg, #0d1a2c, #131033);
+    background: linear-gradient(90deg, #0e1216, #14181d);
     border-bottom: 1px solid var(--line);
     font-size: 12px;
     overflow-x: auto;
@@ -445,12 +463,12 @@ body.dragging-thread .tray.drop-target .tray-tail {
     border-radius: 999px;
     background: var(--user);
     border: 1px solid var(--user-line);
-    color: var(--teal-bright);
+    color: var(--ok);
     font-size: 11.5px;
     white-space: nowrap;
 }
 
-.lane-arrow { color: var(--accent); }
+.lane-arrow { color: var(--cross); }
 
 .members { display: flex; gap: 6px; }
 
@@ -458,7 +476,7 @@ body.dragging-thread .tray.drop-target .tray-tail {
     padding: 5px 12px;
     border-radius: 999px;
     background: var(--panel-2);
-    border: 1px dashed var(--accent-dim);
+    border: 1px dashed var(--cross-dim);
     color: var(--muted);
     font-size: 11.5px;
     cursor: pointer;
@@ -466,14 +484,14 @@ body.dragging-thread .tray.drop-target .tray-tail {
     transition: transform .12s, box-shadow .12s, color .12s;
 }
 
-.member:hover { color: var(--accent); border-color: var(--accent); }
+.member:hover { color: var(--cross); border-color: var(--cross); }
 
 /* A live seat crosses the boundary by itself. The dashed border on the others
    means "you carry this"; solid means "this one goes on its own", and the
    difference has to be legible before the drop, not after. */
 .member.live {
     border-style: solid;
-    border-color: var(--accent);
+    border-color: var(--cross);
     color: var(--text);
 }
 .member.live::before {
@@ -504,11 +522,12 @@ body.dragging-thread .tray.drop-target .tray-tail {
 
 /* a thread is hovering over this member — drop to hand off */
 .member.over {
-    color: #fff;
+    color: #17130a;
+    font-weight: 600;
     border-style: solid;
-    border-color: var(--accent);
-    background: linear-gradient(135deg, #5b21b6, #7c3aed);
-    box-shadow: 0 0 18px #a855f766;
+    border-color: var(--cross);
+    background: linear-gradient(135deg, var(--cross-deep), var(--cross));
+    box-shadow: 0 0 18px #ffb02059;
     transform: translateY(-2px) scale(1.04);
 }
 
@@ -519,8 +538,8 @@ body.dragging-thread .tray.drop-target .tray-tail {
     white-space: nowrap;
 }
 
-.committee.armed .lane-hint { color: var(--accent); opacity: 1; }
-.committee.armed .member { border-color: var(--accent); color: var(--accent); }
+.committee.armed .lane-hint { color: var(--cross); opacity: 1; }
+.committee.armed .member { border-color: var(--cross); color: var(--cross); }
 
 /* ── Messages ── */
 main {
@@ -571,6 +590,33 @@ main {
 
 .msg:hover .grip { opacity: .8; }
 
+/* The copy escape hatch, for targets that refuse drops. It sits on the speaker line beside
+   the grip and stays hidden until the message is hovered — an affordance you reach for
+   deliberately, not a button competing with the text for attention. Keyboard focus reveals
+   it too, since a hover-only control is unreachable without a mouse. */
+.prov-copy {
+    font: inherit;
+    font-size: 10px;
+    letter-spacing: .5px;
+    color: var(--muted);
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    padding: 1px 5px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity .12s, color .12s, border-color .12s;
+}
+
+.msg:hover .prov-copy,
+.prov-copy:focus-visible { opacity: .8; }
+
+.prov-copy:hover {
+    color: var(--text);
+    border-color: var(--line);
+    opacity: 1;
+}
+
 /* ── Packet physics ── */
 
 /* nesting: a packet inside a packet sits indented, on a connector rail */
@@ -599,7 +645,7 @@ main {
 /* a packet is hovering over this packet — drop to nest inside it */
 .msg.nest-target > .bubble {
     border-color: var(--accent);
-    box-shadow: 0 0 0 1px var(--accent), 0 0 18px #a855f73d;
+    box-shadow: 0 0 0 1px var(--accent), 0 0 18px #76b9003d;
 }
 
 .msg.nest-target > .bubble::after {
@@ -619,9 +665,9 @@ main {
     max-width: 260px;
     padding: 8px 11px;
     border-radius: 10px;
-    background: linear-gradient(135deg, #16233c, #1b1436);
+    background: linear-gradient(135deg, #171b21, #1a2210);
     border: 1px solid var(--accent);
-    box-shadow: 0 10px 24px #000a, 0 0 18px #a855f74d;
+    box-shadow: 0 10px 24px #000a, 0 0 18px #76b9004d;
     color: var(--text);
     font: 12px/1.4 "Segoe UI", system-ui, sans-serif;
     white-space: nowrap;
@@ -655,8 +701,8 @@ main {
     height: 10px;
     padding: 0 9px;
     border-radius: 999px;
-    background: linear-gradient(90deg, transparent, var(--teal-bright), var(--accent));
-    box-shadow: 0 0 14px #a855f7aa;
+    background: linear-gradient(90deg, transparent, var(--ok), var(--accent));
+    box-shadow: 0 0 14px #76b900aa;
     pointer-events: none;
     opacity: .95;
 }
@@ -671,7 +717,7 @@ main {
 
 .msg.splitting > .bubble {
     animation: mitosis .5s ease-in-out;
-    box-shadow: 0 0 22px #2dd4bf6b;
+    box-shadow: 0 0 22px #76b9006b;
 }
 
 /* the transient duplicate that peels away on a fork */
@@ -679,9 +725,9 @@ main {
     position: fixed;
     z-index: 89;
     border-radius: var(--radius);
-    border: 1px solid var(--teal-bright);
+    border: 1px solid var(--ok);
     background: var(--user);
-    box-shadow: 0 0 20px #2dd4bf5c;
+    box-shadow: 0 0 20px #76b9005c;
     pointer-events: none;
     overflow: hidden;
 }
@@ -700,8 +746,18 @@ main {
     color: var(--muted);
 }
 
-.msg.user .who { color: var(--teal-bright); }
+/* You are steel; the machine is green. Colour is spent on the boundary, not on
+   decorating whose turn it is — and a reply that crossed overrides this with
+   .badge.travel in amber, which is the thing actually worth noticing. */
+.msg.user .who { color: var(--user-text); }
 .msg.assistant .who { color: var(--accent); }
+
+/* A reply produced across the boundary wears the crossing colour, in the classic view
+   as well as in a duet pane. Without this an answer from a hosted Nemotron looked
+   exactly like one from the model on your own GPU, which is the single distinction
+   this whole app exists to make. */
+.msg.assistant.remote .who { color: var(--cross); }
+.msg.assistant.remote .bubble { border-left: 2px solid var(--cross-dim); }
 
 .bubble {
     background: var(--panel);
@@ -725,7 +781,7 @@ main {
 .bubble a { color: var(--accent); }
 
 .bubble code.inline {
-    background: #07101f;
+    background: #0a0d11;
     border: 1px solid var(--line);
     border-radius: 5px;
     padding: 1px 5px;
@@ -736,7 +792,7 @@ main {
 .code {
     position: relative;
     margin: 0 0 .7em;
-    background: #07101f;
+    background: #0a0d11;
     border: 1px solid var(--line);
     border-radius: 8px;
 }
@@ -793,7 +849,7 @@ main {
     border: 1px solid var(--line);
     border-left: 2px solid var(--accent-dim);
     border-radius: 8px;
-    background: #0a1424;
+    background: #0d1116;
 }
 
 .think summary {
@@ -819,7 +875,7 @@ main {
     font-family: "Cascadia Code", Consolas, monospace;
     font-size: 11.5px;
     line-height: 1.55;
-    color: #93a7c4;
+    color: #8b949e;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
 }
@@ -841,16 +897,16 @@ main {
     font-size: 11.5px;
 }
 
-.tool.bad { border-color: #6b2138; background: #1f1020; }
+.tool.bad { border-color: #4a1d1f; background: #1a1113; }
 
 .tool-name {
     flex: none;
     font-family: "Cascadia Code", Consolas, monospace;
     font-size: 11px;
-    color: var(--teal-bright);
+    color: var(--ok);
 }
 
-.tool.bad .tool-name { color: #ffc2cf; }
+.tool.bad .tool-name { color: #ffb3b5; }
 
 .tool-sum {
     color: var(--muted);
@@ -858,9 +914,9 @@ main {
 }
 
 .err {
-    border-color: #6b2138;
-    background: #1f1020;
-    color: #ffc2cf;
+    border-color: #4a1d1f;
+    background: #1a1113;
+    color: #ffb3b5;
 }
 
 .caret::after {
@@ -892,7 +948,7 @@ main {
     color: var(--muted);
 }
 
-.badge.travel { border-color: var(--user-line); color: var(--teal-bright); }
+.badge.travel { border-color: var(--cross-dim); color: var(--cross); }
 .badge.review { border-color: var(--accent-dim); color: var(--accent); }
 
 /* ── Composer ── */
@@ -936,21 +992,28 @@ footer {
 .row.gap { gap: 8px; }
 
 .send {
-    /* deeper than --accent on purpose: white on #a855f7 is only ~3:1, which fails
-       for button text. The bright purple lives in the glow and hover instead. */
-    background: linear-gradient(135deg, #5b21b6, #7c3aed);
-    color: #fff;
+    /* DARK ink on green, not white. The old rule carried this warning about purple and
+       then the palette changed underneath it: white on #76b900 measures 2.41:1, which is
+       worse than the purple it replaced and well under the 4.5:1 a button needs. Near-black
+       on the same green is 7.68:1. NVIDIA green is a bright mid-tone — it is a background
+       colour that wants dark text, or a text colour against the graphite ground (8.07:1). */
+    background: linear-gradient(135deg, var(--accent-deep), var(--accent));
+    color: #10150a;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius);
     padding: 7px 16px;
-    font-weight: 600;
+    font-weight: 700;
+    letter-spacing: .2px;
     cursor: pointer;
-    box-shadow: 0 0 12px #6d28d94d;
 }
 
-.send:hover { box-shadow: 0 0 16px #a855f766; }
-.send:disabled { opacity: .4; cursor: default; box-shadow: none; }
-.send.stop { background: var(--danger); color: #fff; box-shadow: 0 0 12px #f43f5e4d; }
+.send:hover { background: linear-gradient(135deg, var(--accent), #8ed100); }
+.send:disabled { opacity: .35; cursor: default; }
+
+/* Stop is red and stays white-on-red by convention, so the red is deepened until that
+   convention is actually legible: white on #ff5a5f is 3.05:1, on #c62b2e it is 5.55:1. */
+.send.stop { background: #c62b2e; color: #fff; }
+.send.stop:hover { background: #d93538; }
 
 .hint { font-size: 11px; color: var(--muted); }
 
@@ -1027,7 +1090,7 @@ dialog::backdrop { background: #000a; }
     line-height: 1.55;
 }
 
-#brief { min-height: 220px; background: #07101f; color: #cfd6e6; }
+#brief { min-height: 220px; background: #0a0d11; color: var(--text); }
 #verdict { min-height: 110px; }
 
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -1052,4 +1115,474 @@ main::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
 @media (max-width: 860px) {
     .app-shell { grid-template-columns: 1fr; }
     .sidebar { display: none; }
+}
+
+/* ─────────────────────────── Duet ───────────────────────────
+   Two labelled panes over one conversation. The grid gap is a 1px slice of --line
+   showing through, so the split reads as a seam in one surface rather than two
+   windows side by side — which is what it actually is.
+
+   The tier chip in each header is load-bearing, not decoration: a pane pointed at a
+   remote model sends the WHOLE shared conversation across the boundary, so which
+   side each participant sits on has to be readable without opening a menu. */
+
+.duet {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.duet-tabs {
+    /* Desktop shows both panes and the chamber at once, so there is nothing to switch
+       between and the strip is hidden. It returns on narrow screens as a pane picker. */
+    display: none;
+    flex: none;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+}
+
+.duet-tab {
+    padding: 4px 11px;
+    border-radius: 999px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 11.5px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.duet-tab:hover { color: var(--text); border-color: var(--accent-dim); }
+
+.duet-tab.on {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: #16210a;
+}
+
+/* The one sentence that stops the two composers being mistaken for private channels. */
+.duet-note {
+    font-size: 10.5px;
+    color: var(--muted);
+    max-width: 46ch;
+    line-height: 1.45;
+    text-align: right;
+}
+
+.duet-grid {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--line);
+    min-height: 0;
+}
+
+.duet-pane {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+    background: var(--bg);
+}
+
+.duet-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: linear-gradient(90deg, #0e1216, #14181d);
+    border-bottom: 1px solid var(--line);
+}
+
+/* A pane whose participant is across the boundary is marked at the edge, so it is
+   visible even while you are reading the other one. */
+/* A pane wired to a remote model is marked on the pane itself, not just in its header,
+   so it stays obvious while you are reading the OTHER one. The top edge is the tell. */
+.duet-pane.is-remote .duet-head {
+    background: linear-gradient(90deg, #241a06, #2e2208);
+    box-shadow: inset 0 -1px 0 var(--cross-dim);
+}
+
+.duet-pane.is-remote { box-shadow: inset 0 2px 0 var(--cross); }
+
+/* The participant's own name takes its tier's colour. Two panes, one glance. */
+.duet-pane.is-remote .duet-name { color: var(--cross); }
+
+.duet-slot {
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: .9px;
+    color: var(--muted);
+}
+
+.duet-name {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--accent);
+    font: inherit;
+    font-weight: 600;
+    font-size: 13px;
+    padding: 3px 6px;
+    width: 9ch;
+    min-width: 0;
+}
+
+.duet-name:hover { border-color: var(--line); }
+.duet-name:focus { outline: none; border-color: var(--accent-dim); background: var(--panel); }
+
+.duet-tier {
+    flex: none;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    white-space: nowrap;
+    background: var(--user);
+    border: 1px solid var(--user-line);
+    color: var(--ok);
+    cursor: help;
+}
+
+.duet-tier.remote {
+    background: linear-gradient(135deg, var(--cross-deep), var(--cross));
+    border-color: var(--cross);
+    color: #17130a;
+    font-weight: 600;
+}
+
+.duet-model {
+    flex: 1;
+    min-width: 0;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    color: var(--muted);
+    font-size: 11px;
+    padding: 4px 6px;
+}
+
+.duet-role-btn.has-role { color: var(--accent); border-color: var(--accent-dim); }
+
+.duet-role {
+    flex: none;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+}
+
+.duet-role textarea {
+    width: 100%;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    padding: 6px 8px;
+    resize: vertical;
+    outline: none;
+}
+
+.duet-role textarea:focus { border-color: var(--accent-dim); }
+
+/* ── per-pane status: queued / gating / generating / failed ── */
+.duet-state {
+    font-size: 10.5px;
+    color: var(--muted);
+    white-space: nowrap;
+    max-width: 16ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.duet-state.busy { color: var(--accent); }
+.duet-state.bad { color: var(--danger); }
+
+.duet-state.busy::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-right: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: duet-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes duet-pulse {
+    0%, 100% { opacity: .3; }
+    50%      { opacity: 1; }
+}
+
+.duet-list {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+    padding: 16px 14px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.duet-list::-webkit-scrollbar,
+.duet-shared::-webkit-scrollbar { width: 9px; }
+.duet-list::-webkit-scrollbar-thumb,
+.duet-shared::-webkit-scrollbar-thumb { background: var(--line); border-radius: 6px; }
+
+.duet-empty { padding: 8px 4px; }
+.duet-empty h2 { font-size: 15px; }
+
+.duet-composer {
+    flex: none;
+    margin: 0 12px 12px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 8px;
+    transition: border-color .15s;
+}
+
+.duet-composer:focus-within { border-color: var(--accent-dim); }
+
+.duet-composer textarea {
+    width: 100%;
+    background: none;
+    border: none;
+    resize: none;
+    outline: none;
+    color: var(--text);
+    font: inherit;
+    padding: 4px 6px;
+    max-height: 160px;
+    line-height: 1.5;
+}
+
+.duet-composer .send { padding: 5px 14px; font-size: 12.5px; }
+
+/* A stopped, failed or withheld reply stays in the log — it is part of what happened
+   — but it is marked, and the store excludes it from every future context snapshot. */
+.duet-status-note {
+    margin-left: 8px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .7px;
+    color: var(--muted);
+}
+
+.msg.duet-failed .bubble { border-color: #4a1d1f; }
+.msg.duet-failed .duet-status-note { color: var(--danger); }
+.msg.duet-stopped .bubble { opacity: .72; border-style: dashed; }
+.msg.duet-blocked .bubble { border-color: var(--cross-dim); background: #1c1406; }
+.msg.duet-blocked .duet-status-note { color: var(--cross); }
+
+/* The gate's ruling, rendered where the answer would have been. It is the message. */
+.duet-gate b { color: var(--cross); }
+.duet-gate p { margin: .5em 0; }
+.duet-gate ul { margin: .4em 0 .6em; padding-left: 1.3em; }
+.duet-gate li { margin-bottom: .25em; }
+
+/* ── shared log: the one conversation, addressing shown ── */
+.duet-shared {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+    padding: 20px 16px;
+}
+
+.duet-shared .wrap { gap: 18px; }
+.duet-arrow { color: var(--muted); margin: 0 2px; }
+
+/* ── narrow screens: one pane at a time, chosen by the tab strip ── */
+.duet-tab[data-slot] { display: none; }
+
+@media (max-width: 860px) {
+    .duet-tabs { display: flex; }
+    .duet-tab[data-tab="panes"] { display: none; }
+    .duet-tab[data-slot] { display: inline-block; }
+    .duet-note { display: none; }
+
+    .duet-grid { grid-template-columns: 1fr; }
+    .duet-pane { display: none; }
+    .duet[data-slot="a"] .duet-pane[data-slot="a"],
+    .duet[data-slot="b"] .duet-pane[data-slot="b"] { display: flex; }
+
+    .duet-model { font-size: 10.5px; }
+}
+
+/* ─────────────────────────── The airlock ───────────────────────────
+   The shared conversation, as a permanent chamber under both panes.
+
+   It is not collapsible-by-default and not behind a tab, and that is the point: two
+   panes with the shared log hidden read as two separate chats, which is the one thing
+   this design is trying not to be. The chamber is what makes them one conversation, so
+   it stays on screen. It is also the audit surface — a row that left this machine is
+   amber and says so, which turns "what has crossed?" from a query into a glance. */
+
+.airlock {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border-top: 2px solid var(--line);
+    background: var(--panel);
+    /* The seam between the doors and the chamber, in both tier colours. */
+    box-shadow: inset 0 2px 0 rgba(118, 185, 0, .22), inset 0 4px 0 rgba(255, 176, 32, .16);
+}
+
+.airlock-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    background: linear-gradient(180deg, #14181d, var(--panel));
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+    user-select: none;
+}
+
+.airlock-mark { flex: none; }
+
+.airlock-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.4px;
+    color: var(--text);
+}
+
+.airlock-sub {
+    font-size: 10.5px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.airlock-legend { display: flex; gap: 10px; }
+
+.airlock-legend .key {
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: .7px;
+    color: var(--muted);
+    white-space: nowrap;
+}
+.airlock-legend .key::before {
+    content: '';
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    margin-right: 4px;
+    border-radius: 2px;
+    vertical-align: baseline;
+}
+.airlock-legend .key.local::before   { background: var(--accent); }
+.airlock-legend .key.crossed::before { background: var(--cross); }
+
+/* The log. Resizable by drag, because how much of the conversation you want in view
+   is a per-task judgement — reading a long reply wants a tall chamber, driving the two
+   panes wants a short one. */
+.airlock-log {
+    flex: 1;
+    min-height: 0;
+    height: 188px;
+    overflow-y: auto;
+    resize: vertical;
+    padding: 6px 0;
+    font-size: 12px;
+}
+
+.airlock.collapsed .airlock-log { display: none; }
+.airlock.collapsed #airlockToggle { transform: rotate(180deg); }
+
+.airlock-log::-webkit-scrollbar { width: 9px; }
+.airlock-log::-webkit-scrollbar-thumb { background: var(--line); border-radius: 6px; }
+
+/* One row per message. A grid so the columns line up down the whole chamber and it
+   reads as a log rather than as more chat bubbles — the panes above are the chat. */
+.air-row {
+    display: grid;
+    /* Wide enough for a namespaced model id — identity is the model now. */
+    grid-template-columns: 3.4rem 22rem 1fr auto;
+    gap: 10px;
+    align-items: baseline;
+    padding: 3px 14px;
+    border-left: 2px solid transparent;
+}
+
+.air-row:hover { background: var(--panel-2); }
+
+.air-seq {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10.5px;
+    color: var(--muted);
+    text-align: right;
+}
+
+.air-who {
+    font-size: 10.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--muted);
+}
+
+.air-who .from { color: var(--user-text); font-weight: 600; }
+.air-who .arrow { opacity: .55; margin: 0 3px; }
+.air-who .to { color: var(--muted); }
+
+.air-text {
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.air-tag {
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: .7px;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+/* A reply that stayed on this machine. */
+.air-row.local .air-who .from { color: var(--accent); }
+
+/* A reply that crossed. The left edge is the tell, so a chamber full of rows can be
+   scanned for crossings without reading a word of it. */
+.air-row.crossed {
+    border-left-color: var(--cross);
+    background: rgba(255, 176, 32, .045);
+}
+.air-row.crossed .air-who .from { color: var(--cross); }
+.air-row.crossed .air-tag { color: var(--cross); }
+
+.air-row.streaming .air-text { color: var(--muted); font-style: italic; }
+.air-row.blocked .air-tag { color: var(--cross); }
+.air-row.failed  .air-tag { color: var(--danger); }
+.air-row.cancelled .air-text { opacity: .6; }
+
+.air-empty {
+    padding: 14px;
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
+}
+
+/* ── narrow screens ── */
+@media (max-width: 860px) {
+    .airlock-legend { display: none; }
+    .air-row { grid-template-columns: 2.6rem 1fr auto; }
+    .air-row .air-who { display: none; }
+    .airlock-log { height: 130px; }
 }

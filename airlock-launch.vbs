@@ -14,12 +14,24 @@ base = fso.GetParentFolderName(WScript.ScriptFullName)
 sh.CurrentDirectory = base
 url = "http://localhost:8100"
 
-If Not ServerUp(url) Then
+' Who is on the port, not merely whether something answers.
+'   0 = Airlock answered   1 = nothing answered   2 = something else holds the port
+Dim state
+state = WhoIsThere(url)
+
+If state = 2 Then
+    MsgBox "Port 8100 is held by something that is not Airlock." & vbCrLf & vbCrLf & _
+           "Close it and try again, or start Airlock elsewhere with:" & vbCrLf & _
+           "    set PORT=8102 && node server.js", vbExclamation, "Airlock"
+    WScript.Quit 1
+End If
+
+If state = 1 Then
     sh.Run "node server.js", 0, False
     ' Cold node start is fast, but give it room rather than racing it.
     For i = 1 To 30
         WScript.Sleep 500
-        If ServerUp(url) Then Exit For
+        If WhoIsThere(url) = 0 Then Exit For
     Next
 End If
 
@@ -36,19 +48,35 @@ Else
     sh.Run """" & browser & """ --app=" & url, 1, False   ' app mode
 End If
 
-' True only if the server answers a real request — a listening socket isn't enough.
-Function ServerUp(u)
-    Dim http
-    ServerUp = False
+' Identify what is on the port. A listening socket is not enough, and neither is a 200 —
+' this used to GET /api/config, which Glimmer (the project Airlock was forked from, on the
+' same default port at the time) answers just as happily. Clicking the Airlock shortcut
+' therefore opened Glimmer. /api/whoami names the app, and sits outside the auth guard so
+' a launcher with no token can still ask.
+'
+'   0 = Airlock   1 = nothing answered   2 = something else is there
+Function WhoIsThere(u)
+    Dim http, body
+    WhoIsThere = 1
     On Error Resume Next
     Set http = CreateObject("MSXML2.XMLHTTP")
-    http.Open "GET", u & "/api/config", False
+    http.Open "GET", u & "/api/whoami", False
     http.Send
-    If Err.Number = 0 Then
-        If http.Status = 200 Then ServerUp = True
+
+    If Err.Number <> 0 Then
+        Err.Clear
+        On Error GoTo 0
+        Exit Function                                  ' nothing listening
     End If
-    Err.Clear
+
+    body = http.responseText
     On Error GoTo 0
+
+    If http.Status = 200 And InStr(body, """app"":""airlock""") > 0 Then
+        WhoIsThere = 0
+    Else
+        WhoIsThere = 2                                 ' answered, but it is not us
+    End If
 End Function
 
 ' True when an existing Airlock window was found — whether or not Windows let us raise it.

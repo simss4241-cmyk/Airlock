@@ -1,7 +1,17 @@
 """Generate Airlock's icon set (PWA PNGs + a multi-size .ico for the taskbar pin).
 
 Run:  python tools/make_icons.py
-Draws at 4x and downsamples, so the sparkle edges come out clean at 16px.
+Draws at 4x and downsamples, so the seam stays clean at 16px.
+
+The mark is a hatch seal: a heavy ring split by a vertical seam, teal on the inside
+half and violet on the outside half. It is the boundary, which is the thing this app
+actually is — and, just as importantly, it is not a sparkle.
+
+⚠ That matters more than it looks. This file used to draw Glimmer's four-point star,
+because Airlock was forked from Glimmer and the generator was renamed without the art
+being redrawn. Both projects therefore shipped byte-identical icons, so the two taskbar
+pins were indistinguishable and clicking the wrong one was routine. Two apps that live
+side by side on one machine have to be tellable apart at 16 pixels.
 """
 
 import math
@@ -9,38 +19,27 @@ import os
 
 from PIL import Image, ImageDraw, ImageFilter
 
-# The teal/purple palette, matching styles.css
-BG = (11, 17, 32, 255)        # --bg          #0b1120
-TEAL = (45, 212, 191, 255)    # --teal-bright #2dd4bf
-PURPLE = (168, 85, 247, 255)  # --accent      #a855f7
-VIOLET = (109, 40, 217, 255)  # --accent-deep #6d28d9
-CORE = (233, 213, 255, 255)   # hot core, pale lilac
-GLOW = (124, 58, 237)         # glow tint, violet
+# Matches styles.css, and carries the same meaning: green is this machine, amber is
+# across the boundary. The ring is literally the two halves of a hatch.
+BG = (11, 13, 16, 255)        # --bg          #0b0d10  graphite
+TEAL = (118, 185, 0, 255)     # --accent      #76b900  NVIDIA green, the inside half
+PURPLE = (255, 176, 32, 255)  # --cross       #ffb020  amber, the outside half
+VIOLET = (184, 118, 10, 255)  # --cross-deep  #b8760a
+CORE = (230, 233, 237, 255)   # --text        #e6e9ed  the packet at the threshold
+GLOW = (118, 185, 0)          # glow tint, green
 
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "public", "icons")
 SS = 4                        # supersample factor
 
 
-def star(cx, cy, outer, inner, points=4, rotation=-math.pi / 2):
-    """Vertices for a sharp N-point sparkle."""
-    verts = []
-    step = math.pi / points
-    for i in range(points * 2):
-        r = outer if i % 2 == 0 else inner
-        a = rotation + i * step
-        verts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
-    return verts
-
-
-def gradient(size, stops):
-    """Diagonal (bottom-left -> top-right) linear gradient as an RGBA image."""
+def gradient(size, stops, vertical=False):
+    """Linear gradient as an RGBA image. Diagonal by default, vertical on request."""
     img = Image.new("RGBA", (size, size))
     px = img.load()
     n = len(stops) - 1
     for y in range(size):
         for x in range(size):
-            # 0 at bottom-left, 1 at top-right
-            t = ((x / (size - 1)) + (1 - y / (size - 1))) / 2
+            t = (y / (size - 1)) if vertical else ((x / (size - 1)) + (1 - y / (size - 1))) / 2
             seg = min(int(t * n), n - 1)
             f = t * n - seg
             a, b = stops[seg], stops[seg + 1]
@@ -55,44 +54,68 @@ def rounded_bg(size, radius_frac=0.22):
     return img
 
 
+def ring_mask(S, cx, cy, outer, thickness):
+    """A filled annulus, as an L mask."""
+    m = Image.new("L", (S, S), 0)
+    d = ImageDraw.Draw(m)
+    d.ellipse([cx - outer, cy - outer, cx + outer, cy + outer], fill=255)
+    inner = outer - thickness
+    d.ellipse([cx - inner, cy - inner, cx + inner, cy + inner], fill=0)
+    return m
+
+
 def draw_airlock(size, maskable=False):
     """One icon at `size` px. maskable=True fills the whole square (no corner rounding)."""
     S = size * SS
     img = Image.new("RGBA", (S, S), BG if maskable else (0, 0, 0, 0))
-
     if not maskable:
         img = rounded_bg(S)
 
     cx = cy = S / 2
+    outer = S * 0.360          # inside the maskable safe circle
+    thickness = S * 0.150      # heavy enough to survive a 16px downsample
 
-    # soft violet glow behind the star
+    # Soft violet glow, kept from the family look so the suite still hangs together.
     glow = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
-    for i, alpha in enumerate((28, 42, 62)):
-        r = S * (0.34 - i * 0.07)
+    for i, alpha in enumerate((14, 20, 28)):
+        r = S * (0.36 - i * 0.07)
         gd.ellipse([cx - r, cy - r, cx + r, cy + r], fill=GLOW + (alpha,))
     glow = glow.filter(ImageFilter.GaussianBlur(S * 0.045))
     img = Image.alpha_composite(img, glow)
 
-    outer = S * 0.325   # keeps the star inside the maskable safe circle
+    # The ring, poured two-tone: teal on the left (this machine), violet on the right
+    # (across the boundary). A hard split rather than a blend — at 16px a gradient
+    # across the seam turns into one muddy colour and the whole point is lost.
+    ring = ring_mask(S, cx, cy, outer, thickness)
 
-    # Build the sparkle as a mask, then pour a teal -> purple -> violet gradient
-    # through it, so the star carries the palette instead of one flat colour.
-    mask = Image.new("L", (S, S), 0)
-    md = ImageDraw.Draw(mask)
-    md.polygon(star(cx, cy, outer, outer * 0.23), fill=255)
-    sx, sy = cx + outer * 0.86, cy - outer * 0.88
-    md.polygon(star(sx, sy, S * 0.072, S * 0.018), fill=235)
+    left = Image.new("L", (S, S), 0)
+    ImageDraw.Draw(left).rectangle([0, 0, cx, S], fill=255)
+    right = Image.new("L", (S, S), 0)
+    ImageDraw.Draw(right).rectangle([cx, 0, S, S], fill=255)
 
-    # rendered small and scaled up — a smooth ramp needs no more detail than this
-    # TEAL twice so the lower-left third stays clearly teal instead of washing to purple
-    ramp = gradient(96, [TEAL, TEAL, PURPLE, VIOLET]).resize((S, S), Image.LANCZOS)
-    img = Image.composite(ramp, img, mask)
+    teal_arc = Image.new("L", (S, S), 0)
+    teal_arc.paste(ring, (0, 0), left)
+    violet_arc = Image.new("L", (S, S), 0)
+    violet_arc.paste(ring, (0, 0), right)
 
-    # pale hot core on the main star only — small and semi-transparent, or it
-    # swallows the gradient and the whole mark reads as one flat lilac blob
+    img = Image.composite(Image.new("RGBA", (S, S), TEAL), img, teal_arc)
+    violet_ramp = gradient(96, [PURPLE, VIOLET], vertical=True).resize((S, S), Image.LANCZOS)
+    img = Image.composite(violet_ramp, img, violet_arc)
+
+    # The seam. Cut back to the background so the hatch reads as two halves that meet,
+    # not as one ring with a line drawn on it.
+    seam = S * 0.045
+    seam_layer = Image.new("L", (S, S), 0)
+    ImageDraw.Draw(seam_layer).rectangle([cx - seam / 2, 0, cx + seam / 2, S], fill=255)
+    base = rounded_bg(S) if not maskable else Image.new("RGBA", (S, S), BG)
+    img = Image.composite(base, img, seam_layer)
+
+    # A pale core at the threshold — one packet mid-crossing. Small on purpose: at 16px
+    # it lands as a single bright pixel, which is a focal point rather than noise.
+    r = S * 0.050
     core = Image.new("L", (S, S), 0)
-    ImageDraw.Draw(core).polygon(star(cx, cy, outer * 0.34, outer * 0.10), fill=150)
+    ImageDraw.Draw(core).ellipse([cx - r, cy - r, cx + r, cy + r], fill=255)
     img = Image.composite(Image.new("RGBA", (S, S), CORE), img, core)
 
     return img.resize((size, size), Image.LANCZOS)

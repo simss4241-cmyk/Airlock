@@ -1,4 +1,4 @@
-# Creates a Airlock shortcut you can pin to the taskbar.
+﻿# Creates an Airlock shortcut you can pin to the taskbar.
 #
 # Windows deliberately blocks programmatic taskbar pinning, so this gets you a proper
 # shortcut with the right icon and command; the pin itself is one right-click.
@@ -6,6 +6,10 @@
 #   Install:    powershell -ExecutionPolicy Bypass -File tools\install_shortcut.ps1
 #   + desktop:  powershell -ExecutionPolicy Bypass -File tools\install_shortcut.ps1 -Desktop
 #   Uninstall:  powershell -ExecutionPolicy Bypass -File tools\install_shortcut.ps1 -Remove
+
+# NOTE: saved UTF-8 WITH a BOM on purpose. Windows PowerShell 5.1 reads a BOM-less
+# script as ANSI, so the em dash in the shortcut description below arrived in the
+# .lnk as three mojibake characters and sat there in the tooltip.
 
 param([switch]$Desktop, [switch]$Remove)
 
@@ -39,7 +43,7 @@ foreach ($path in $targets) {
     $lnk.Arguments        = "`"$vbs`""
     $lnk.WorkingDirectory = $root
     $lnk.IconLocation     = "$ico,0"
-    $lnk.Description      = 'Airlock — local Muse Glimmer 30B chat and packet board'
+    $lnk.Description      = 'Airlock — local-first reasoning desk with an audited model boundary'
     $lnk.WindowStyle      = 1
     $lnk.Save()
     Write-Output "Created: $path"
