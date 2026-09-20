@@ -62,6 +62,34 @@ async function waitForServer(child) {
     throw new Error(`server never came up on ${PORT}`);
 }
 
+/** /api/tree answers with the folders; each one carries its own threads. */
+const readFolders = async () => {
+    const tree = (await get('/api/tree')).body;
+    return Array.isArray(tree) ? tree : tree.folders ?? [];
+};
+
+let tempRemoved = false;
+const cleanTemp = () => {
+    if (tempRemoved) return;                 // the finally and the catch both reach here
+    tempRemoved = true;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+};
+
+/**
+ * Stop the server and drop the scratch database, once.
+ *
+ * 'exit' never fires again for a child that has already gone, so waiting on it
+ * unconditionally hangs the run whenever the server died on its own — which is exactly
+ * what waitForServer reports as "server exited early".
+ */
+async function shutdown(child) {
+    if (child.exitCode === null && child.signalCode === null) {
+        child.kill();
+        await new Promise(r => child.once('exit', r));
+    }
+    cleanTemp();
+}
+
 (async () => {
     console.log('\nAirlock per-thread workspace HTTP tests\n');
 
@@ -86,14 +114,22 @@ async function waitForServer(child) {
     try {
         await waitForServer(child);
 
-        // The seeded tree gives us threads to work with.
-        const tree = (await get('/api/tree')).body;
-        const threads = (Array.isArray(tree) ? tree : tree.folders ?? [])
-            .flatMap(folder => folder.threads ?? []);
-        assert(threads.length >= 2, 'seed provides at least two threads');
-        const [a, b] = threads;
+        // This file needs two threads to have anything to keep apart, so it makes them.
+        // The seed deliberately ships one tray holding one thread (SEED in db.js), and a
+        // test that helps itself to the seed's contents breaks the next time someone
+        // decides what a new database should greet you with.
+        const folders = await readFolders();
+        assert(folders.length >= 1, 'seed provides a tray to create threads in');
+        const folderId = folders[0].id;
+
+        const a = (await post('/api/threads', { folderId, title: 'workspace A' })).body;
+        const b = (await post('/api/threads', { folderId, title: 'workspace B' })).body;
+        assert(a?.id && b?.id && a.id !== b.id,
+            `two distinct threads were created (got ${a?.id} and ${b?.id})`);
 
         // ── every thread starts with no file access ──
+        // Including the seeded one: "every thread" is the claim, not "every thread we made".
+        const threads = (await readFolders()).flatMap(folder => folder.threads ?? []);
         const fresh = await Promise.all(threads.map(t => get(`/api/workspace?threadId=${t.id}`)));
         check('a new database gives every thread files off',
             fresh.every(r => r.body.root === null),
@@ -184,18 +220,23 @@ async function waitForServer(child) {
         check('and works again once the folder is back',
             (await get(`/api/fs/find?threadId=${a.id}&q=alpha`)).body.count === 1);
     } finally {
-        child.kill();
-        await new Promise(r => child.once('exit', r));
-        fs.rmSync(tempDir, { recursive: true, force: true });
+        await shutdown(child);
     }
 
     console.log(`\n${pass} passed, ${failures.length} failed\n`);
     if (failures.length) {
         failures.forEach(f => console.log(`  - ${f}`));
-        process.exit(1);
+        process.exitCode = 1;
     }
 })().catch(err => {
-    console.error('\nworkspace_http_test crashed:', err.message);
-    fs.rmSync(tempDir, { recursive: true, force: true });
-    process.exit(1);
+    console.error('\nworkspace_http_test failed:', err.stack ?? err.message);
+    cleanTemp();
+    process.exitCode = 1;
 });
+
+// A failing run sets process.exitCode and lets the loop wind down on its own rather than
+// calling process.exit(). fetch holds its sockets open against the server this test has
+// just killed, and tearing the loop out from under them aborts the process on Windows
+// (uv_async_send on a closing handle, src\win\async.c). That abort prints no summary and
+// swallows every check after the first failure — which is how one stale assertion up top
+// managed to look like the whole suite being broken.
