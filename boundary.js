@@ -36,6 +36,47 @@ const GATE_SYSTEM = [
 ].join('\n');
 
 /**
+ * Which model rules on a crossing. It must be a LOCAL one.
+ *
+ * The block above is not decoration: to let a remote model judge whether content may
+ * leave, you must first send it the content, so the gate would stand on the wrong side of
+ * the door it is guarding.
+ *
+ * ⚠ This function exists because every call site used to pass `config.model` straight in,
+ * and `pickDefaultModel()` returns a Nemotron id whenever NEBIUS_API_KEY is set. On a
+ * configured machine the gate was therefore running *remotely* — the one thing this file
+ * says must never happen — and nothing failed loudly, because a remote model answers the
+ * gate prompt perfectly well. It just answers it after the content has already crossed.
+ *
+ * Returns null when no local model is reachable at all. runGate fails closed on null:
+ * a gate that cannot run is a gate that did not release.
+ */
+async function resolveGateModel(config = {}) {
+    const local = await require('./providers/ollama').list().catch(() => []);
+    const isLocal = id => local.some(m => m.id === id);
+
+    // An explicit choice wins, because the right gate model is a judgement about this
+    // machine that no heuristic here can make. Ignored if it is not actually local —
+    // the whole point of this function is that the gate cannot run across the boundary.
+    const named = (process.env.AIRLOCK_GATE_MODEL || '').trim();
+    if (named && isLocal(named)) return named;
+
+    if (config.model && providers.tierOf(config.model) === 'local') return config.model;
+
+    if (!local.length) return null;
+
+    // ⚠ Largest local model, matching pickDefaultModel's reasoning — but note the
+    // difference in job. That function picks the model that has to be GOOD; this one
+    // picks the model that has to be FAST, because the gate is a short structured yes/no
+    // standing between the user and their first remote reply. On a desk whose biggest
+    // local model is an 18 GB 30B on a 16 GB card, that is a long stall and occasionally
+    // a timeout — which fails closed and looks like the gate refusing a harmless message.
+    //
+    // Set AIRLOCK_GATE_MODEL to a small, reliable local model to avoid that.
+    return local.slice().sort((a, b) => (b.size || 0) - (a.size || 0))[0].id;
+}
+
+/**
  * Read the gate's ruling out of whatever the model actually said.
  *
  * JSON first. If the object is unparseable even after repair, fall back to
@@ -76,11 +117,38 @@ function readDecision(text) {
 /**
  * Ask the local model whether a brief may cross.
  *
- * Fails CLOSED. A model that is unreachable, slow, or that answers with
- * something unparseable produces a refusal, not a release — the failure mode of
- * a privacy gate has to be "nothing left the machine".
+ * Fails CLOSED. A model that is unreachable, slow, or that answers with something
+ * unparseable produces a refusal, not a release — the failure mode of a privacy gate has
+ * to be "nothing left the machine".
+ *
+ * `model` is optional and is checked rather than trusted. Omit it and a local model is
+ * resolved here; pass a remote one and the gate REFUSES instead of quietly running the
+ * judgement on the far side of the boundary. Defending this inside runGate rather than at
+ * the call sites is deliberate: there were three call sites and all three had it wrong,
+ * so the guarantee belongs where it cannot be forgotten.
  */
-async function runGate(markdown, { model, config }) {
+async function runGate(markdown, { model, config } = {}) {
+    if (model && providers.tierOf(model) !== 'local') {
+        return {
+            release: false,
+            reason: `${model} is on the remote tier and cannot gate a crossing — `
+                + 'judging whether content may leave would require sending it first.',
+            concerns: [],
+            model
+        };
+    }
+
+    if (!model) model = await resolveGateModel(config);
+
+    if (!model) {
+        return {
+            release: false,
+            reason: 'No local model is reachable to rule on this crossing, so nothing was sent.',
+            concerns: [],
+            model: null
+        };
+    }
+
     const caps = await providers.capabilities(model).catch(() => []);
 
     try {
@@ -118,4 +186,4 @@ async function runGate(markdown, { model, config }) {
     }
 }
 
-module.exports = { GATE_SYSTEM, runGate, readDecision };
+module.exports = { GATE_SYSTEM, runGate, readDecision, resolveGateModel };

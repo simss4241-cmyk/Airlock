@@ -429,7 +429,9 @@ app.post('/api/chat', async (req, res) => {
                 .map(m => `${m.role}: ${m.content || ''}`)
                 .join('\n\n');
 
-            gateRuling = await runGate(outgoing, { model: config.model, config });
+            // No model named: boundary.js resolves a LOCAL one. Passing config.model
+            // here is what used to run the gate remotely whenever a Nebius key was set.
+            gateRuling = await runGate(outgoing, { config });
 
             if (!gateRuling.release) {
                 // Nothing has been sent. 200, because the request succeeded and the
@@ -857,8 +859,11 @@ app.post('/api/threads/:id/escalate', async (req, res) => {
 
         // 1. The gate. Local, deterministic, fail-closed.
         const gate = force
-            ? { release: true, reason: 'Overridden by the operator.', concerns: [], model: config.model, forced: true }
-            : await runGate(brief.markdown, { model: config.model, config });
+            // model: null because no model ruled. Naming config.model here claimed a
+            // gate model that never ran — and on a keyed machine that was a REMOTE id,
+            // so the audit trail implied a remote model had approved its own crossing.
+            ? { release: true, reason: 'Overridden by the operator.', concerns: [], model: null, forced: true }
+            : await runGate(brief.markdown, { config });
 
         if (!gate.release) {
             // Refused. Nothing has touched the network, and nothing is recorded

@@ -20,14 +20,15 @@
 
 try { process.loadEnvFile(); } catch { /* remote tests will skip */ }
 
-const { runGate, readDecision } = require('../boundary');
+const { runGate, readDecision, resolveGateModel } = require('../boundary');
+const providers = require('../providers');
 
 const BASE = process.env.AIRLOCK_URL || 'http://localhost:8100';
 
 let pass = 0, fail = 0, skip = 0;
-const ok = (cond, label) => {
+const ok = (cond, label, detail = '') => {
     if (cond) { pass++; console.log('  ok   ' + label); }
-    else { fail++; console.log('  FAIL ' + label); }
+    else { fail++; console.log('  FAIL ' + label + (detail ? ' — ' + detail : '')); }
 };
 const skipped = label => { skip++; console.log('  skip ' + label); };
 
@@ -239,6 +240,64 @@ async function liveTests() {
        'a packet that crossed twice lists both crossings');
 }
 
+// ─────────────────── the gate must be local, and consent must not outlive its thread ───
+//
+// Two defects the audit turned up, both of which were silent. Neither needs a key: one is
+// a tier check, the other is a store invariant.
+
+async function gateOwnershipTests() {
+    console.log('\ngate ownership and clearance lifetime');
+
+    // 1. A remote model can never rule on a crossing. Every call site used to pass
+    //    config.model straight in, and config.model is a Nemotron id whenever a Nebius
+    //    key is set — so on a configured machine the gate ran on the far side of the
+    //    door it guards, and nothing failed, because a remote model answers the gate
+    //    prompt perfectly well. It just answers it after the content has crossed.
+    const remoteRuling = await runGate('a harmless sentence', {
+        model: 'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B',
+        config: { temperature: 0 }
+    });
+    ok(remoteRuling.release === false, 'a remote model handed to the gate is refused, not used');
+    ok(/remote tier/i.test(remoteRuling.reason), 'and says why', remoteRuling.reason);
+
+    // 2. Asked to resolve one itself, it picks something local.
+    const resolved = await resolveGateModel({ model: 'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B' });
+    if (resolved === null) {
+        skipped('resolveGateModel picks a local model (no Ollama models installed)');
+    } else {
+        ok(providers.tierOf(resolved) === 'local',
+           'resolveGateModel ignores a remote config.model and picks a local one', resolved);
+    }
+
+    // 3. AIRLOCK_GATE_MODEL names it explicitly — but is still checked, not trusted.
+    const installed = await require('../providers/ollama').list().catch(() => []);
+    if (!installed.length) {
+        skipped('AIRLOCK_GATE_MODEL override (no Ollama models installed)');
+    } else {
+        const smallest = installed.slice().sort((a, b) => (a.size || 0) - (b.size || 0))[0].id;
+        const before = process.env.AIRLOCK_GATE_MODEL;
+        try {
+            process.env.AIRLOCK_GATE_MODEL = smallest;
+            ok(await resolveGateModel({}) === smallest,
+               'AIRLOCK_GATE_MODEL picks the gate model when it is installed and local');
+
+            process.env.AIRLOCK_GATE_MODEL = 'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B';
+            const spoofed = await resolveGateModel({});
+            ok(spoofed !== 'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B'
+               && providers.tierOf(spoofed) === 'local',
+               'a remote id in AIRLOCK_GATE_MODEL is ignored, not obeyed', String(spoofed));
+
+            process.env.AIRLOCK_GATE_MODEL = 'not-installed:99b';
+            ok(await resolveGateModel({}) !== 'not-installed:99b',
+               'and so is a model that is not installed');
+        } finally {
+            if (before === undefined) delete process.env.AIRLOCK_GATE_MODEL;
+            else process.env.AIRLOCK_GATE_MODEL = before;
+        }
+    }
+
+}
+
 // ─────────────────── the chat path crosses too ───────────────────
 //
 // This is the hole the audit found. Selecting a remote model in the dropdown
@@ -275,10 +334,22 @@ async function chatPathTests() {
 
     // The gate runs on a thread's first remote turn, so a benign message should be
     // released rather than withheld.
+    //
+    // A withholding is a real failure and is reported as one. What it must NOT do is
+    // leave silently: everything below depends on a crossing having happened, and a bare
+    // `return` dropped roughly ten assertions out of the run without counting them
+    // anywhere. The total simply came out smaller, which reads like a smaller suite
+    // rather than a truncated one — and the gate's ruling is a model's judgement, so it
+    // does occasionally withhold a harmless sentence. Say so out loud instead.
     const blocked = chat.body && chat.body.blocked;
     ok(!blocked, 'a benign first turn is released by the gate'
         + (blocked ? ' - got: ' + (chat.body.gate && chat.body.gate.reason) : ''));
-    if (blocked) return;
+
+    if (blocked) {
+        skipped('the rest of the chat-crossing section — the gate withheld this run, so '
+            + 'there is no crossing to inspect and the assertion count will be lower');
+        return;
+    }
 
     const after = await api('GET', `/api/threads/${chatThread}/exposure`);
     ok(after.body.packetCount === 1, 'the sent packet is now recorded as crossed');
@@ -375,6 +446,7 @@ async function forceTests() {
         await setup();
         await auditTests();
         await liveTests();
+        await gateOwnershipTests();
         await chatPathTests();
         await forceTests();
     } finally {
