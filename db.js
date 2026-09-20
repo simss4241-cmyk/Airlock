@@ -89,6 +89,43 @@ CREATE INDEX IF NOT EXISTS idx_prov_packet       ON provenance(packet_id);
 CREATE INDEX IF NOT EXISTS idx_prov_event        ON provenance(event);
 `);
 
+/**
+ * A deleted thread takes its gate clearances with it.
+ *
+ * ⚠ This is a boundary bug, not housekeeping. Clearances live in `meta` keyed by thread id
+ * (`cleared:<threadId>:<model>`), and SQLite reuses the highest rowid after a delete — so a
+ * brand new thread could be handed the id of a deleted one and silently inherit its
+ * consent. The next remote turn would then skip the gate entirely, on a thread nobody ever
+ * cleared, and the first sign of it would be content already across the boundary.
+ *
+ * A trigger rather than a line in deleteThread, because threads also disappear by cascade
+ * when a folder is deleted, and a trigger fires on those too. Cascaded deletes only fire
+ * triggers while foreign keys are ON, which is set above.
+ */
+db.exec(`
+CREATE TRIGGER IF NOT EXISTS threads_drop_clearances
+AFTER DELETE ON threads
+BEGIN
+    DELETE FROM meta WHERE key LIKE 'cleared:' || OLD.id || ':%';
+END;
+`);
+
+/**
+ * Sweep clearances the trigger was not around to catch.
+ *
+ * Runs every boot rather than once behind a marker: it is a few rows of an already tiny
+ * table, and a consistency sweep that self-heals is worth more here than one that is
+ * clever about skipping itself. Any thread id in a clearance key that no longer exists
+ * is consent belonging to nothing.
+ */
+const orphanedClearances = db.prepare(`
+    DELETE FROM meta
+     WHERE key LIKE 'cleared:%'
+       AND instr(substr(key, 9), ':') > 0
+       AND CAST(substr(key, 9, instr(substr(key, 9), ':') - 1) AS INTEGER)
+           NOT IN (SELECT id FROM threads)
+`).run().changes;
+
 function getMeta(key) {
     return db.prepare('SELECT value FROM meta WHERE key = ?').get(key)?.value ?? null;
 }
@@ -617,7 +654,11 @@ function buildBrief(threadId, { actor = 'the committee' } = {}) {
         lines.push('');
     }
     flat.forEach((p, i) => {
-        const who = p.role === 'assistant' ? `assistant${p.model ? ` · ${p.model}` : ''}` : p.role;
+        // A reviewer reading this brief needs to know not just which model answered but
+        // whether answering it sent the question off the machine. Both, on the heading.
+        const who = p.role === 'assistant'
+            ? `assistant${p.model ? ` · ${p.model}` : ''}${p.tier === 'remote' ? ' · off-machine' : ''}`
+            : p.role;
         lines.push(`### [${i + 1}] ${who} — packet #${p.id}${p.depth ? ` (nested, depth ${p.depth})` : ''}`);
         lines.push('');
         lines.push(p.content);
@@ -840,6 +881,7 @@ function stats() {
 }
 
 module.exports = {
+    orphanedClearances,
     db, getTree, createFolder, deleteFolder, renameFolder, reorderFolder,
     createThread, deleteThread, getThread, renameThread, moveThreadToFolder, reorderThread,
     setThreadWorkspace, migrateWorkspaceRoot, getMeta, setMeta,
