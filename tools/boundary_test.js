@@ -475,15 +475,18 @@ async function chatPathTests() {
     });
     ok(lying.body.tier === 'remote', 'a client-supplied tier is ignored');
 
-    // Second turn: the thread is already cleared, and re-sending the same packet
-    // must not add a second crossing row for the same actor.
+    // Second turn, same words. Every turn is ruled on now (kernel.js), but only on what
+    // has not been ruled on before — and these exact messages have been, so this costs no
+    // gate call and cannot be refused. It used to pass because the THREAD was cleared,
+    // which also let different words through unjudged. Re-sending the same packet must
+    // still not add a second crossing row for the same actor.
     const again = await api('POST', '/api/chat', {
         threadId: chatThread, model,
         messages: [{ role: 'user', content: 'Reply with the single word ok.' }],
         packetIds: [u.body.id]
     });
     ok(again.status === 200 && !(again.body && again.body.blocked),
-       'a cleared thread does not re-gate');
+       're-sending words already ruled on is not re-gated');
 
     const third = await api('GET', `/api/threads/${chatThread}/exposure`);
     ok(third.body.crossingCount === 1,

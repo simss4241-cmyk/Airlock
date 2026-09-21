@@ -1991,6 +1991,26 @@ _The local gate rules before anything crosses. `
                     continue;
                 }
 
+                // The gate refused partway through a turn: the model asked for files, and
+                // the local gate ruled on what they contained before it would send them,
+                // and said no. Nothing listed left the machine. Rendered as the gate's
+                // answer rather than an error — the request worked, the answer was no —
+                // and marked blocked so it is not saved as though it were a reply.
+                if (chunk.airlock_blocked) {
+                    const { gate = {}, withheld = [] } = chunk.airlock_blocked;
+                    const concerns = gate.concerns?.length ? `\n\nFlagged: ${gate.concerns.join('; ')}` : '';
+                    const held = withheld.length ? `\n\nWithheld: ${withheld.join(', ')}` : '';
+                    reply.content += `${reply.content ? '\n\n' : ''}**Stopped before sending tool results.** `
+                                   + `${gate.reason || 'The gate withheld release.'}${concerns}${held}`
+                                   + '\n\n_The model asked to read your workspace. The local gate rules on '
+                                   + 'what a tool returns before it crosses, and withheld this — nothing '
+                                   + 'above was sent._';
+                    reply.blocked = true;
+                    render();
+                    scrollDown();
+                    continue;
+                }
+
                 // Server-injected tool event (Ollama never emits this key).
                 if (chunk.airlock_tool) {
                     (reply.tools ||= []).push(chunk.airlock_tool);

@@ -86,6 +86,23 @@ async function capabilities(model) {
 async function* chat(opts) {
     const expectLocal = tierOf(opts.model) === 'local';
 
+    // ── the first lock ──
+    //
+    // Nothing that is not positively local is dispatched without a clearance covering
+    // every message in this request. A caller that brought one is checked, not trusted:
+    // the clearance must have been issued by kernel.js, for this model, over these exact
+    // messages. A caller that brought none — or one that no longer covers what it is
+    // sending, like a tool loop that appended results since it last asked — gets the gate
+    // run here on its behalf. Forgetting costs a gate call. It never costs a crossing.
+    if (!expectLocal) {
+        const kernel = require('../kernel');     // lazy: kernel.js requires this file
+        if (!kernel.covers(opts.clearance, opts.model, opts.messages)) {
+            const c = await kernel.clear({ model: opts.model, messages: opts.messages, config: opts.config });
+            if (!c.ok) throw new GateRefusal(c.ruling, opts.model);
+            opts = { ...opts, clearance: c.token };
+        }
+    }
+
     for await (const chunk of providerFor(opts.model).chat(opts)) {
         if (expectLocal && (chunk.remote_host || chunk.remote_model)) {
             // Next read must not repeat the mistake.
@@ -218,9 +235,21 @@ class ProviderError extends Error {
     }
 }
 
+/**
+ * The gate withheld release, so nothing was sent. Not a malfunction: callers that can
+ * show the gate's reason should, and `gate` carries the whole ruling for that.
+ */
+class GateRefusal extends ProviderError {
+    constructor(gate, model) {
+        super(`Nothing was sent to ${model}. ${gate?.reason || 'The gate withheld release.'}`, 403, 'remote');
+        this.name = 'GateRefusal';
+        this.gate = gate;
+    }
+}
+
 module.exports = {
     chat, complete, parseJson, repairJson, capabilities, list,
-    tierOf, isLocal, providerFor, ProviderError,
+    tierOf, isLocal, providerFor, ProviderError, GateRefusal,
     // Resolving the catalogue is a boundary concern, so callers that rule on a crossing
     // reach it through here rather than importing registry.js behind this file's back.
     ensureFresh: registry.ensureFresh,

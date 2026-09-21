@@ -785,6 +785,29 @@ function crossOnce(pid, actor, note) {
     return 1;
 }
 
+/**
+ * Something that is not a packet crossed: tool results a remote model read for itself.
+ *
+ * ⚠ These used to cross unrecorded. A remote model with a workspace could read files
+ * with read_file, and the file contents went to it in the next tool round — but a tool
+ * result is not a packet, and the audit trail only knew about packets, so "what has a
+ * remote model ever seen?" left out exactly the things it had gone and looked at.
+ *
+ * Recorded against the request packet that caused the tool calls, as a `crossed` row, so
+ * getExposure() lists them with everything else. Each artifact is named with its size and
+ * a content hash, which is enough to establish later which version of a file left.
+ *
+ * Not deduplicated, unlike crossOnce: every tool round is a separate exposure, and two
+ * reads of the same file are two crossings.
+ */
+function recordArtifactCrossing(packetId, { actor, model, transport, gate, artifacts = [] }) {
+    if (!packetId || !getPacket(packetId) || !artifacts.length) return 0;
+    const note = `${crossingNote({ transport, model, actor, gate })} · carried `
+        + `${artifacts.length} tool result(s): ${artifacts.map(a => a.label).join('; ')}`;
+    record(packetId, 'crossed', { actor, note });
+    return 1;
+}
+
 function recordCrossings(packetIds, opts) {
     const note = crossingNote(opts);
     let written = 0;
@@ -800,17 +823,17 @@ function recordCrossings(packetIds, opts) {
 }
 
 /**
- * Has this thread already been cleared to talk to this model?
+ * Has this thread been cleared to talk to this model? — RETIRED as a gate input.
  *
- * The gate runs on the first remote turn of a thread and the answer is
- * remembered, so ordinary conversation does not pay for a local gate call on
- * every message. Stored in `meta` rather than a column because it is a fact
- * about a session's consent, not about the thread's content.
+ * This was once-per-thread consent: the gate ran on the first remote turn and the
+ * answer was remembered, so a secret typed on turn nine was never judged. That gap was
+ * accepted on latency, when the gate model cost seconds per call. kernel.js now rules on
+ * every turn — only on what has not been ruled on before — and binds each clearance to
+ * the exact messages it covers, so nothing reads these rows to decide anything.
  *
- * KNOWN GAP: a secret typed on turn nine is not gated, because the thread was
- * cleared at turn one. Gating every turn was considered and rejected on latency
- * (a local reasoning model costs seconds per call). Revisit with a cheap
- * new-message-only gate if this bites.
+ * The functions remain because existing databases hold rows in this shape, and the
+ * trigger and boot sweep above keep those rows from outliving their threads. Whether to
+ * drop them entirely is a separate decision; they no longer let anything past.
  */
 const clearanceKey = (threadId, model) => `cleared:${threadId}:${model}`;
 
@@ -887,5 +910,6 @@ module.exports = {
     setThreadWorkspace, migrateWorkspaceRoot, getMeta, setMeta,
     createPacket, getPacket, getThreadPackets, movePacket, forkPacket, deletePacket,
     reviewPacket, getProvenance, getReviews, search, getTravelled, stats, subtreeIds,
-    buildBrief, recordHandoff, getExposure, recordCrossings, isCleared, recordClearance
+    buildBrief, recordHandoff, getExposure, recordCrossings, recordArtifactCrossing,
+    isCleared, recordClearance
 };

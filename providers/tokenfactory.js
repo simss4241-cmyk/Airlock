@@ -21,6 +21,8 @@
  * client for both tiers, so nothing is lost by excluding it here.
  */
 
+const egress = require('./egress');
+
 const tier = 'remote';
 
 const BASE = () => (process.env.NEBIUS_BASE_URL || 'https://api.tokenfactory.nebius.com/v1')
@@ -66,7 +68,8 @@ async function capabilities() {
 
 async function list() {
     if (!KEY()) return [];                       // no key: the remote tier simply isn't there
-    const r = await fetch(`${BASE()}/models`, {
+    // Metadata only: the key goes, nothing of the user's does.
+    const r = await egress.catalogue(`${BASE()}/models`, {
         headers: { Authorization: `Bearer ${KEY()}` }
     });
     if (!r.ok) return [];
@@ -134,7 +137,7 @@ function toOpenAIMessage(m) {
     return rest;
 }
 
-async function* chat({ model, messages, config, tools, signal }) {
+async function* chat({ model, messages, config, tools, signal, clearance }) {
     const { ProviderError } = require('./index');
 
     if (!KEY()) {
@@ -158,7 +161,8 @@ async function* chat({ model, messages, config, tools, signal }) {
     };
     if (tools) payload.tools = tools;
 
-    const res = await fetch(`${BASE()}/chat/completions`, {
+    // The content-bearing call. egress refuses it without a clearance the kernel issued.
+    const res = await egress.remote(`${BASE()}/chat/completions`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -166,7 +170,7 @@ async function* chat({ model, messages, config, tools, signal }) {
         },
         body: JSON.stringify(payload),
         signal
-    });
+    }, { model, clearance });
 
     if (!res.ok) {
         const text = await res.text();

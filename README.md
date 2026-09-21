@@ -49,12 +49,14 @@ what leaves it. This table is the honest version — clone it and check.
 | Access token + remote spend cap for hosting | working, 26 assertions |
 | Duet — two addressable participants over one conversation | working, 73 assertions |
 | Gate consent revoked with its thread; recycled ids inherit nothing | working, 14 assertions |
+| Every turn gated, bound to the exact words sent — only what is new is re-read | working |
+| One door: nothing reaches the network without a clearance the kernel issued | working, 34 assertions |
+| Tool results a remote model reads are gated, and recorded as crossed | working, 12 assertions end to end |
 | Redaction — crossing a brief with the sensitive parts stripped | not built |
-| Per-turn gating (a secret typed on turn nine is not caught) | not built |
 | Per-visitor isolation (a shared token is not multi-tenancy) | not built |
 | Hosted demo build | not built |
 
-**369 assertions across nine suites.** Run them:
+**415 assertions across eleven suites.** Run them:
 
 ```
 npm start                          # in one terminal
@@ -67,6 +69,8 @@ node tools/workspace_test.js       # migrations
 node tools/duet_context_test.js    # what each participant is shown
 node tools/duet_test.js            # two panes, one conversation
 node tools/clearance_test.js       # gate consent does not outlive its thread
+node tools/kernel_test.js          # the kernel, both locks, one door
+node tools/kernel_http_test.js     # tool results crossing, end to end (fake remote)
 ```
 
 ⚠ `smoke_test`, `boundary_test` and `duet_test` test **whatever server is answering on
@@ -79,7 +83,8 @@ PORT=8126 AIRLOCK_DB=/tmp/airlock-verify.db npm start
 AIRLOCK_URL=http://localhost:8126 node tools/boundary_test.js
 ```
 
-`workspace_http_test.js` starts its own server and is not affected.
+`workspace_http_test.js` and `kernel_http_test.js` start their own servers and are
+not affected.
 
 The remote suites **skip** rather than fail without a Nebius key, so the tests
 run on a clean clone with no credentials. `duet_test.js` additionally skips the
@@ -249,16 +254,45 @@ remote endpoint.
 
 So the same three rules apply to chat as to escalation.
 
-**The gate runs on a thread's first remote turn**, then the clearance is
-remembered per thread per model. Gating every message was considered and
-rejected: a local reasoning model costs seconds per call, and paying that twice
-per turn makes remote chat unusable. A refusal comes back as `200` with
-`blocked: true` and renders as the gate's reason in the transcript — nothing was
-sent, so it is not an error.
+**Every turn is gated, and the ruling is bound to the words.** `kernel.js` hashes
+each outgoing message and issues a clearance for exactly that set, going to exactly
+that model. Messages it has ruled on before are remembered, so a turn costs one gate
+call over what is *new* — the next message, a tool result — not over the whole
+history. A secret typed on turn nine is judged on turn nine.
 
-> ⚠ **Known gap.** A secret typed on turn nine is not gated, because the thread
-> was cleared at turn one. The fix is a cheap new-message-only gate rather than
-> re-reading the whole conversation; it is not built yet.
+This used to be once per thread: the first remote turn was gated and the answer
+remembered, and that gap was accepted because the gate model cost seconds per call.
+With `nemotron-3-nano:4b` as the gate it costs about one.
+
+A refusal comes back as `200` with `blocked: true` and renders as the gate's reason
+in the transcript — nothing was sent, so it is not an error.
+
+> ⚠ **What per-turn gating gives up.** Only the new part of a turn is shown to the
+> gate, so a secret split across two turns can pass as two innocent halves. The
+> alternative — re-reading the whole conversation every turn — makes the gate slower
+> exactly as threads get long.
+
+**Tool results are gated and recorded.** A remote model with a workspace can call
+`read_file`, and what the file contains goes to it in the next tool round. That
+round is a new crossing: it gets its own ruling, a refusal stops the turn before
+anything is sent and says which results were withheld, and a released result is
+recorded in the exposure query by name, size and content hash. Before the kernel,
+file contents followed the first ruling out of the machine without one of their
+own, and never appeared in *"what has crossed"* — `tools/kernel_http_test.js`
+demonstrates both, against a fake remote on localhost, so the proof costs nothing
+and sends nothing.
+
+**There is one door.** `providers.chat()` will not dispatch to anything that is not
+positively local without a clearance covering every message it sends; a caller that
+forgot to ask gets the gate run on its behalf, so forgetting costs a gate call and
+never a crossing. Beneath it, `providers/egress.js` is the only file allowed to call
+`fetch` (a test fails on any other), and it will not open a content-bearing
+connection without a clearance the kernel issued.
+
+> ⚠ **What the kernel cannot mediate.** A brief or packet you export and carry out
+> by hand — that crossing is recorded, not prevented. And code that opens its own
+> socket: a tool that runs third-party code would have to live in a separate
+> process for any of this to hold, and none does today.
 
 **Every packet in the request is recorded as crossed**, deduplicated per
 (packet, model). A turn resends the whole conversation, so without dedup the log

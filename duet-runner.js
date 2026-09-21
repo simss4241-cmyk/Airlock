@@ -18,9 +18,10 @@
  *   3. A placeholder reply is appended with status `streaming`, so the reply has an id and
  *      an owner before a single token exists. Nothing downstream has to guess which pane a
  *      token belongs to.
- *   4. If the answering participant is REMOTE, the local gate rules on the whole assembled
- *      context before anything is sent. See below — this is the part that is specific to
- *      this desk and is not optional.
+ *   4. If the answering participant is not positively local, the kernel rules on everything
+ *      in the assembled context it has not ruled on before, and binds the clearance to that
+ *      exact snapshot, before anything is sent. See below — this is the part that is
+ *      specific to this desk and is not optional.
  *   5. The job queues. Two 30B generations at once on one 16 GB card is not concurrency,
  *      it is thrashing — so the queue is real and its depth is visible to the user.
  *   6. Tokens stream. On stop, refusal, failure or a dead server the placeholder is settled
@@ -41,7 +42,7 @@ const store = require('./db');
 const duet = require('./duet-store');
 const providers = require('./providers');
 const auth = require('./auth');
-const { runGate } = require('./boundary');
+const kernel = require('./kernel');
 const { buildContext } = require('./duet-context');
 
 const { STATUS } = duet;
@@ -114,23 +115,23 @@ function queueFor(tier, limit) {
 // ─────────────────────────── the gate ───────────────────────────
 
 /**
- * Rule on a duet crossing. Once per thread per model, matching /api/chat's clearance rule,
- * so ordinary back-and-forth does not pay for a local gate call on every message.
+ * Rule on a duet crossing, through the kernel like every other crossing.
  *
- * Inherits that route's KNOWN GAP: a secret typed on turn nine is not gated, because the
- * thread was cleared at turn one. Noted in the README as not built.
+ * Every turn is ruled on, and only what is new in it: the triggering message, and the
+ * other participant's latest reply if that is new too. The clearance that comes back is
+ * bound to exactly this `wire` — the snapshot taken at submit time — so what is ruled on
+ * is what is sent, even after a wait in the queue.
+ *
+ * This used to be once per thread per model, which meant a secret typed on turn nine
+ * was never judged. That was accepted when the gate model cost seconds per call.
+ *
+ * Returns { ok, ruling, token }.
  */
-async function clearCrossing({ threadId, model, wire, config }) {
-    if (store.isCleared(Number(threadId), model)) return { release: true, cached: true };
-
+async function clearCrossing({ model, wire, config }) {
     // The gate reads exactly what would be sent — system prompt, both participants' words,
-    // the lot — because that is exactly what would leave. No model is named: boundary.js
+    // the lot — minus what it has already ruled on. No model is named: boundary.js
     // resolves a LOCAL one itself, and refuses outright if handed a remote id.
-    const outgoing = wire.map(m => `${m.role}: ${m.content || ''}`).join('\n\n');
-    const ruling = await runGate(outgoing, { config });
-
-    if (ruling.release) store.recordClearance(Number(threadId), model, ruling);
-    return ruling;
+    return kernel.clear({ model, messages: wire, config });
 }
 
 // ─────────────────────────── generation ───────────────────────────
@@ -245,6 +246,7 @@ async function generate({ threadId, participantId, text, clientRequestId, retryO
 
     // ── 4. the boundary ──
     let gateRuling = null;
+    let clearance = null;
 
     // ⚠ `!== 'local'`: anything the local catalogue did not name is treated as a
     // crossing. A duet crossing carries the OTHER participant's words too, so this is
@@ -253,7 +255,9 @@ async function generate({ threadId, participantId, text, clientRequestId, retryO
         emit({ type: 'gating', messageId: reply.id });
 
         try {
-            gateRuling = await clearCrossing({ threadId, model, wire, config });
+            const cleared = await clearCrossing({ model, wire, config });
+            gateRuling = cleared.ruling;
+            clearance = cleared.token;
         } catch (err) {
             // A gate that throws is a gate that did not release. Fail closed.
             gateRuling = {
@@ -313,7 +317,8 @@ async function generate({ threadId, participantId, text, clientRequestId, retryO
                 // Omitted entirely when unsupported: sending `false` is still a request to
                 // a model that has no thinking channel, and that is a hard 400.
                 ...(canThink ? { think: config.think !== false } : {}),
-                signal
+                signal,
+                clearance
             });
 
             for await (const chunk of stream) {

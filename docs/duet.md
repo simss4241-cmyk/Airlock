@@ -67,7 +67,10 @@ Sending to a remote participant sends it the shared conversation — which inclu
 the *other* participant said and what was asked of it. That is the point of the feature
 and it is also a real exposure, so:
 
-- the local gate reads the **whole assembled context**, not just the newest message;
+- the local gate rules on **everything in the assembled context that it has not ruled on
+  before** — the other participant's words included, not just the message you typed —
+  and on every turn, not once per thread. The clearance is bound to that exact snapshot,
+  so what was ruled on is what is sent, even after a wait in the queue (`kernel.js`);
 - the crossing is recorded against **every packet whose text was in it**
   (`duet-context.js` returns exactly that set as `meta.sourceIds`);
 - each pane header carries a tier chip — `local` or `↗ crosses` — because which side of
@@ -82,12 +85,11 @@ and it is also a real exposure, so:
 A withheld generation is kept in the log as a `blocked` packet showing the gate's
 reason. The attempt is part of the record; the text never left.
 
-⚠ `duet-runner.js` resolves a **local** gate model explicitly rather than reusing
-`config.model`, which `/api/chat` and `/escalate` both do. `pickDefaultModel()` returns
-a Nemotron id whenever `NEBIUS_API_KEY` is set, so on a configured machine those call
-sites gate *remotely* — which boundary.js says outright must never happen. That looks
-like a bug rather than an intent, and the duet path does not copy it. Worth fixing at
-the other two call sites separately.
+Duet crossings go through `kernel.js` like every other crossing — the same clearance,
+the same egress lock — so there is no duet-specific gate logic to drift. (An earlier
+version of this page noted that `/api/chat` and `/escalate` passed `config.model` to the
+gate and so gated remotely on a keyed machine. That was fixed centrally in `runGate`, and
+the kernel has since made the question moot: no route chooses its own gate.)
 
 ## Concurrency
 

@@ -8,7 +8,8 @@
  * translation and cannot drift.
  */
 
-const OLLAMA = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';
+const egress = require('./egress');
+const { OLLAMA } = egress;
 
 const tier = 'local';
 
@@ -23,7 +24,7 @@ async function capabilities(model) {
 
     let caps = [];
     try {
-        const r = await fetch(`${OLLAMA}/api/show`, {
+        const r = await egress.local(`${OLLAMA}/api/show`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ model })
@@ -49,7 +50,7 @@ async function capabilities(model) {
  * is on is registry.js's call, and it needs the evidence to make it.
  */
 async function list() {
-    const r = await fetch(`${OLLAMA}/api/tags`);
+    const r = await egress.local(`${OLLAMA}/api/tags`);
     if (!r.ok) return [];
     const { models = [] } = await r.json();
     return models.map(m => ({
@@ -78,7 +79,7 @@ async function list() {
 const residency = new Map();          // id -> { gpu: 0..1, size, sizeVram, at }
 
 async function observeResidency() {
-    const r = await fetch(`${OLLAMA}/api/ps`);
+    const r = await egress.local(`${OLLAMA}/api/ps`);
     if (!r.ok) return;
     const { models = [] } = await r.json();
     for (const m of models) {
@@ -98,12 +99,12 @@ const residencyOf = id => residency.get(id) || null;
 
 async function version() {
     try {
-        const r = await fetch(`${OLLAMA}/api/version`);
+        const r = await egress.local(`${OLLAMA}/api/version`);
         return r.ok ? (await r.json()).version : null;
     } catch { return null; }
 }
 
-async function* chat({ model, messages, config, think, tools, signal }) {
+async function* chat({ model, messages, config, think, tools, signal, clearance }) {
     const { ProviderError } = require('./index');
 
     const payload = {
@@ -123,12 +124,13 @@ async function* chat({ model, messages, config, think, tools, signal }) {
     };
     if (tools) payload.tools = tools;
 
-    const res = await fetch(`${OLLAMA}/api/chat`, {
+    // Named, so egress can hold an Ollama cloud model to the remote rules.
+    const res = await egress.local(`${OLLAMA}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
         signal
-    });
+    }, { model, clearance });
 
     if (!res.ok) {
         const text = await res.text();

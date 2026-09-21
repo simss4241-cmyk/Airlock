@@ -10,6 +10,7 @@ const store = require('./db');
 const files = require('./files');
 const providers = require('./providers');
 const { runGate } = require('./boundary');
+const kernel = require('./kernel');
 const auth = require('./auth');
 const duet = require('./duet-store');
 const { generate: generateDuet, queueState } = require('./duet-runner');
@@ -17,7 +18,8 @@ const { generate: generateDuet, queueState } = require('./duet-runner');
 const app = express();
 
 const PORT = Number(process.env.PORT) || 8100;
-const OLLAMA = process.env.OLLAMA_URL || 'http://127.0.0.1:11434';   // keep in step with providers/ollama.js
+const egress = require('./providers/egress');
+const { OLLAMA } = egress;              // one definition, shared with providers/ollama.js
 // Overridable so a hosted instance can keep config outside the code directory,
 // and so the first-run path is testable without moving the developer's own file.
 const CONFIG_FILE = process.env.AIRLOCK_CONFIG || path.join(__dirname, 'airlock-config.json');
@@ -277,11 +279,6 @@ function liveSeats() {
     ].filter(s => s.model && process.env.NEBIUS_API_KEY);
 }
 
-// Scratch chat has no thread to hang a clearance on, so it is remembered per
-// model for the life of the process. Restarting asks again, which is the right
-// default for something with no durable home.
-const scratchCleared = new Set();
-
 // Remote-tier models, with their declared capabilities. Never throws: a missing
 // key, a network blip or a bad key all mean the same thing to the UI — no seats.
 // Nemotron in capability order rather than alphabetical order, which scatters
@@ -349,8 +346,8 @@ app.get('/api/health', async (req, res) => {
         await providers.refreshRegistry().catch(() => {});
 
         const [tagsRes, verRes] = await Promise.all([
-            fetch(`${OLLAMA}/api/tags`),
-            fetch(`${OLLAMA}/api/version`).catch(() => null)
+            egress.local(`${OLLAMA}/api/tags`),
+            egress.local(`${OLLAMA}/api/version`).catch(() => null)
         ]);
         const { models = [] } = await tagsRes.json();
         const version = verRes && verRes.ok ? (await verRes.json()).version : null;
@@ -460,52 +457,73 @@ app.post('/api/chat', async (req, res) => {
         send({ airlock_usage: usage });
     };
 
-    // A remote model means this conversation is about to leave the machine, so the
-    // gate rules before anything is sent. Once per thread per model: the selection
-    // is sticky in localStorage, so the risk being guarded against is returning to
-    // a thread already pointed at the remote tier and forgetting.
+    // ── the boundary ──
+    //
+    // Every request to a model that is not positively local is ruled on by kernel.js, and
+    // every TURN is: a clearance covers the exact messages it was issued for, so a secret
+    // typed on turn nine is judged on turn nine. It used to be once per thread, with the
+    // answer remembered — affordable only because the gate model was slow. Only what has
+    // not been ruled on before is sent to the gate, so a long thread does not re-read its
+    // own history every turn.
+    //
+    // ⚠ `crosses` is `!== 'local'`, never `=== 'remote'`: a model nothing recognises is
+    // treated as a crossing. The inverted test used to skip the gate for any tier that was
+    // not the exact string 'remote'.
+    //
+    // The first ruling happens before any header is written, so a refusal is a clean 200
+    // with the reason rather than an error inside a stream.
     const tier = providers.tierOf(chosen);
+    const crosses = tier !== 'local';
     let gateRuling = null;
+    let clearance = null;
 
-    // ⚠ `!== 'local'`, not `=== 'remote'`. Only a model the local catalogue actually
-    // named may pass without a ruling; anything else — including a model nothing
-    // recognises — counts as a crossing and is gated. Tested the other way round, the
-    // gate was skipped for every tier that was not the exact string 'remote', which is
-    // the wrong polarity for the check standing in front of the boundary.
-    if (tier !== 'local') {
-        const cleared = threadId
-            ? store.isCleared(Number(threadId), chosen)
-            : scratchCleared.has(chosen);
-
-        if (!cleared) {
-            // The system prompt is in `convo` too, and it crosses with everything
-            // else, so the gate reads exactly what would be sent.
-            const outgoing = convo
-                .map(m => `${m.role}: ${m.content || ''}`)
-                .join('\n\n');
-
-            // No model named: boundary.js resolves a LOCAL one. Passing config.model
-            // here is what used to run the gate remotely whenever a Nebius key was set.
-            gateRuling = await runGate(outgoing, { config });
-
-            if (!gateRuling.release) {
-                // Nothing has been sent. 200, because the request succeeded and the
-                // answer was no — the client renders the reason rather than an error.
-                return res.status(200).json({ blocked: true, gate: gateRuling, tier });
-            }
-
-            if (threadId) store.recordClearance(Number(threadId), chosen, gateRuling);
-            else scratchCleared.add(chosen);
+    if (crosses) {
+        const first = await kernel.clear({ model: chosen, messages: convo, config });
+        if (!first.ok) {
+            // Nothing has been sent. 200, because the request succeeded and the
+            // answer was no — the client renders the reason rather than an error.
+            return res.status(200).json({ blocked: true, gate: first.ruling, tier });
         }
+        clearance = first.token;
+        gateRuling = first.ruling;
     }
 
-    let crossingRecorded = false;
+    // Tool results that have been produced but not yet sent. They are not packets, so the
+    // packet-level crossing record cannot see them; they are recorded against the request
+    // that caused them, as they cross. See store.recordArtifactCrossing.
+    let pendingArtifacts = [];
+    const anchorPacket = packetIds.length ? packetIds[packetIds.length - 1] : null;
 
     try {
         for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
             const lastRound = round === MAX_TOOL_ROUNDS;   // stop offering tools; force an answer
+            let roundRecorded = false;
 
-            if (tier === 'remote' && round === 0) {
+            if (crosses) {
+                // ⚠ Every round after the first carries something new: the tool results
+                // the model asked for. Those are file contents, and they used to follow the
+                // round-0 ruling out of the machine without one of their own. The kernel
+                // rules on just what is new; a refusal stops the turn here, before any of
+                // it is sent, and says which results were withheld.
+                if (round > 0) {
+                    const next = await kernel.clear({ model: chosen, messages: convo, config });
+                    if (!next.ok) {
+                        send({
+                            airlock_blocked: {
+                                gate: next.ruling,
+                                round,
+                                withheld: pendingArtifacts.map(a => a.label)
+                            }
+                        });
+                        sendUsage();
+                        return res.end();
+                    }
+                    clearance = next.token;
+                    gateRuling = next.ruling;
+                }
+
+                // Every round is a separately billed remote call, so every round is charged.
+                // This used to be round 0 only, and tested `=== 'remote'`.
                 const over = auth.spendRemote();
                 if (over) {
                     if (!res.headersSent) return res.status(429).json({ error: over });
@@ -524,7 +542,10 @@ app.post('/api/chat', async (req, res) => {
                 // to a model that has no thinking channel.
                 ...(canThink ? { think: config.think !== false } : {}),
                 tools: useTools && !lastRound ? TOOLS : undefined,
-                signal: controller.signal
+                signal: controller.signal,
+                // Checked by providers.chat and again by egress; if it no longer covers
+                // what is being sent, the gate runs there instead of the request going.
+                clearance
             });
 
             // Collect rather than blind-pipe: we need the tool calls, and the per-round
@@ -536,12 +557,20 @@ app.post('/api/chat', async (req, res) => {
                 // First chunk back proves the request was accepted, which is the
                 // moment the content is provably across. Recording on dispatch
                 // instead would log crossings that never happened.
-                if (tier === 'remote' && !crossingRecorded) {
-                    crossingRecorded = true;
+                //
+                // ⚠ `crosses`, not `tier === 'remote'` — the same polarity as the gate, so
+                // a turn that was gated as a crossing is also recorded as one.
+                if (crosses && !roundRecorded) {
+                    roundRecorded = true;
                     try {
-                        store.recordCrossings(packetIds, {
-                            actor: chosen, model: chosen, transport: 'chat', gate: gateRuling
-                        });
+                        const opts = { actor: chosen, model: chosen, transport: 'chat', gate: gateRuling };
+                        if (round === 0) store.recordCrossings(packetIds, opts);
+                        if (pendingArtifacts.length) {
+                            if (anchorPacket) store.recordArtifactCrossing(anchorPacket, { ...opts, artifacts: pendingArtifacts });
+                            else console.error('tool results crossed with no packet to record them against:',
+                                pendingArtifacts.map(a => a.label).join(', '));
+                            pendingArtifacts = [];
+                        }
                     } catch (err) {
                         console.error('crossing not recorded:', err.message);
                     }
@@ -570,12 +599,18 @@ app.post('/api/chat', async (req, res) => {
                 break;
             }
 
-            convo.push({
+            const asked = {
                 role: 'assistant',
                 content,
                 ...(thinking ? { thinking } : {}),
                 tool_calls: toolCalls
-            });
+            };
+            convo.push(asked);
+
+            // The model's own request, going back to the model that made it, is not new
+            // exposure — only the results it asked for are. Acknowledged so the next
+            // ruling judges the file contents, not the far side's own words.
+            if (crosses) kernel.acknowledge([asked]);
 
             for (const call of toolCalls) {
                 const name = call.function?.name;
@@ -595,11 +630,23 @@ app.post('/api/chat', async (req, res) => {
                 // Custom line the client renders as a tool card. Ollama never emits this key.
                 send({ airlock_tool: { name, args, ok, summary: summarise(name, args, result, ok) } });
 
-                convo.push({
+                const toolMessage = {
                     role: 'tool',
                     tool_name: name,
                     content: JSON.stringify(result).slice(0, 120000)
-                });
+                };
+                convo.push(toolMessage);
+
+                if (crosses) {
+                    const target = args.path || args.query || '.';
+                    pendingArtifacts.push({
+                        label: `${name}(${target}) ${toolMessage.content.length.toLocaleString()} chars`
+                            + ` sha:${kernel.unitHash(toolMessage).slice(0, 12)}`,
+                        tool: name,
+                        target,
+                        ok
+                    });
+                }
             }
         }
 
@@ -609,6 +656,14 @@ app.post('/api/chat', async (req, res) => {
         res.end();
     } catch (err) {
         if (err.name === 'AbortError') return;   // user hit Stop; nothing to report
+
+        // The safety net in providers.chat() ran the gate itself and it said no. Nothing
+        // was sent; answer it the way a refusal is answered, not as a malfunction.
+        if (err.name === 'GateRefusal') {
+            if (!res.headersSent) return res.status(200).json({ blocked: true, gate: err.gate, tier: err.tier });
+            send({ airlock_blocked: { gate: err.gate, withheld: pendingArtifacts.map(a => a.label) } });
+            return res.end();
+        }
 
         const tier = err.tier || 'local';
         console.error(`${tier} provider error:`, err.message);
@@ -1065,8 +1120,13 @@ app.post('/api/threads/:id/escalate', async (req, res) => {
         if (!model) throw new Error('Escalation needs a model.');
 
         const tier = providers.tierOf(model);
-        if (tier !== 'remote') {
+        if (tier === 'local') {
             throw new Error(`${model} is on the local tier — nothing would cross, so there is nothing to gate.`);
+        }
+        if (tier !== 'remote') {
+            // Escalation is a deliberate trip across the boundary to a known reviewer.
+            // A model Airlock cannot place is not one, whatever the gate would say.
+            throw new Error(`Airlock cannot place ${model} on either side of the boundary, so it cannot be an oversight seat.`);
         }
 
         const brief = store.buildBrief(threadId, { actor });
@@ -1074,13 +1134,18 @@ app.post('/api/threads/:id/escalate', async (req, res) => {
             throw new Error('Nothing to escalate — this thread has no packets yet.');
         }
 
-        // 1. The gate. Local, deterministic, fail-closed.
-        const gate = force
-            // model: null because no model ruled. Naming config.model here claimed a
-            // gate model that never ran — and on a keyed machine that was a REMOTE id,
-            // so the audit trail implied a remote model had approved its own crossing.
-            ? { release: true, reason: 'Overridden by the operator.', concerns: [], model: null, forced: true }
-            : await runGate(brief.markdown, { config });
+        // 1. The gate. Local, deterministic, fail-closed — and bound to the exact brief:
+        // the clearance covers these words, going to this model, and nothing else.
+        const messages = [{ role: 'user', content: brief.markdown }];
+        const cleared = force
+            // An operator override still goes through the kernel, so the crossing has a
+            // clearance like any other and the record says a person decided. Its ruling
+            // names no model (model: null) because none ruled: naming config.model here
+            // once claimed a gate model that never ran — on a keyed machine a REMOTE id,
+            // implying a remote model had approved its own crossing.
+            ? kernel.override({ model, messages, actor: 'the operator' })
+            : await kernel.clear({ model, messages, config });
+        const gate = cleared.ruling;
 
         if (!gate.release) {
             // Refused. Nothing has touched the network, and nothing is recorded
@@ -1092,11 +1157,7 @@ app.post('/api/threads/:id/escalate', async (req, res) => {
         const over = auth.spendRemote();
         if (over) return res.status(429).json({ error: over, gate });
 
-        const verdict = await providers.complete({
-            model,
-            messages: [{ role: 'user', content: brief.markdown }],
-            config
-        });
+        const verdict = await providers.complete({ model, messages, config, clearance: cleared.token });
 
         if (!verdict.content) {
             throw new Error(`${model} returned no verdict text.`);
