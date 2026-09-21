@@ -1,110 +1,98 @@
 'use strict';
 
 /**
- * Clearance lifetime — a store invariant, tested against a throwaway database.
- *
+ * Per-thread gate clearances are retired, and an old database loses them cleanly.
  *   node tools/clearance_test.js
  *
- * No server and no models. This is deliberately NOT part of boundary_test.js: that suite
- * drives a running server, which may be pointed at an entirely different database via
- * AIRLOCK_DB, so a test that reaches into the store directly would be inspecting the wrong
- * file and passing for the wrong reason.
+ * Remote chat used to be gated once per thread per model, with the answer stored in
+ * `meta` as `cleared:<threadId>:<model>` and kept tidy by a trigger and a boot sweep —
+ * because SQLite reuses rowids, and a new thread could otherwise inherit a deleted one's
+ * consent. kernel.js replaced all of it: every turn is ruled on, and a clearance is bound
+ * to message content rather than to a thread id, so there is no consent keyed to anything
+ * that can be recycled. The rows now mean nothing, and db.js drops them at boot.
  *
- * ⚠ What is under test is a boundary defect, not housekeeping.
- *
- * A gate clearance is consent: "this thread may talk to that remote model", remembered so
- * ordinary conversation does not pay for a local gate call every turn. It lives in `meta`
- * keyed by thread id — and SQLite reuses the highest rowid after a delete. So a deleted
- * thread used to leave its consent behind, and the next thread created could be handed the
- * same id and inherit it. That thread would then skip the gate entirely, on consent nobody
- * ever gave, and the first sign of it would be content already across the boundary.
+ * What matters is that this works on a database the OLD code wrote. So the test builds
+ * one as it would have been left — the trigger and consent rows planted after a normal
+ * boot — and then opens it with the current db.js in a fresh process, because db.js runs
+ * its migrations once, at module load.
  */
 
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
+const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
-// Set BEFORE requiring the store: db.js reads this at module load.
-const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'airlock-clearance-'));
-process.env.AIRLOCK_DB = path.join(scratch, 'clearance-test.db');
-
-const store = require('../db');
+const ROOT = path.join(__dirname, '..');
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'airlock-clearance-'));
+const DB = path.join(tmp, 'legacy.db');
 
 let pass = 0, fail = 0;
 const ok = (cond, label, detail = '') => {
-    if (cond) { pass++; console.log('  ok   ' + label); }
-    else { fail++; console.log('  FAIL ' + label + (detail ? ' — ' + detail : '')); }
+    if (cond) { pass++; console.log(`  ok   ${label}`); }
+    else { fail++; console.log(`  FAIL ${label}${detail ? ' — ' + detail : ''}`); }
 };
 
-const clearanceKeys = () => store.db
-    .prepare("SELECT key FROM meta WHERE key LIKE 'cleared:%'")
-    .all().map(r => r.key);
+/** Open the scratch database with the current db.js in its own process; return JSON. */
+const withDb = code => JSON.parse(execFileSync(process.execPath, ['-e', `
+    const store = require(${JSON.stringify(path.join(ROOT, 'db.js'))});
+    const out = (() => { ${code} })();
+    store.db.close();
+    process.stdout.write(JSON.stringify(out));
+`], { env: { ...process.env, AIRLOCK_DB: DB }, stdio: ['ignore', 'pipe', 'ignore'] }).toString());
 
-const MODEL = 'nvidia/pretend-remote-model';
+const COUNTS = `
+    rows: store.db.prepare("SELECT COUNT(*) c FROM meta WHERE key LIKE 'cleared:%'").get().c,
+    trigger: store.db.prepare("SELECT COUNT(*) c FROM sqlite_master WHERE type='trigger' AND name='threads_drop_clearances'").get().c
+`;
 
-function cleanup() {
-    try { fs.rmSync(scratch, { recursive: true, force: true }); } catch { /* best effort */ }
+try {
+    console.log('\nretired per-thread clearances\n');
+
+    // 1. What the previous version left behind: its trigger, and consent rows — one for a
+    //    live thread, one orphaned — beside a meta key that has nothing to do with them.
+    const planted = withDb(`
+        store.db.exec(\`
+            CREATE TRIGGER IF NOT EXISTS threads_drop_clearances
+            AFTER DELETE ON threads
+            BEGIN
+                DELETE FROM meta WHERE key LIKE 'cleared:' || OLD.id || ':%';
+            END;
+        \`);
+        const [tray] = store.getTree();
+        const t = store.createThread(tray.id, 'legacy');
+        store.setMeta('cleared:' + t.id + ':nvidia/some-remote', 'released');
+        store.setMeta('cleared:999999:another-model', 'released');
+        store.setMeta('unrelated:key', 'keep me');
+        return { ${COUNTS} };
+    `);
+    ok(planted.rows === 2 && planted.trigger === 1,
+       'a database is set up the way the old code left it', JSON.stringify(planted));
+
+    // 2. Open it with the current code.
+    const after = withDb(`
+        return {
+            retired: store.retiredClearances,
+            unrelated: store.getMeta('unrelated:key'),
+            api: ['isCleared', 'recordClearance'].filter(f => typeof store[f] === 'function'),
+            ${COUNTS}
+        };
+    `);
+    ok(after.retired === 2, 'its clearance rows are removed on open', `removed ${after.retired}`);
+    ok(after.rows === 0, 'none are left behind');
+    ok(after.trigger === 0, 'the trigger that maintained them is dropped');
+    ok(after.unrelated === 'keep me', 'nothing else in meta is touched');
+    ok(after.api.length === 0, 'and the per-thread consent API no longer exists to call',
+       after.api.join(', '));
+
+    // 3. Idempotent: it runs every boot, so a second open must change nothing.
+    const again = withDb(`return { retired: store.retiredClearances };`);
+    ok(again.retired === 0, 'opening it again is a no-op');
+} catch (err) {
+    fail++;
+    console.log('  FAIL clearance_test could not run — ' + (err.stack || err.message));
+} finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
 }
-process.on('exit', cleanup);
-
-console.log('\nAirlock clearance lifetime tests\n');
-
-const tray = store.createFolder('CLEARANCE');
-
-// ── a clearance belongs to its thread ──
-const first = store.createThread(tray.id, 'first');
-store.recordClearance(first.id, MODEL, { reason: 'benign brief' });
-
-ok(store.isCleared(first.id, MODEL) === true, 'a clearance is recorded against its thread');
-ok(clearanceKeys().length === 1, 'and is one row in meta', clearanceKeys().join(','));
-
-// ── deleting the thread takes the consent with it ──
-store.deleteThread(first.id);
-ok(store.isCleared(first.id, MODEL) === false, 'deleting the thread revokes its clearance');
-ok(clearanceKeys().length === 0, 'leaving no clearance rows behind', clearanceKeys().join(','));
-
-// ── the defect this exists for: a recycled thread id must not inherit consent ──
-const second = store.createThread(tray.id, 'second');
-ok(second.id === first.id,
-   'SQLite hands the deleted thread\'s id to the next one (the precondition for the bug)',
-   `first=${first.id} second=${second.id}`);
-ok(store.isCleared(second.id, MODEL) === false,
-   'and the new thread on that recycled id is NOT cleared');
-
-// ── the cascade path: threads also vanish when their tray does ──
-store.recordClearance(second.id, MODEL, { reason: 'benign brief' });
-ok(store.isCleared(second.id, MODEL) === true, 'a second clearance is recorded');
-
-store.deleteFolder(tray.id);
-ok(store.isCleared(second.id, MODEL) === false,
-   'deleting the tray revokes its threads\' clearances too, by cascade');
-ok(clearanceKeys().length === 0, 'and leaves nothing behind', clearanceKeys().join(','));
-
-// ── clearances are per model, not per thread ──
-const tray2 = store.createFolder('CLEARANCE 2');
-const shared = store.createThread(tray2.id, 'shared');
-store.recordClearance(shared.id, 'model-a', { reason: 'ok' });
-ok(store.isCleared(shared.id, 'model-a') === true, 'clearing one model clears that model');
-ok(store.isCleared(shared.id, 'model-b') === false, 'and not a different one');
-
-// ── the boot sweep catches anything written before the trigger existed ──
-//
-// Simulated by writing a clearance for a thread id that does not exist, which is exactly
-// the shape a pre-trigger database is in.
-store.setMeta('cleared:999999:some-model', 'left over from a deleted thread');
-ok(clearanceKeys().includes('cleared:999999:some-model'), 'an orphaned clearance can be planted');
-
-const swept = store.db.prepare(`
-    DELETE FROM meta
-     WHERE key LIKE 'cleared:%'
-       AND instr(substr(key, 9), ':') > 0
-       AND CAST(substr(key, 9, instr(substr(key, 9), ':') - 1) AS INTEGER)
-           NOT IN (SELECT id FROM threads)
-`).run().changes;
-
-ok(swept === 1, 'and the boot sweep removes exactly it', `swept ${swept}`);
-ok(store.isCleared(shared.id, 'model-a') === true,
-   'while leaving a live thread\'s clearance alone');
 
 console.log(`\n${pass} passed, ${fail} failed\n`);
-process.exit(fail ? 1 : 0);
+if (fail) process.exitCode = 1;

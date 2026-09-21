@@ -48,7 +48,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Escalation by router **and** by hand, both recorded as crossings | working |
 | Access token + remote spend cap for hosting | working, 26 assertions |
 | Duet — two addressable participants over one conversation | working, 73 assertions |
-| Gate consent revoked with its thread; recycled ids inherit nothing | working, 14 assertions |
+| Per-thread consent retired; an old database is cleaned on open | working, 7 assertions |
 | Every turn gated, bound to the exact words sent — only what is new is re-read | working |
 | One door: nothing reaches the network without a clearance the kernel issued | working, 34 assertions |
 | Tool results a remote model reads are gated, and recorded as crossed | working, 12 assertions end to end |
@@ -56,7 +56,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Per-visitor isolation (a shared token is not multi-tenancy) | not built |
 | Hosted demo build | not built |
 
-**415 assertions across eleven suites.** Run them:
+**408 assertions across eleven suites.** Run them:
 
 ```
 npm start                          # in one terminal
@@ -68,7 +68,7 @@ node tools/files_test.js           # workspace containment
 node tools/workspace_test.js       # migrations
 node tools/duet_context_test.js    # what each participant is shown
 node tools/duet_test.js            # two panes, one conversation
-node tools/clearance_test.js       # gate consent does not outlive its thread
+node tools/clearance_test.js       # retired per-thread consent is removed from old databases
 node tools/kernel_test.js          # the kernel, both locks, one door
 node tools/kernel_http_test.js     # tool results crossing, end to end (fake remote)
 ```

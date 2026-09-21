@@ -90,41 +90,20 @@ CREATE INDEX IF NOT EXISTS idx_prov_event        ON provenance(event);
 `);
 
 /**
- * A deleted thread takes its gate clearances with it.
+ * Per-thread gate clearances are retired; remove what they left behind.
  *
- * ⚠ This is a boundary bug, not housekeeping. Clearances live in `meta` keyed by thread id
- * (`cleared:<threadId>:<model>`), and SQLite reuses the highest rowid after a delete — so a
- * brand new thread could be handed the id of a deleted one and silently inherit its
- * consent. The next remote turn would then skip the gate entirely, on a thread nobody ever
- * cleared, and the first sign of it would be content already across the boundary.
+ * Remote chat used to be gated once per thread per model, with the answer kept in `meta`
+ * as `cleared:<threadId>:<model>`. That let a secret typed on turn nine through unjudged,
+ * and it needed a trigger and a boot sweep of its own, because SQLite reuses rowids and a
+ * new thread could otherwise inherit a deleted one's consent. kernel.js replaced it: every
+ * turn is ruled on, and a clearance is bound to message content, not to a thread id, so
+ * there is no consent keyed to anything that can be recycled.
  *
- * A trigger rather than a line in deleteThread, because threads also disappear by cascade
- * when a folder is deleted, and a trigger fires on those too. Cascaded deletes only fire
- * triggers while foreign keys are ON, which is set above.
+ * Nothing reads those rows any more. Dropping them, and the trigger that maintained them,
+ * is idempotent and cheap, so it simply runs every boot.
  */
-db.exec(`
-CREATE TRIGGER IF NOT EXISTS threads_drop_clearances
-AFTER DELETE ON threads
-BEGIN
-    DELETE FROM meta WHERE key LIKE 'cleared:' || OLD.id || ':%';
-END;
-`);
-
-/**
- * Sweep clearances the trigger was not around to catch.
- *
- * Runs every boot rather than once behind a marker: it is a few rows of an already tiny
- * table, and a consistency sweep that self-heals is worth more here than one that is
- * clever about skipping itself. Any thread id in a clearance key that no longer exists
- * is consent belonging to nothing.
- */
-const orphanedClearances = db.prepare(`
-    DELETE FROM meta
-     WHERE key LIKE 'cleared:%'
-       AND instr(substr(key, 9), ':') > 0
-       AND CAST(substr(key, 9, instr(substr(key, 9), ':') - 1) AS INTEGER)
-           NOT IN (SELECT id FROM threads)
-`).run().changes;
+db.exec(`DROP TRIGGER IF EXISTS threads_drop_clearances;`);
+const retiredClearances = db.prepare(`DELETE FROM meta WHERE key LIKE 'cleared:%'`).run().changes;
 
 function getMeta(key) {
     return db.prepare('SELECT value FROM meta WHERE key = ?').get(key)?.value ?? null;
@@ -823,30 +802,6 @@ function recordCrossings(packetIds, opts) {
 }
 
 /**
- * Has this thread been cleared to talk to this model? — RETIRED as a gate input.
- *
- * This was once-per-thread consent: the gate ran on the first remote turn and the
- * answer was remembered, so a secret typed on turn nine was never judged. That gap was
- * accepted on latency, when the gate model cost seconds per call. kernel.js now rules on
- * every turn — only on what has not been ruled on before — and binds each clearance to
- * the exact messages it covers, so nothing reads these rows to decide anything.
- *
- * The functions remain because existing databases hold rows in this shape, and the
- * trigger and boot sweep above keep those rows from outliving their threads. Whether to
- * drop them entirely is a separate decision; they no longer let anything past.
- */
-const clearanceKey = (threadId, model) => `cleared:${threadId}:${model}`;
-
-function isCleared(threadId, model) {
-    return Boolean(getMeta(clearanceKey(threadId, model)));
-}
-
-function recordClearance(threadId, model, gate) {
-    setMeta(clearanceKey(threadId, model),
-        `${now()} · ${gate?.forced ? 'FORCED' : 'released'} · ${(gate?.reason || '').slice(0, 200)}`);
-}
-
-/**
  * What has ever left the machine, for one thread or for everything.
  *
  * This is the query the boundary exists to make answerable. It reads the
@@ -904,12 +859,11 @@ function stats() {
 }
 
 module.exports = {
-    orphanedClearances,
+    retiredClearances,
     db, getTree, createFolder, deleteFolder, renameFolder, reorderFolder,
     createThread, deleteThread, getThread, renameThread, moveThreadToFolder, reorderThread,
     setThreadWorkspace, migrateWorkspaceRoot, getMeta, setMeta,
     createPacket, getPacket, getThreadPackets, movePacket, forkPacket, deletePacket,
     reviewPacket, getProvenance, getReviews, search, getTravelled, stats, subtreeIds,
-    buildBrief, recordHandoff, getExposure, recordCrossings, recordArtifactCrossing,
-    isCleared, recordClearance
+    buildBrief, recordHandoff, getExposure, recordCrossings, recordArtifactCrossing
 };
