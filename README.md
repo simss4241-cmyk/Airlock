@@ -40,10 +40,10 @@ what leaves it. This table is the honest version — clone it and check.
 | Local inference — streaming, reasoning channel, tools, vision | working |
 | Packet store — threads, nesting, provenance, move/fork/review | working, 89 assertions |
 | Per-thread read-only workspaces, with containment tests | working, 46 assertions |
-| Remote tier on Nebius Token Factory (Nemotron 3) | working, 48 assertions |
+| Remote tier on Nebius Token Factory (Nemotron 3) | working, 61 assertions |
 | One streaming contract across both tiers | working |
 | Model dropdown grouped by tier, capability-badged | working |
-| Local gate rules before anything crosses, and fails closed | working, 73 assertions |
+| Local gate rules before anything crosses, and fails closed | working, 73 assertions (28 spend credits, opt-in) |
 | Tier recorded per packet; "what crossed?" as a query | working |
 | Escalation by router **and** by hand, both recorded as crossings | working |
 | Access token + remote spend cap for hosting | working, 26 assertions |
@@ -56,7 +56,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Per-visitor isolation (a shared token is not multi-tenancy) | not built |
 | Hosted demo build | not built |
 
-**408 assertions across eleven suites.** Run them:
+**421 assertions across eleven suites.** Run them:
 
 ```
 npm start                          # in one terminal
@@ -87,9 +87,11 @@ AIRLOCK_URL=http://localhost:8126 node tools/boundary_test.js
 not affected.
 
 The remote suites **skip** rather than fail without a Nebius key, so the tests
-run on a clean clone with no credentials. `duet_test.js` additionally skips the
-remote crossing unless `AIRLOCK_DUET_TEST_REMOTE=1`, because that one spends real
-credits and a test suite should not do that without being asked.
+run on a clean clone with no credentials. With a key they *still* skip every call
+that would spend it, unless asked — `AIRLOCK_BOUNDARY_TEST_REMOTE=1` for
+`boundary_test.js`, `AIRLOCK_DUET_TEST_REMOTE=1` for `duet_test.js` — because
+having a key is not the same as agreeing to spend it on a test. The crossing
+machinery itself is covered for free by `kernel_http_test.js`, against a fake remote.
 
 ⚠ The gate's ruling is a model's judgement, so `boundary_test.js` can occasionally
 withhold a message it should release. That is reported as a failure and the dependent
@@ -121,8 +123,10 @@ That is enough to run. **Airlock does not require you to download a model.**
 - **With a Nebius key and nothing else**, it opens on Nemotron 3 Super and works
   immediately. Nothing to install, and the first message you send demonstrates
   the gate.
-- **With Ollama and models already pulled**, it opens on the largest one you have
-  and never contacts anything.
+- **With Ollama and models already pulled**, it opens on one that will *run* on your
+  machine and never contacts anything: `nemotron-3-nano:4b` if you have it, otherwise
+  the largest model at or under 8 GB. Not simply the largest you have — on an ordinary
+  card that is the one that crashes on the first question.
 - **With both**, the saved config wins, and the dropdown offers either tier.
 - **With neither**, it starts, says so plainly, and waits.
 
@@ -183,8 +187,9 @@ perfectly well. It just answers it after the content has already crossed.
 
 `runGate` now resolves a local model itself, and **refuses** if it is handed a remote one.
 `AIRLOCK_GATE_MODEL` names which local model does the job; unset, it uses the current
-model when that is local, otherwise the largest installed one. Prefer something small and
-quick — the gate is a short yes/no standing between you and your first remote reply.
+model when that is local, otherwise the smallest installed one over a floor. Prefer
+something small and quick — the gate is a short yes/no standing between you and your
+first remote reply — and `nemotron-3-nano:4b` is the recommended one.
 
 ### It fails closed
 
@@ -496,7 +501,7 @@ Two more things a hosted build does not inherit from the desktop one:
 | `tools/smoke_test.js` | 89 assertions over the store API. Run it after touching `db.js` |
 | `boundary.js` | The gate. Local-only, deterministic, fails closed |
 | `auth.js` | Access token and remote spend cap. Off unless configured |
-| `tools/provider_test.js` | 48 assertions over the provider contract. Run it after touching `providers/` |
+| `tools/provider_test.js` | 61 assertions over the provider contract. Run it after touching `providers/` |
 | `tools/boundary_test.js` | 73 assertions over the gate, both crossing paths and the audit trail |
 | `tools/auth_test.js` | 26 assertions over the access guard and the spend cap |
 | `airlock-launch.vbs` | Ensures the server is up, then opens app mode. What the icon runs |

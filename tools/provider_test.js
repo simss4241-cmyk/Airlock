@@ -107,6 +107,64 @@ async function unitTests() {
 
     await cloudTests();
     await residencyTests();
+    defaultModelTests();
+    transportTests();
+}
+
+// ─────────────────────── the default local model ───────────────────────
+//
+// What someone opens on when they have not chosen. It has to RUN on their machine — the
+// largest installed model does not, on an ordinary card — and it has to be good enough to
+// do arithmetic or write a function, which the smallest may not be.
+
+function defaultModelTests() {
+    console.log('\nunit: the default local model has to run here, and be worth running');
+    const pick = providers.defaultLocalModel;
+    const m = (id, gb, extra = {}) => ({ id, size: gb * 1e9, ...extra });
+
+    const desk = [m('muse-glimmer:30b-q4_K_M', 18.2), m('qwen2.5:14b', 9.0), m('qwen2.5:7b', 4.7),
+                  m('nemotron-3-nano:4b', 2.8), m('llama3.2:latest', 2.0)];
+
+    ok(pick(desk, '') === 'nemotron-3-nano:4b', 'Nemotron Nano 4B is preferred when it is installed');
+    ok(pick(desk, '') !== 'muse-glimmer:30b-q4_K_M', 'the 18 GB model is never the default on its size alone');
+    ok(pick(desk, 'qwen2.5:14b') === 'qwen2.5:14b', 'an AIRLOCK_MODEL_DEFAULT that is installed wins');
+    ok(pick(desk, 'not-installed:1b') === 'nemotron-3-nano:4b', 'one that is not installed is ignored');
+
+    const noNano = desk.filter(x => !x.id.startsWith('nemotron'));
+    ok(pick(noNano, '') === 'qwen2.5:7b', 'without Nano: the largest at or under 8 GB, not the largest overall');
+
+    ok(pick([m('big:70b', 40), m('bigger:120b', 70)], '') === 'big:70b',
+       'if everything is over 8 GB, the smallest — the one most likely to run');
+    ok(pick([m('nemotron-3-nano:4b-q8_0', 4.2), m('x:7b', 4.7)], '') === 'nemotron-3-nano:4b-q8_0',
+       'a quantisation variant of Nano 4B counts as Nano 4B');
+    ok(pick([m('nemotron-3-nano:4bx', 2.8), m('x:7b', 4.7)], '') === 'x:7b',
+       'but a name that merely starts the same way does not');
+
+    ok(pick([m('nemotron-3-nano:30b-cloud', 0.0004, { remote: true }), m('x:7b', 4.7)], '') === 'x:7b',
+       'an Ollama cloud entry is never the local default, whatever it is called');
+    ok(pick([], '') === null, 'with nothing installed, there is no default rather than a guess');
+}
+
+// ─────────────────────── what carried a crossing ───────────────────────
+
+function transportTests() {
+    console.log('\nunit: the audit trail names the carrier that was actually used');
+    // Planted as a resolved catalogue would hold them: the registry is what knows which
+    // catalogue named a model, so that is what the transport is read from.
+    providers.registry._entries.set('probe-cloud:30b-cloud',
+        { id: 'probe-cloud:30b-cloud', tier: 'remote', source: 'local', via: 'ollama-cloud' });
+    providers.registry._entries.set('nvidia/some-remote',
+        { id: 'nvidia/some-remote', tier: 'remote', source: 'remote' });
+    try {
+        ok(providers.transportOf('probe-cloud:30b-cloud') === 'ollama-cloud',
+           'an Ollama cloud model is recorded as ollama-cloud, not token-factory');
+        ok(providers.transportOf('nvidia/some-remote') === 'token-factory',
+           'a Token Factory model is recorded as token-factory');
+        ok(providers.transportOf('llama3.2:latest') === 'ollama', 'and a local one as ollama');
+    } finally {
+        providers.registry._entries.delete('probe-cloud:30b-cloud');
+        providers.registry._entries.delete('nvidia/some-remote');
+    }
 }
 
 /**

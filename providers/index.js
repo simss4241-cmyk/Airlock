@@ -63,6 +63,64 @@ const tierOf = model => registry.tierOf(model);
 const isLocal = model => registry.isLocal(model);
 
 /**
+ * What actually carried a request, for the audit trail's transport field.
+ *
+ * Not the same as tier: an Ollama cloud model is remote, but it went out through the
+ * local Ollama to ollama.com, not to Token Factory. Recording every remote crossing as
+ * 'token-factory' named a carrier that was never involved.
+ */
+function transportOf(model) {
+    // The registry knows which catalogue named the model — a fact, so it goes first.
+    // Routing (owns) is only a fallback for a model the registry has never seen.
+    const entry = registry._entries.get(model);
+    if (entry?.via === 'ollama-cloud') return 'ollama-cloud';
+    if (entry?.source === 'remote') return 'token-factory';
+    if (entry?.source === 'local') return 'ollama';
+    return providerFor(model) === tokenfactory ? 'token-factory' : 'ollama';
+}
+
+/**
+ * The local model someone opens on when they have not chosen one — and the one seated
+ * on the local side of a new duet.
+ *
+ * ⚠ Not the largest. That was the rule, on the theory that the biggest thing someone
+ * downloaded is the one they meant to use, and it is the rule that hands an 18 GB model
+ * to a 16 GB card: slow when it survives, a CUDA crash when it does not, on the first
+ * thing a new arrival tries. Most machines have less headroom than that, not more.
+ *
+ * Not the smallest either. A default that falls over the moment someone asks it to do
+ * arithmetic or write a function promises a world that is not there. So:
+ *
+ *   1. AIRLOCK_MODEL_DEFAULT, if it names a model installed here — the operator knows.
+ *   2. Nemotron Nano 4B, if installed. 2.8 GB, fully resident on a modest card, and a
+ *      reasoning model that punches above its size — and the same model recommended as
+ *      the gate, so a desk that follows the setup notes is coherent from the first turn.
+ *   3. Otherwise the largest model at or under 8 GB: roughly the biggest that stays on
+ *      the GPU of an ordinary card with room left for context.
+ *   4. Otherwise — everything installed is bigger than that — the smallest there is,
+ *      because the one most likely to run is better than the one most likely to crash.
+ *
+ * A preference, deliberately, not a boundary decision: nothing about which side a model
+ * is on depends on its name, and this never makes a model local that is not.
+ */
+const PREFERRED_LOCAL = /^nemotron-3-nano:4b(\b|-)/;
+const LOCAL_DEFAULT_CAP = 8e9;
+
+function defaultLocalModel(local, named = process.env.AIRLOCK_MODEL_DEFAULT) {
+    const here = local.filter(m => !m.remote);
+    if (!here.length) return null;
+
+    if (named && here.some(m => m.id === named)) return named;
+
+    const nano = here.find(m => PREFERRED_LOCAL.test(m.id));
+    if (nano) return nano.id;
+
+    const bySize = here.slice().sort((a, b) => (b.size || 0) - (a.size || 0));
+    const fits = bySize.find(m => m.size && m.size <= LOCAL_DEFAULT_CAP);
+    return (fits || bySize[bySize.length - 1]).id;
+}
+
+/**
  * Capabilities the model actually advertises: 'thinking', 'tools', 'vision'.
  * Sending `think` to a model without a thinking channel is a hard 400, so this
  * gate is load-bearing rather than cosmetic.
@@ -249,7 +307,7 @@ class GateRefusal extends ProviderError {
 
 module.exports = {
     chat, complete, parseJson, repairJson, capabilities, list,
-    tierOf, isLocal, providerFor, ProviderError, GateRefusal,
+    tierOf, isLocal, transportOf, defaultLocalModel, providerFor, ProviderError, GateRefusal,
     // Resolving the catalogue is a boundary concern, so callers that rule on a crossing
     // reach it through here rather than importing registry.js behind this file's back.
     ensureFresh: registry.ensureFresh,

@@ -213,17 +213,12 @@ async function pickDefaultModel() {
     const wanted = process.env.AIRLOCK_MODEL_DEFAULT || process.env.AIRLOCK_MODEL_VERDICT;
     if (process.env.NEBIUS_API_KEY && wanted) return wanted;
 
-    // No key: the largest local model, on the theory that the biggest thing
-    // somebody bothered to download is the one they meant to use.
-    // Cloud entries are excluded: they are listed by the local Ollama but answered on
-    // ollama.com, and "no key, so stay local" is the whole premise of this branch.
-    const local = (await require('./providers/ollama').list().catch(() => []))
-        .filter(m => !m.remote);
-    if (local.length) {
-        return local.slice().sort((a, b) => (b.size || 0) - (a.size || 0))[0].id;
-    }
-
-    return null;   // nothing reachable; the UI says so rather than guessing
+    // No key: a local model that will actually run here — see defaultLocalModel for why
+    // that is not "the largest one installed". Cloud entries are excluded inside it:
+    // they are listed by the local Ollama but answered on ollama.com, and "no key, so
+    // stay local" is the whole premise of this branch.
+    const local = await require('./providers/ollama').list().catch(() => []);
+    return providers.defaultLocalModel(local);   // null: nothing reachable, and the UI says so
 }
 
 async function loadConfig() {
@@ -388,7 +383,12 @@ app.get('/api/health', async (req, res) => {
             remoteTier: remote.length > 0,
             seats: liveSeats(),
             demo: Boolean(process.env.AIRLOCK_DEMO),
-            localModelInstalled: models.some(m => m.name.startsWith('muse-glimmer')),
+            // Any model positively on this side of the boundary — not one model by name.
+            // This used to test for muse-glimmer, inherited from Glimmer, so nearly every
+            // desk showed "Local model not pulled" beside a working local model. It
+            // matters beyond the dot: with nothing local installed there is no gate, and
+            // every crossing is refused.
+            localModelInstalled: providers.localModels().length > 0,
             activeModel: config.model
         });
     } catch (err) {
@@ -1007,12 +1007,10 @@ app.delete('/api/folders/:id', ok(req => (store.deleteFolder(id(req)), { ok: tru
  * both are whatever the config opens on.
  */
 async function defaultParticipantModels() {
-    // Not cloud entries: the left seat is meant to be the one that stays here.
-    const local = (await require('./providers/ollama').list().catch(() => []))
-        .filter(m => !m.remote);
-    const biggestLocal = local.length
-        ? local.slice().sort((a, b) => (b.size || 0) - (a.size || 0))[0].id
-        : null;
+    // The same choice a new arrival opens on, for the same reason: the left seat has to
+    // run on this machine without crashing it. Cloud entries are excluded inside.
+    const local = await require('./providers/ollama').list().catch(() => []);
+    const localDefault = providers.defaultLocalModel(local);
 
     const configured = config.model || null;
     const configuredTier = configured ? providers.tierOf(configured) : null;
@@ -1022,7 +1020,7 @@ async function defaultParticipantModels() {
     // user already set is honoured rather than silently overridden. The left seat takes
     // it only if it is positively local — an unclassified model is not seated on the
     // side that promises nothing leaves.
-    const a = configuredTier === 'local' ? configured : (biggestLocal || configured);
+    const a = configuredTier === 'local' ? configured : (localDefault || configured);
     const b = configuredIsRemote ? configured
         : (process.env.NEBIUS_API_KEY && process.env.AIRLOCK_MODEL_VERDICT) || a;
 
@@ -1172,7 +1170,9 @@ app.post('/api/threads/:id/escalate', async (req, res) => {
             packetIds: brief.packetIds,
             model,
             tier: 'remote',
-            transport: 'token-factory',
+            // What actually carried it. An Ollama cloud model is remote too, and did not
+            // go anywhere near Token Factory.
+            transport: providers.transportOf(model),
             gate
         });
 

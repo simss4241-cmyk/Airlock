@@ -11,12 +11,24 @@
  * So the fail-closed cases run first and run offline: an unreachable gate and an
  * unparseable gate answer must both produce a refusal, not a release.
  *
- * Needs a running server. Local-tier tests need Ollama; remote-tier tests need
- * NEBIUS_API_KEY and skip without one. The remote call is a single short brief.
+ * Needs a running server. Local-tier tests need Ollama. The three sections that make a
+ * REAL remote call — the live crossing, the chat crossing, the forced trace — spend
+ * Nebius credits, so they run only when asked: AIRLOCK_BOUNDARY_TEST_REMOTE=1, the same
+ * opt-in duet_test uses. Having a key is not the same as agreeing to spend it on a test.
+ * tools/kernel_http_test.js covers the crossing machinery end to end for free, against a
+ * fake remote on localhost.
  *
  *   node tools/boundary_test.js            # against http://localhost:8100
  *   AIRLOCK_URL=http://localhost:8126 node tools/boundary_test.js
+ *   AIRLOCK_BOUNDARY_TEST_REMOTE=1 node tools/boundary_test.js   # spends credits
  */
+
+// The live remote sections, and why each skipped when it does.
+const liveRemote = () => {
+    if (!process.env.NEBIUS_API_KEY || !process.env.AIRLOCK_MODEL_CLASSIFIER) return 'no NEBIUS_API_KEY';
+    if (process.env.AIRLOCK_BOUNDARY_TEST_REMOTE !== '1') return 'set AIRLOCK_BOUNDARY_TEST_REMOTE=1 — it spends credits';
+    return null;
+};
 
 try { process.loadEnvFile(); } catch { /* remote tests will skip */ }
 
@@ -252,8 +264,8 @@ async function liveTests() {
     ok(gate.body.gate.model, 'naming the model that ruled');
     console.log(`       ruling: release=${gate.body.gate.release} — ${gate.body.gate.reason}`);
 
-    if (!process.env.NEBIUS_API_KEY || !process.env.AIRLOCK_MODEL_CLASSIFIER) {
-        skipped('no NEBIUS_API_KEY — skipping the live crossing');
+    if (liveRemote()) {
+        skipped(`the live crossing (${liveRemote()})`);
         return;
     }
 
@@ -408,8 +420,8 @@ async function gateOwnershipTests() {
 async function chatPathTests() {
     console.log('\nchat path records its crossing');
 
-    if (!process.env.NEBIUS_API_KEY || !process.env.AIRLOCK_MODEL_CLASSIFIER) {
-        skipped('no NEBIUS_API_KEY - skipping the chat crossing');
+    if (liveRemote()) {
+        skipped(`the chat crossing (${liveRemote()})`);
         return;
     }
     const model = process.env.AIRLOCK_MODEL_CLASSIFIER;
@@ -502,8 +514,8 @@ async function chatPathTests() {
 async function forceTests() {
     console.log('\nforced crossings are recorded as forced');
 
-    if (!process.env.NEBIUS_API_KEY || !process.env.AIRLOCK_MODEL_CLASSIFIER) {
-        skipped('no NEBIUS_API_KEY - skipping the force trace');
+    if (liveRemote()) {
+        skipped(`the forced trace (${liveRemote()})`);
         return;
     }
     const model = process.env.AIRLOCK_MODEL_CLASSIFIER;

@@ -543,11 +543,16 @@ async function refreshHealth() {
         if (h.localModelInstalled) {
             el.dot.className = 'dot ok';
             el.statusText.textContent = `Ollama ${h.version || ''}`.trim();
+            el.statusText.title = '';
         } else {
+            // Ollama is up but nothing is installed on this side of the boundary. That is
+            // more than a missing chat option: the gate is a local model, so without one
+            // every crossing is refused. Say what to do about it, specifically.
             el.dot.className = 'dot warn';
-            el.statusText.textContent = 'Local model not pulled';
-            el.statusText.title = 'ollama pull muse-glimmer:30b-q4_K_M returns 412 on Windows/NVIDIA — '
-                + 'Ollama gates Muse Glimmer to Apple Silicon / MLX for now. Any other model here works.';
+            el.statusText.textContent = 'No local model';
+            el.statusText.title = 'Ollama is running but has no model installed on this machine, so '
+                + 'there is nothing to answer locally and nothing to run the gate — every crossing '
+                + 'will be refused. Try: ollama pull nemotron-3-nano:4b (2.8 GB).';
         }
 
         // capabilities just changed shape, so the pills have to agree with the selection
