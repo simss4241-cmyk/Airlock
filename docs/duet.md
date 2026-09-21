@@ -150,7 +150,7 @@ by both panes, owned by neither.
 | `duet-context.js` | pure context assembly — no db, no network, no provider |
 | `duet-runner.js` | orchestration, the queue, the gate, crossings |
 | `public/duet.js` | the two panes, per-pane streaming |
-| `tools/duet_context_test.js` | 28 assertions, offline |
+| `tools/duet_context_test.js` | 29 assertions, offline |
 | `tools/duet_test.js` | 44 assertions over HTTP |
 
 ## Not built
