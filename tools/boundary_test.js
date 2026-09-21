@@ -269,6 +269,19 @@ async function gateOwnershipTests() {
            'resolveGateModel ignores a remote config.model and picks a local one', resolved);
     }
 
+    // 2b. A config.model that is not installed anywhere must not become the gate.
+    //
+    // This is the shape the old code got wrong. `tierOf` answers from the id's shape
+    // until the remote catalogue has been fetched, and anything it does not recognise
+    // falls through to Ollama and comes back 'local' — so a bare unknown id read as a
+    // local model and was handed straight back as the thing that would rule on the
+    // crossing. The assertion is deliberately about an id nobody has: being unrecognised
+    // is not the same as being here.
+    const ghost = 'not-a-real-model-anywhere:1b';
+    ok(await resolveGateModel({ model: ghost }) !== ghost,
+       'an uninstalled config.model is not adopted as the gate model just because it is '
+       + 'unrecognised');
+
     // 3. AIRLOCK_GATE_MODEL names it explicitly — but is still checked, not trusted.
     const installed = await require('../providers/ollama').list().catch(() => []);
     if (!installed.length) {

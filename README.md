@@ -34,7 +34,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Remote tier on Nebius Token Factory (Nemotron 3) | working, 34 assertions |
 | One streaming contract across both tiers | working |
 | Model dropdown grouped by tier, capability-badged | working |
-| Local gate rules before anything crosses, and fails closed | working, 65 assertions |
+| Local gate rules before anything crosses, and fails closed | working, 66 assertions |
 | Tier recorded per packet; "what crossed?" as a query | working |
 | Escalation by router **and** by hand, both recorded as crossings | working |
 | Access token + remote spend cap for hosting | working, 26 assertions |
@@ -45,7 +45,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Per-visitor isolation (a shared token is not multi-tenancy) | not built |
 | Hosted demo build | not built |
 
-**347 assertions across nine suites.** Run them:
+**348 assertions across nine suites.** Run them:
 
 ```
 npm start                          # in one terminal
@@ -436,7 +436,7 @@ Two more things a hosted build does not inherit from the desktop one:
 | `boundary.js` | The gate. Local-only, deterministic, fails closed |
 | `auth.js` | Access token and remote spend cap. Off unless configured |
 | `tools/provider_test.js` | 34 assertions over the provider contract. Run it after touching `providers/` |
-| `tools/boundary_test.js` | 65 assertions over the gate, both crossing paths and the audit trail |
+| `tools/boundary_test.js` | 66 assertions over the gate, both crossing paths and the audit trail |
 | `tools/auth_test.js` | 26 assertions over the access guard and the spend cap |
 | `airlock-launch.vbs` | Ensures the server is up, then opens app mode. What the icon runs |
 | `tools/install_shortcut.ps1` | Creates the pinnable Start Menu / Desktop shortcut |

@@ -61,7 +61,12 @@ async function resolveGateModel(config = {}) {
     const named = (process.env.AIRLOCK_GATE_MODEL || '').trim();
     if (named && isLocal(named)) return named;
 
-    if (config.model && providers.tierOf(config.model) === 'local') return config.model;
+    // isLocal, not tierOf. tierOf answers from the id's shape until the remote catalogue
+    // has been fetched, and an id it does not recognise falls through to Ollama and comes
+    // back 'local' — so the loose check could hand this function the one thing it exists
+    // to exclude. isLocal is built from the installed list two lines up: a model is local
+    // because it is installed on this machine, not because its name lacks a slash.
+    if (config.model && isLocal(config.model)) return config.model;
 
     if (!local.length) return null;
 
