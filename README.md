@@ -14,6 +14,15 @@ a guess — and a crossing by hand counts exactly the same as one over an API.
 
 The boundary is the product. Routing is only how it is enforced.
 
+> **What "local" means here.** It means *inside this deployment's trust boundary* —
+> the machine Airlock is running on — not one particular laptop. On a desk that is
+> Ollama; on a hosted instance it is whatever serves models beside the server. The
+> rule is identical in both cases and is the only one that matters: **the gate never
+> sends content across the boundary it is guarding.** Which models are inside is read
+> from the providers' own catalogues by `providers/registry.js` and never inferred
+> from the shape of a model id — anything no catalogue claims is `unknown`, and
+> `unknown` is gated rather than waved through.
+
 Node/Express on **:8100**, local inference through Ollama on **:11434**. Glimmer, the
 project this was forked from, used to default to :8100 as well and now uses :8101 — the
 launchers here ask `/api/whoami` who is actually answering rather than trusting an open
@@ -31,10 +40,10 @@ what leaves it. This table is the honest version — clone it and check.
 | Local inference — streaming, reasoning channel, tools, vision | working |
 | Packet store — threads, nesting, provenance, move/fork/review | working, 89 assertions |
 | Per-thread read-only workspaces, with containment tests | working, 46 assertions |
-| Remote tier on Nebius Token Factory (Nemotron 3) | working, 34 assertions |
+| Remote tier on Nebius Token Factory (Nemotron 3) | working, 35 assertions |
 | One streaming contract across both tiers | working |
 | Model dropdown grouped by tier, capability-badged | working |
-| Local gate rules before anything crosses, and fails closed | working, 66 assertions |
+| Local gate rules before anything crosses, and fails closed | working, 71 assertions |
 | Tier recorded per packet; "what crossed?" as a query | working |
 | Escalation by router **and** by hand, both recorded as crossings | working |
 | Access token + remote spend cap for hosting | working, 26 assertions |
@@ -45,7 +54,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Per-visitor isolation (a shared token is not multi-tenancy) | not built |
 | Hosted demo build | not built |
 
-**348 assertions across nine suites.** Run them:
+**354 assertions across nine suites.** Run them:
 
 ```
 npm start                          # in one terminal
@@ -435,8 +444,8 @@ Two more things a hosted build does not inherit from the desktop one:
 | `tools/smoke_test.js` | 89 assertions over the store API. Run it after touching `db.js` |
 | `boundary.js` | The gate. Local-only, deterministic, fails closed |
 | `auth.js` | Access token and remote spend cap. Off unless configured |
-| `tools/provider_test.js` | 34 assertions over the provider contract. Run it after touching `providers/` |
-| `tools/boundary_test.js` | 66 assertions over the gate, both crossing paths and the audit trail |
+| `tools/provider_test.js` | 35 assertions over the provider contract. Run it after touching `providers/` |
+| `tools/boundary_test.js` | 71 assertions over the gate, both crossing paths and the audit trail |
 | `tools/auth_test.js` | 26 assertions over the access guard and the spend cap |
 | `airlock-launch.vbs` | Ensures the server is up, then opens app mode. What the icon runs |
 | `tools/install_shortcut.ps1` | Creates the pinnable Start Menu / Desktop shortcut |

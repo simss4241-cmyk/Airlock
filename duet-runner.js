@@ -246,7 +246,10 @@ async function generate({ threadId, participantId, text, clientRequestId, retryO
     // ── 4. the boundary ──
     let gateRuling = null;
 
-    if (tier === 'remote') {
+    // ⚠ `!== 'local'`: anything the local catalogue did not name is treated as a
+    // crossing. A duet crossing carries the OTHER participant's words too, so this is
+    // the last place that should be deciding by exact string match on 'remote'.
+    if (tier !== 'local') {
         emit({ type: 'gating', messageId: reply.id });
 
         try {
@@ -277,7 +280,9 @@ async function generate({ threadId, participantId, text, clientRequestId, retryO
     }
 
     // ── 5 & 6. queue, then stream ──
-    const queue = queueFor(tier, Number(config.maxConcurrent) || 1);
+    // An unclassified model queues with the local tier rather than opening a third queue
+    // of its own: the conservative limit, and one fewer lane in the status line.
+    const queue = queueFor(tier === 'remote' ? 'remote' : 'local', Number(config.maxConcurrent) || 1);
     let started = false;
     const queuedAt = Date.now();
 
@@ -315,7 +320,10 @@ async function generate({ threadId, participantId, text, clientRequestId, retryO
                 // First chunk back proves the request was accepted, which is the moment the
                 // content is provably across. Recording on dispatch would log crossings
                 // that never happened.
-                if (tier === 'remote' && !crossingRecorded) {
+                // `!== 'local'` for the same reason the gate above uses it: a crossing
+                // the registry could not classify is still a crossing, and the audit
+                // trail is worth less if it only records the ones we were sure about.
+                if (tier !== 'local' && !crossingRecorded) {
                     crossingRecorded = true;
                     try {
                         store.recordCrossings(meta.sourceIds, {

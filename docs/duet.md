@@ -72,8 +72,12 @@ and it is also a real exposure, so:
   (`duet-context.js` returns exactly that set as `meta.sourceIds`);
 - each pane header carries a tier chip — `local` or `↗ crosses` — because which side of
   the boundary a participant sits on must be readable without opening a menu;
-- tier is resolved from the model id by `providers.tierOf()` on the server. The client
-  cannot assert it, exactly as it cannot for an ordinary packet.
+- tier is resolved on the server by `providers.tierOf()`, which reads it out of the
+  providers' catalogues rather than inferring it from the model id. The client cannot
+  assert it, exactly as it cannot for an ordinary packet. A model no catalogue claims
+  comes back `unknown`, and the duet path gates on `!== 'local'` — so an unplaceable
+  participant is treated as a crossing and its crossing is still recorded, rather than
+  slipping past a test for the exact string `remote`.
 
 A withheld generation is kept in the log as a `blocked` packet showing the gate's
 reason. The attempt is part of the record; the text never left.

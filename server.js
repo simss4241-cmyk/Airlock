@@ -339,6 +339,12 @@ async function remoteModels() {
 // ── Health: is Ollama up, is the local model actually installed, what else is available ──
 app.get('/api/health', async (req, res) => {
     try {
+        // The poll that keeps the registry current: a model pulled while Airlock is
+        // running becomes gateable by the next health tick rather than at the next
+        // restart. Deliberately a forced refresh, not ensureFresh — this endpoint is
+        // the one place where paying for a catalogue fetch is the whole point.
+        await providers.refreshRegistry().catch(() => {});
+
         const [tagsRes, verRes] = await Promise.all([
             fetch(`${OLLAMA}/api/tags`),
             fetch(`${OLLAMA}/api/version`).catch(() => null)
@@ -442,7 +448,12 @@ app.post('/api/chat', async (req, res) => {
     const tier = providers.tierOf(chosen);
     let gateRuling = null;
 
-    if (tier === 'remote') {
+    // ⚠ `!== 'local'`, not `=== 'remote'`. Only a model the local catalogue actually
+    // named may pass without a ruling; anything else — including a model nothing
+    // recognises — counts as a crossing and is gated. Tested the other way round, the
+    // gate was skipped for every tier that was not the exact string 'remote', which is
+    // the wrong polarity for the check standing in front of the boundary.
+    if (tier !== 'local') {
         const cleared = threadId
             ? store.isCleared(Number(threadId), chosen)
             : scratchCleared.has(chosen);
@@ -1190,6 +1201,17 @@ loadConfig().then(async () => {
     // abandoned, and until it is settled it would sit in the UI as a permanently
     // thinking pane.
     const stranded = duet.resetStaleGenerations();
+
+    // Resolve which models are on which side before serving anything. Left cold, every
+    // model reads 'unknown' until the first catalogue fetch, and 'unknown' is gated — so
+    // the first crossing after a restart would be refused for the wrong reason. Failing
+    // to resolve is not fatal: runGate resolves again and refuses if it still cannot.
+    const known = await providers.ensureFresh().then(() => providers.localModels().length)
+        .catch(err => {
+            console.error('could not resolve the model registry:', err.message);
+            return 0;
+        });
+
     const seated = await seatExistingThreads().catch(err => {
         console.error('could not seat existing threads:', err.message);
         return 0;
@@ -1200,6 +1222,7 @@ loadConfig().then(async () => {
         console.log('');
         console.log(`  Airlock is running -> http://localhost:${PORT}`);
         if (stranded) console.log(`  Settled ${stranded} duet generation(s) stranded by the last shutdown`);
+        console.log(`  Boundary: ${known} model(s) resolved on this side`);
         if (seated) console.log(`  Seated participants on ${seated} existing thread(s)`);
         console.log(config.model
             ? `  Model: ${config.model}   ctx: ${config.num_ctx}`

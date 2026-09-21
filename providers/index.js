@@ -34,19 +34,33 @@
 
 const ollama = require('./ollama');
 const tokenfactory = require('./tokenfactory');
+const registry = require('./registry');
 
 // Providers in priority order. `owns(model)` decides; first match wins, and
 // Ollama is last because it is the fallback for any bare model name.
+//
+// ⚠ `owns()` answers ROUTING only — which provider to call. It used to answer tier as
+// well, and could not: Ollama's owns() returns true for everything, so an unrecognised
+// id resolved to the local tier and skipped the gate. Getting routing wrong costs a
+// failed request; getting tier wrong costs a crossing. Those deserve different
+// machinery, so tier now comes from registry.js and this stays a guess.
 const PROVIDERS = [tokenfactory, ollama];
 
 function providerFor(model) {
     return PROVIDERS.find(p => p.owns(model)) || ollama;
 }
 
-/** Which tier a model sits on. The audit trail records this, not the provider name. */
-function tierOf(model) {
-    return providerFor(model).tier;
-}
+/**
+ * Which side of the boundary a model sits on. The audit trail records this.
+ *
+ * Answers from the resolved catalogue, so it returns 'unknown' rather than guessing —
+ * including before anything has been resolved at all. Anything that gates on the
+ * result must test `!== 'local'`, never `=== 'remote'`. See registry.js.
+ */
+const tierOf = model => registry.tierOf(model);
+
+/** Strict membership of this side of the boundary. What the gate asks. */
+const isLocal = model => registry.isLocal(model);
 
 /**
  * Capabilities the model actually advertises: 'thinking', 'tools', 'vision'.
@@ -172,4 +186,13 @@ class ProviderError extends Error {
     }
 }
 
-module.exports = { chat, complete, parseJson, repairJson, capabilities, list, tierOf, providerFor, ProviderError };
+module.exports = {
+    chat, complete, parseJson, repairJson, capabilities, list,
+    tierOf, isLocal, providerFor, ProviderError,
+    // Resolving the catalogue is a boundary concern, so callers that rule on a crossing
+    // reach it through here rather than importing registry.js behind this file's back.
+    ensureFresh: registry.ensureFresh,
+    refreshRegistry: registry.refresh,
+    localModels: registry.localModels,
+    registry
+};

@@ -81,13 +81,60 @@ async function failClosedTests() {
     const stringy = await gateWith(async () => ({ content: '{"release": "yes"}', thinking: '' }));
     ok(stringy.release === false, 'a non-boolean release refuses rather than coercing');
 
+    // ── the registry cannot place a model: refuse, never assume ──
+    //
+    // The old tierOf answered from the id's shape and fell through to Ollama, so
+    // anything unrecognised came back 'local' and was eligible both to gate and to skip
+    // being gated. These assertions pin the opposite: absence from the catalogue means
+    // refuse. Simulated by warming the registry, then emptying it — ensureFresh is a
+    // no-op inside its TTL, so the gate really does run against nothing.
+    await providers.ensureFresh().catch(() => {});
+    const snapshot = [...providers.registry._entries.entries()];
+    providers.registry._entries.clear();
+
+    try {
+        const unplaceable = await runGate('a brief', {
+            model: 'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B', config: {}
+        });
+        ok(unplaceable.release === false,
+           'a model the registry cannot place does not gate a crossing');
+        ok(/not a model on this side/i.test(unplaceable.reason),
+           'and says so rather than blaming the model', unplaceable.reason);
+
+        const nothingHere = await runGate('a brief', { config: {} });
+        ok(nothingHere.release === false,
+           'with nothing resolved on this side, the gate refuses instead of releasing');
+        ok(nothingHere.model === null,
+           'and names no model, because none ruled', String(nothingHere.model));
+    } finally {
+        for (const [k, v] of snapshot) providers.registry._entries.set(k, v);
+    }
+
+    ok(providers.registry._entries.size === snapshot.length,
+       'the registry is intact again afterwards');
+
     // Stubs providers.complete and calls the REAL gate from boundary.js, so
     // these assertions cannot drift away from the code that ships.
-    function gateWith(fakeComplete) {
+    // 'fake' has to be a model on this side of the boundary before runGate will consider
+    // it at all — an unrecognised id is refused before any provider is called, which is
+    // the registry doing its job. These tests are about what runGate does with the
+    // ANSWER, so the model is registered for the duration and removed afterwards.
+    //
+    // ensureFresh is awaited first so that runGate's own call is inside the TTL and
+    // cannot refetch the catalogue out from under the entry we just planted.
+    async function gateWith(fakeComplete) {
+        await providers.ensureFresh().catch(() => {});
+
         const real = providers.complete;
         providers.complete = fakeComplete;
-        return Promise.resolve(runGate('a brief', { model: 'fake', config: {} }))
-            .finally(() => { providers.complete = real; });
+        providers.registry._entries.set('fake', { id: 'fake', tier: 'local', size: 0 });
+
+        try {
+            return await runGate('a brief', { model: 'fake', config: {} });
+        } finally {
+            providers.complete = real;
+            providers.registry._entries.delete('fake');
+        }
     }
 }
 

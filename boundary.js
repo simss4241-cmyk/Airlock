@@ -5,16 +5,24 @@ const providers = require('./providers');
 // ─────────────────────── The boundary ───────────────────────
 //
 // Escalation crosses a line, so something has to decide whether it may. That
-// decision is made by the LOCAL model, always, and this is the one piece of the
-// design that is not negotiable.
+// decision is made by a model on THIS side of the line, always, and this is the
+// one piece of the design that is not negotiable.
 //
 // The obvious alternative — let Nemotron Nano judge the brief, since it is fast
-// and cheap — cannot work. To let a remote model rule on whether content may
-// leave, you must first send it the content. The gate would be standing on the
+// and cheap — cannot work. To let a model on the far side rule on whether content
+// may leave, you must first send it the content. The gate would be standing on the
 // wrong side of the door it is guarding. A remote gate cannot gate remoteness.
 //
-// So the gatekeeper runs on the machine it is protecting, and the remote tier
-// keeps the job it is actually good at: reasoning about what the gate released.
+// ⚠ "This side" is the deployment's trust boundary, not a particular laptop. On a
+// desk it is Ollama; on a hosted instance it is whatever serves models beside the
+// server. What never changes is the rule — the gate does not send content across
+// the boundary it is guarding — and that rule is what makes both deployments
+// honest rather than one of them a compromise. providers/registry.js decides which
+// models are inside, from catalogues rather than from the shape of an id, because
+// a boundary that rests on a naming convention is not a boundary.
+//
+// So the gatekeeper runs inside what it is protecting, and the remote tier keeps
+// the job it is actually good at: reasoning about what the gate released.
 
 const GATE_SYSTEM = [
     'You are the boundary gate for Airlock, a local-first reasoning desk.',
@@ -52,8 +60,12 @@ const GATE_SYSTEM = [
  * a gate that cannot run is a gate that did not release.
  */
 async function resolveGateModel(config = {}) {
-    const local = await require('./providers/ollama').list().catch(() => []);
-    const isLocal = id => local.some(m => m.id === id);
+    // The registry, not a bare Ollama call: one resolved answer to "what is on this side
+    // of the boundary", shared with tierOf so the gate and the audit trail cannot end up
+    // disagreeing about the same model.
+    await providers.ensureFresh().catch(() => {});
+    const local = providers.localModels();
+    const isLocal = id => providers.isLocal(id);
 
     // An explicit choice wins, because the right gate model is a judgement about this
     // machine that no heuristic here can make. Ignored if it is not actually local —
@@ -61,11 +73,8 @@ async function resolveGateModel(config = {}) {
     const named = (process.env.AIRLOCK_GATE_MODEL || '').trim();
     if (named && isLocal(named)) return named;
 
-    // isLocal, not tierOf. tierOf answers from the id's shape until the remote catalogue
-    // has been fetched, and an id it does not recognise falls through to Ollama and comes
-    // back 'local' — so the loose check could hand this function the one thing it exists
-    // to exclude. isLocal is built from the installed list two lines up: a model is local
-    // because it is installed on this machine, not because its name lacks a slash.
+    // Positive membership, not "did not look remote". A model is eligible to gate
+    // because a local catalogue named it, never because nothing else claimed it.
     if (config.model && isLocal(config.model)) return config.model;
 
     if (!local.length) return null;
@@ -78,7 +87,7 @@ async function resolveGateModel(config = {}) {
     // a timeout — which fails closed and looks like the gate refusing a harmless message.
     //
     // Set AIRLOCK_GATE_MODEL to a small, reliable local model to avoid that.
-    return local.slice().sort((a, b) => (b.size || 0) - (a.size || 0))[0].id;
+    return local[0].id;                      // localModels() is already largest-first
 }
 
 /**
@@ -133,11 +142,21 @@ function readDecision(text) {
  * so the guarantee belongs where it cannot be forgotten.
  */
 async function runGate(markdown, { model, config } = {}) {
-    if (model && providers.tierOf(model) !== 'local') {
+    // Resolve before ruling. A cold registry answers 'unknown' to everything, which the
+    // check below would read as "not local" and refuse — fail-closed, but it would
+    // refuse every crossing on a freshly started process rather than only the wrong ones.
+    await providers.ensureFresh().catch(() => {});
+
+    const namedTier = model ? providers.tierOf(model) : null;
+
+    if (model && namedTier !== 'local') {
         return {
             release: false,
-            reason: `${model} is on the remote tier and cannot gate a crossing — `
-                + 'judging whether content may leave would require sending it first.',
+            reason: namedTier === 'remote'
+                ? `${model} is on the remote tier and cannot gate a crossing — `
+                    + 'judging whether content may leave would require sending it first.'
+                : `${model} is not a model on this side of the boundary, so it cannot `
+                    + 'rule on a crossing. Nothing was sent.',
             concerns: [],
             model
         };

@@ -66,7 +66,7 @@ async function drain(stream) {
 
 // ─────────────────────── pure units, no network ───────────────────────
 
-function unitTests() {
+async function unitTests() {
     console.log('\nunit: <think> fence splitting across deltas');
 
     const a = tokenfactory.splitThink('<think>reasoning', false);
@@ -96,7 +96,14 @@ function unitTests() {
 
     console.log('\nunit: routing');
     ok(providers.providerFor('llama3.2:latest') === ollama, 'bare tags route local');
-    ok(providers.tierOf('llama3.2:latest') === 'local', 'and report the local tier');
+    // Tier is resolved, not inferred: it answers from the catalogues the registry has
+    // actually read, so it has to be given the chance to read them. Before that every
+    // model is 'unknown' — the honest answer, and the one that gets gated.
+    await providers.ensureFresh().catch(() => {});
+    ok(providers.tierOf('llama3.2:latest') === 'local',
+       'and reports the local tier once the catalogue is resolved');
+    ok(providers.tierOf('not-a-real-model-anywhere:1b') === 'unknown',
+       'while a model in no catalogue is unknown, not local');
 }
 
 // ─────────────────────── local tier ───────────────────────
@@ -152,6 +159,7 @@ async function remoteTests() {
 
     // Routing must be exact once the catalogue is known, not a slash heuristic.
     ok(providers.providerFor(model) === tokenfactory, 'configured model routes to the remote tier');
+    await providers.ensureFresh().catch(() => {});
     ok(providers.tierOf(model) === 'remote', 'and reports the remote tier');
     ok(providers.providerFor('hf.co/user/some-model') === ollama,
        'a slashed Ollama tag does NOT route remote once the catalogue is known');
@@ -201,7 +209,7 @@ async function errorTests() {
 
 (async () => {
     console.log('\nAirlock provider contract tests');
-    unitTests();
+    await unitTests();
     await errorTests();
     await localTests();
     await remoteTests();
