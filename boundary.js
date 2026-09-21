@@ -79,15 +79,31 @@ async function resolveGateModel(config = {}) {
 
     if (!local.length) return null;
 
-    // ⚠ Largest local model, matching pickDefaultModel's reasoning — but note the
-    // difference in job. That function picks the model that has to be GOOD; this one
-    // picks the model that has to be FAST, because the gate is a short structured yes/no
-    // standing between the user and their first remote reply. On a desk whose biggest
-    // local model is an 18 GB 30B on a 16 GB card, that is a long stall and occasionally
-    // a timeout — which fails closed and looks like the gate refusing a harmless message.
+    // ⚠ The SMALLEST model that clears the floor, not the largest.
     //
-    // Set AIRLOCK_GATE_MODEL to a small, reliable local model to avoid that.
-    return local[0].id;                      // localModels() is already largest-first
+    // This used to take the biggest local model, copying pickDefaultModel's reasoning
+    // while doing a different job. That function picks the model that has to be GOOD.
+    // This one picks the model that has to be FAST and has to FIT, because the gate is a
+    // short structured yes/no standing between the user and their first remote reply —
+    // and because a gate that stalls or times out fails closed, which reaches the user
+    // as the gate refusing a harmless message. The failure is silent and looks like a
+    // malfunction, so the default has to be the conservative one.
+    //
+    // Measured on the desk this was written on (RTX 5060 Ti, 16 GB): the largest-first
+    // rule chose an 18 GB 30B that does not fit, ran at 8.5 tok/s when it survived at
+    // all, and crashed CUDA for lack of VRAM headroom otherwise. Nemotron Nano 4B —
+    // 2.8 GB, fully resident — answers the same prompt at 117 tok/s. Most machines
+    // running this have less headroom than that one, not more.
+    //
+    // The floor keeps a 0.5B toy from being handed a judgement it cannot make. Below it,
+    // there is nothing better available, so the smallest model is still the best answer.
+    const FLOOR_BYTES = 1.5e9;
+    const sized = local.filter(m => m.size);
+    const eligible = sized.filter(m => m.size >= FLOOR_BYTES);
+    const pool = (eligible.length ? eligible : sized.length ? sized : local);
+
+    // localModels() is largest-first, so the last entry is the smallest that qualifies.
+    return pool[pool.length - 1].id;
 }
 
 /**

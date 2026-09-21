@@ -76,9 +76,15 @@ credits and a test suite should not do that without being asked.
 
 ⚠ The gate's ruling is a model's judgement, so `boundary_test.js` can occasionally
 withhold a message it should release. That is reported as a failure and the dependent
-assertions are marked `skip` — it no longer silently truncates the run. Naming a small,
-quick local model in `AIRLOCK_GATE_MODEL` makes it both faster and steadier; without one
-the gate falls back to your largest installed model, which on a 16 GB card may be a 30B.
+assertions are marked `skip` — it no longer silently truncates the run.
+
+Naming a small, quick local model in `AIRLOCK_GATE_MODEL` makes it both faster and
+steadier; **`nemotron-3-nano:4b` is the recommended one** — 2.8 GB, fully resident on a
+modest card, ~117 tok/s on the gate prompt, and NVIDIA's own Nano, so the model deciding
+what may cross is the same lineage as the one receiving it. Without a name the gate
+takes the *smallest* installed model over a floor, because a gate that stalls fails
+closed and reaches you as a refusal of a harmless message — fitting is the thing the
+default can get right, and quality is the thing only you can.
 
 Built for the Nebius × NVIDIA Global AI Hackathon — Personal AI track.
 
