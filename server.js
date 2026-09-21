@@ -213,7 +213,10 @@ async function pickDefaultModel() {
 
     // No key: the largest local model, on the theory that the biggest thing
     // somebody bothered to download is the one they meant to use.
-    const local = await require('./providers/ollama').list().catch(() => []);
+    // Cloud entries are excluded: they are listed by the local Ollama but answered on
+    // ollama.com, and "no key, so stay local" is the whole premise of this branch.
+    const local = (await require('./providers/ollama').list().catch(() => []))
+        .filter(m => !m.remote);
     if (local.length) {
         return local.slice().sort((a, b) => (b.size || 0) - (a.size || 0))[0].id;
     }
@@ -352,13 +355,29 @@ app.get('/api/health', async (req, res) => {
         const { models = [] } = await tagsRes.json();
         const version = verRes && verRes.ok ? (await verRes.json()).version : null;
 
-        const withCaps = await Promise.all(models.map(async m => ({
-            name: m.name,
-            size: m.size,
-            tier: 'local',
-            family: m.details?.family,
-            caps: await modelCaps(m.name)     // cached, so only the first call costs anything
-        })));
+        // Whatever is loaded right now gets measured, so a model that ran and was
+        // evicted between polls is the only kind that goes unread.
+        await require('./providers/ollama').observeResidency().catch(() => {});
+        const { residencyOf } = require('./providers/ollama');
+
+        const withCaps = await Promise.all(models.map(async m => {
+            // ⚠ Tier from the registry, not asserted. This used to be the literal
+            // 'local' for every entry Ollama listed — which labelled an Ollama cloud
+            // model "stays on this machine" in the picker while it ran on ollama.com.
+            const tier = providers.tierOf(m.name);
+            const cloud = tier === 'remote';
+            return {
+                name: m.name,
+                // A cloud entry's size is a manifest stub, not weights; showing it as
+                // "0.0 GB" would read like a very small local model.
+                size: cloud ? null : m.size,
+                tier,
+                ...(cloud ? { via: 'ollama-cloud' } : {}),
+                family: m.details?.family,
+                residency: cloud ? null : residencyOf(m.name),
+                caps: await modelCaps(m.name)     // cached, so only the first call costs anything
+            };
+        }));
         withCaps.sort((a, b) => a.name.localeCompare(b.name));
 
         // The remote tier is optional. No key means no seats past the boundary,
@@ -933,17 +952,22 @@ app.delete('/api/folders/:id', ok(req => (store.deleteFolder(id(req)), { ok: tru
  * both are whatever the config opens on.
  */
 async function defaultParticipantModels() {
-    const local = await require('./providers/ollama').list().catch(() => []);
+    // Not cloud entries: the left seat is meant to be the one that stays here.
+    const local = (await require('./providers/ollama').list().catch(() => []))
+        .filter(m => !m.remote);
     const biggestLocal = local.length
         ? local.slice().sort((a, b) => (b.size || 0) - (a.size || 0))[0].id
         : null;
 
     const configured = config.model || null;
-    const configuredIsRemote = configured && providers.tierOf(configured) === 'remote';
+    const configuredTier = configured ? providers.tierOf(configured) : null;
+    const configuredIsRemote = configuredTier === 'remote';
 
     // Prefer the configured model for whichever side it belongs to, so the picker the
-    // user already set is honoured rather than silently overridden.
-    const a = (configured && !configuredIsRemote) ? configured : (biggestLocal || configured);
+    // user already set is honoured rather than silently overridden. The left seat takes
+    // it only if it is positively local — an unclassified model is not seated on the
+    // side that promises nothing leaves.
+    const a = configuredTier === 'local' ? configured : (biggestLocal || configured);
     const b = configuredIsRemote ? configured
         : (process.env.NEBIUS_API_KEY && process.env.AIRLOCK_MODEL_VERDICT) || a;
 

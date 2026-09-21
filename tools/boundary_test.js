@@ -329,8 +329,48 @@ async function gateOwnershipTests() {
        'an uninstalled config.model is not adopted as the gate model just because it is '
        + 'unrecognised');
 
+    // 2c. An Ollama CLOUD model must not gate, even when it is named outright.
+    //
+    // It is listed by the local Ollama, so it looks installed; it is answered on
+    // ollama.com, so it is not here. Naming it in AIRLOCK_GATE_MODEL is the most direct
+    // way anyone would put it in the gate's seat, so that is the case asserted.
+    {
+        const CLOUD = 'nemotron-3-nano:30b-cloud';
+        const realFetch = global.fetch;
+        const realTags = await (await realFetch('http://127.0.0.1:11434/api/tags')
+            .catch(() => null))?.json?.().catch(() => null) || { models: [] };
+        global.fetch = async (url, opts) => String(url).endsWith('/api/tags')
+            ? new Response(JSON.stringify({ models: [...realTags.models, {
+                name: CLOUD, size: 380, details: {},
+                remote_model: 'nemotron-3-nano:30b', remote_host: 'https://ollama.com:443'
+              }] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+            : realFetch(url, opts);
+
+        const before = process.env.AIRLOCK_GATE_MODEL;
+        try {
+            await providers.refreshRegistry();
+            process.env.AIRLOCK_GATE_MODEL = CLOUD;
+            const chosen = await resolveGateModel({ model: CLOUD });
+            ok(chosen !== CLOUD,
+               'an Ollama cloud model is not seated as the gate, even when named explicitly',
+               String(chosen));
+
+            const ruling = await runGate('a brief', { model: CLOUD, config: {} });
+            ok(ruling.release === false && /remote tier/i.test(ruling.reason),
+               'and handed straight to runGate it is refused as remote', ruling.reason);
+        } finally {
+            global.fetch = realFetch;
+            if (before === undefined) delete process.env.AIRLOCK_GATE_MODEL;
+            else process.env.AIRLOCK_GATE_MODEL = before;
+            await providers.refreshRegistry().catch(() => {});
+        }
+    }
+
     // 3. AIRLOCK_GATE_MODEL names it explicitly — but is still checked, not trusted.
-    const installed = await require('../providers/ollama').list().catch(() => []);
+    // Downloaded models only: a cloud entry's size is a manifest stub, so it would sort
+    // as the "smallest installed model" and this would pick something that runs elsewhere.
+    const installed = (await require('../providers/ollama').list().catch(() => []))
+        .filter(m => !m.remote);
     if (!installed.length) {
         skipped('AIRLOCK_GATE_MODEL override (no Ollama models installed)');
     } else {

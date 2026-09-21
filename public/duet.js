@@ -96,7 +96,10 @@ const nameOf = message => {
 const addresseeOf = message =>
     message.recipientName || (message.kind === 'user' ? 'both sides' : state.userName);
 
-const tierOfModel = name => state.models.find(m => m.name === name)?.tier || 'local';
+// A model the list does not mention is 'unknown', not 'local': the chip is the claim.
+const tierOfModel = name => state.models.find(m => m.name === name)?.tier || 'unknown';
+
+// crossedTier() lives in app.js, shared with the classic view.
 
 // ─────────────────────────── message state ───────────────────────────
 
@@ -134,7 +137,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
         : '';
 
     // A reply that came from across the boundary says so on every render, not just once.
-    const crossed = message.tier === 'remote'
+    const crossed = crossedTier(message.tier)
         ? ' <span class="badge travel">↗ crossed</span>' : '';
 
     const think = message.thinking
@@ -161,7 +164,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
     const classes = ['msg', mine ? 'user' : 'assistant'];
     // Same tier marking the classic view uses, so a reply produced across the boundary
     // reads amber in a pane as well as in the chamber.
-    if (!mine && message.tier === 'remote') classes.push('remote');
+    if (!mine && crossedTier(message.tier)) classes.push('remote');
     if (message.status === 'failed') classes.push('duet-failed');
     if (message.status === 'blocked') classes.push('duet-blocked');
     if (message.status === 'cancelled' || message.status === 'interrupted') classes.push('duet-stopped');
@@ -242,7 +245,7 @@ function paintAirlock() {
     if (!duetEl.rail) return;
 
     const messages = state.messages;
-    const crossed = messages.filter(m => m.tier === 'remote').length;
+    const crossed = messages.filter(m => crossedTier(m.tier)).length;
 
     duetEl.railSub.textContent = messages.length
         ? `one conversation · ${messages.length} message${messages.length === 1 ? '' : 's'}`
@@ -270,7 +273,7 @@ const AIR_TAG = {
 };
 
 function airRow(message) {
-    const remote = message.tier === 'remote';
+    const remote = crossedTier(message.tier);
     const classes = ['air-row', remote ? 'crossed' : 'local'];
     if (message.status !== 'complete') classes.push(message.status);
     if (message.streaming) classes.push('streaming');
@@ -414,14 +417,21 @@ function paintPaneTier(participantId) {
     if (!pane || !who) return;
 
     const tier = who.model ? tierOfModel(who.model) : 'local';
-    const remote = tier === 'remote';
+
+    // ⚠ "crosses" unless positively local — the server gates on exactly the same test,
+    // so the chip and the gate cannot disagree. Tested as `=== 'remote'`, an unclassified
+    // or Ollama-cloud participant was chipped "local" while its messages were gated.
+    const remote = tier !== 'local';
 
     pane.nodes.tier.className = 'duet-tier' + (remote ? ' remote' : '');
     pane.nodes.tier.textContent = remote ? '↗ crosses' : 'local';
-    pane.nodes.tier.title = remote
+    pane.nodes.tier.title = tier === 'remote'
         ? 'This participant runs across the boundary. Sending to it sends the shared '
           + 'conversation — the other participant\'s words included — and the local gate '
           + 'rules on it first.'
+        : remote
+        ? 'Airlock cannot place this model on either side of the boundary, so it is '
+          + 'treated as a crossing: the local gate rules first, and the crossing is logged.'
         : 'This participant runs on this machine. Nothing sent here leaves it.';
 
     pane.nodes.node.classList.toggle('is-remote', remote);
@@ -623,32 +633,13 @@ function handleEvent(participantId, event, streamed) {
 // ─────────────────────────── pane construction ───────────────────────────
 
 /**
- * Model options, grouped by tier — the same three groups app.js uses, and for the same
- * reason: which side of the boundary a model sits on is the one thing you must know
- * before picking it.
+ * Model options, grouped by tier — the SAME groups app.js uses, built by the same
+ * function, because which side of the boundary a model sits on is the one thing you must
+ * know before picking it and two pickers that could disagree about it would be worse
+ * than one. This used to be a copy, and the copy had the same `!== 'remote'` filter as
+ * the original: anything unclassified was listed as "stays on this machine".
  */
-function modelOptions(selected) {
-    const option = m => {
-        const badges = [
-            m.caps?.includes('thinking') ? '◈' : '',
-            m.caps?.includes('vision') ? '👁' : '',
-            m.caps?.includes('tools') ? '⛁' : ''
-        ].filter(Boolean).join('');
-        const size = m.size ? `  (${(m.size / 1e9).toFixed(1)} GB)` : '';
-        return `<option value="${escapeHtml(m.name)}"${m.name === selected ? ' selected' : ''}>`
-            + `${escapeHtml(m.name)}${size}${badges ? '  ' + badges : ''}</option>`;
-    };
-    const group = (label, list) => list.length
-        ? `<optgroup label="${label}">${list.map(option).join('')}</optgroup>` : '';
-
-    const local = state.models.filter(m => m.tier !== 'remote');
-    const nemotron = state.models.filter(m => m.tier === 'remote' && m.family === 'nemotron');
-    const other = state.models.filter(m => m.tier === 'remote' && m.family !== 'nemotron');
-
-    return group('Local — stays on this machine', local)
-        + group('Oversight — Nemotron, across the boundary', nemotron)
-        + group('Oversight — other remote models', other);
-}
+const modelOptions = selected => modelOptgroups(state.models, selected);
 
 function buildPane(who) {
     const node = document.createElement('section');
@@ -729,7 +720,7 @@ function buildPane(who) {
         paintPaneTier(who.id);
         // The header is the only place the CURRENT model is shown; past replies keep the
         // model that actually produced them, so nothing already on screen changes.
-        if (updated.tier === 'remote') {
+        if (updated.tier && updated.tier !== 'local') {
             flash(`${updated.name} now runs across the boundary. The local gate will rule `
                 + 'on the shared conversation before anything is sent.', 8000);
         }

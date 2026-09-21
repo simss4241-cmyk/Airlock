@@ -40,10 +40,10 @@ what leaves it. This table is the honest version — clone it and check.
 | Local inference — streaming, reasoning channel, tools, vision | working |
 | Packet store — threads, nesting, provenance, move/fork/review | working, 89 assertions |
 | Per-thread read-only workspaces, with containment tests | working, 46 assertions |
-| Remote tier on Nebius Token Factory (Nemotron 3) | working, 35 assertions |
+| Remote tier on Nebius Token Factory (Nemotron 3) | working, 48 assertions |
 | One streaming contract across both tiers | working |
 | Model dropdown grouped by tier, capability-badged | working |
-| Local gate rules before anything crosses, and fails closed | working, 71 assertions |
+| Local gate rules before anything crosses, and fails closed | working, 73 assertions |
 | Tier recorded per packet; "what crossed?" as a query | working |
 | Escalation by router **and** by hand, both recorded as crossings | working |
 | Access token + remote spend cap for hosting | working, 26 assertions |
@@ -54,7 +54,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Per-visitor isolation (a shared token is not multi-tenancy) | not built |
 | Hosted demo build | not built |
 
-**354 assertions across nine suites.** Run them:
+**369 assertions across nine suites.** Run them:
 
 ```
 npm start                          # in one terminal
@@ -68,6 +68,18 @@ node tools/duet_context_test.js    # what each participant is shown
 node tools/duet_test.js            # two panes, one conversation
 node tools/clearance_test.js       # gate consent does not outlive its thread
 ```
+
+⚠ `smoke_test`, `boundary_test` and `duet_test` test **whatever server is answering on
+:8100**, not the code in front of you. An instance left running from before a change
+will pass or fail on its own old code, and nothing in the output says so. Restart it
+after pulling, or point them at a fresh one on a scratch database:
+
+```
+PORT=8126 AIRLOCK_DB=/tmp/airlock-verify.db npm start
+AIRLOCK_URL=http://localhost:8126 node tools/boundary_test.js
+```
+
+`workspace_http_test.js` starts its own server and is not affected.
 
 The remote suites **skip** rather than fail without a Nebius key, so the tests
 run on a clean clone with no credentials. `duet_test.js` additionally skips the
@@ -450,8 +462,8 @@ Two more things a hosted build does not inherit from the desktop one:
 | `tools/smoke_test.js` | 89 assertions over the store API. Run it after touching `db.js` |
 | `boundary.js` | The gate. Local-only, deterministic, fails closed |
 | `auth.js` | Access token and remote spend cap. Off unless configured |
-| `tools/provider_test.js` | 35 assertions over the provider contract. Run it after touching `providers/` |
-| `tools/boundary_test.js` | 71 assertions over the gate, both crossing paths and the audit trail |
+| `tools/provider_test.js` | 48 assertions over the provider contract. Run it after touching `providers/` |
+| `tools/boundary_test.js` | 73 assertions over the gate, both crossing paths and the audit trail |
 | `tools/auth_test.js` | 26 assertions over the access guard and the spend cap |
 | `airlock-launch.vbs` | Ensures the server is up, then opens app mode. What the icon runs |
 | `tools/install_shortcut.ps1` | Creates the pinnable Start Menu / Desktop shortcut |

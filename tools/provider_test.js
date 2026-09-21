@@ -104,6 +104,117 @@ async function unitTests() {
        'and reports the local tier once the catalogue is resolved');
     ok(providers.tierOf('not-a-real-model-anywhere:1b') === 'unknown',
        'while a model in no catalogue is unknown, not local');
+
+    await cloudTests();
+    await residencyTests();
+}
+
+/**
+ * Serve canned Ollama responses for the duration of `fn`. Everything else passes through,
+ * so Token Factory calls made by a registry refresh behave as they normally would.
+ */
+async function withOllama(routes, fn) {
+    const real = global.fetch;
+    global.fetch = async (url, opts) => {
+        const hit = Object.keys(routes).find(r => String(url).endsWith(r));
+        if (!hit) return real(url, opts);
+        return new Response(JSON.stringify(routes[hit]), {
+            status: 200, headers: { 'Content-Type': 'application/json' }
+        });
+    };
+    try { return await fn(); } finally { global.fetch = real; }
+}
+
+// ─────────────────────── Ollama cloud models ───────────────────────
+//
+// Ollama serves cloud models through its local API — `gemma4:cloud`,
+// `nemotron-3-nano:30b-cloud` — listed in /api/tags beside real downloads and answered on
+// ollama.com. The listing marks them with remote_host / remote_model (ListModelResponse in
+// Ollama's api/types.go), and ollama.list() used to discard both, so the registry filed a
+// cloud model as local: eligible to be the gate, and never gated.
+
+async function cloudTests() {
+    console.log('\nunit: Ollama cloud models are not local');
+
+    const CLOUD = 'nemotron-3-nano:30b-cloud';
+    const tags = {
+        models: [
+            { name: 'real-local:4b', size: 2.8e9, details: {} },
+            { name: CLOUD, size: 380, details: {},
+              remote_model: 'nemotron-3-nano:30b', remote_host: 'https://ollama.com:443' }
+        ]
+    };
+
+    await withOllama({ '/api/tags': tags }, async () => {
+        const listed = await ollama.list();
+        const cloud = listed.find(m => m.id === CLOUD);
+        ok(cloud && cloud.remote === true,
+           'ollama.list() keeps the remote marker instead of dropping it');
+        ok(listed.find(m => m.id === 'real-local:4b')?.remote === false,
+           'and a downloaded model is not marked remote');
+
+        await providers.refreshRegistry();
+        ok(providers.tierOf(CLOUD) === 'remote', 'a cloud model is filed on the remote side');
+        ok(!providers.isLocal(CLOUD), 'so it is not local');
+        ok(!providers.localModels().some(m => m.id === CLOUD),
+           'and is never offered as a local model');
+        ok(providers.tierOf('real-local:4b') === 'local', 'while the downloaded one stays local');
+    });
+
+    // Put the real catalogue back before anything else reads it.
+    await providers.refreshRegistry().catch(() => {});
+
+    // ── the tripwire: a "local" model that answers from somewhere else ──
+    //
+    // The registry prevents this by reading the listing. This is what notices if
+    // something gets past it — a model that became a cloud alias after the last read.
+    const ALIAS = 'tripwire-test:1b';
+    providers.registry._entries.set(ALIAS, { id: ALIAS, tier: 'local', source: 'local', size: 1 });
+    const realChat = ollama.chat;
+    ollama.chat = async function* () {
+        yield { message: { content: 'hi' }, remote_host: 'https://ollama.com:443',
+                remote_model: 'something:cloud', done: false };
+    };
+    let thrown = null;
+    try {
+        for await (const _ of providers.chat({ model: ALIAS, messages: [], config: {} })) { /* drain */ }
+    } catch (err) { thrown = err; } finally {
+        ollama.chat = realChat;
+        providers.registry._entries.delete(ALIAS);
+    }
+    ok(thrown && thrown.name === 'ProviderError',
+       'a local model answering from a remote host is refused mid-stream');
+    ok(thrown && /ollama\.com/.test(thrown.message), 'and names the host it came from');
+
+    await providers.refreshRegistry().catch(() => {});
+}
+
+// ─────────────────────── VRAM residency ───────────────────────
+//
+// Measured, not predicted: what /api/ps says about a model that is loaded.
+
+async function residencyTests() {
+    console.log('\nunit: VRAM residency is measured, not guessed');
+
+    await withOllama({
+        '/api/ps': {
+            models: [
+                { name: 'fits:4b', size: 3.08e9, size_vram: 3.08e9 },
+                { name: 'spills:30b', size: 20e9, size_vram: 12.4e9 },
+                { name: 'cpu-only:7b', size: 5e9, size_vram: 0 },
+                { name: 'cloud:x', size: 400, size_vram: 0, remote_host: 'https://ollama.com:443' }
+            ]
+        }
+    }, () => ollama.observeResidency());
+
+    ok(ollama.residencyOf('fits:4b')?.gpu === 1, 'a model that fitted reads fully resident');
+    ok(Math.abs(ollama.residencyOf('spills:30b')?.gpu - 0.62) < 0.001,
+       'a model that spilled reads the fraction that fitted');
+    ok(ollama.residencyOf('cpu-only:7b')?.gpu === 0, 'and one with nothing in VRAM reads zero');
+    ok(ollama.residencyOf('cloud:x') === null,
+       'a cloud model gets no reading, because nothing of it runs here');
+    ok(ollama.residencyOf('never-loaded:1b') === null,
+       'and a model that has never run says nothing rather than guessing');
 }
 
 // ─────────────────────── local tier ───────────────────────

@@ -76,13 +76,27 @@ async function refresh() {
 
     const now = Date.now();
 
-    for (const [tier, res] of [['local', local], ['remote', remote]]) {
-        sources[tier].ok = res.ok;
+    // Each entry remembers which catalogue produced it, so a refresh of one source never
+    // clears the other's — tier alone is no longer enough to tell, because Ollama's
+    // catalogue now contributes to both sides.
+    for (const [source, res] of [['local', local], ['remote', remote]]) {
+        sources[source].ok = res.ok;
         if (!res.ok) continue;
 
-        sources[tier].at = now;
-        for (const [id, e] of entries) if (e.tier === tier) entries.delete(id);
-        for (const m of res.list) entries.set(m.id, { id: m.id, tier, size: m.size ?? null });
+        sources[source].at = now;
+        for (const [id, e] of entries) if (e.source === source) entries.delete(id);
+
+        for (const m of res.list) {
+            // ⚠ An Ollama cloud model is listed by the local Ollama but answered on
+            // ollama.com. It is on the far side of the boundary however it got into
+            // the list, so it is filed there — never eligible to gate, and always gated.
+            const tier = source === 'remote' || m.remote ? 'remote' : 'local';
+            entries.set(m.id, {
+                id: m.id, tier, source,
+                size: m.size ?? null,
+                ...(m.remote ? { via: 'ollama-cloud', remoteHost: m.remoteHost } : {})
+            });
+        }
     }
 
     // An empty remote catalogue is the normal state with no Nebius key, not a failure,

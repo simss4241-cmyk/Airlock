@@ -88,6 +88,86 @@ let activeThread = null;    // { id, title } — null means an unsaved scratch c
 
 const escapeHtml = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+/**
+ * What happened the last time this model ran here, for the picker. Shared with duet.js.
+ *
+ * Measured by the server from Ollama's /api/ps, never predicted from a spec sheet: a
+ * browser cannot see the GPU, and guessing whether someone's hardware can hold a model
+ * is how you hide a model from the one person with a second card. So nothing is hidden,
+ * nothing is said about a model that has never run, and a model that fitted says nothing
+ * at all — only a model that DIDN'T fit gets a note, because that is the one that costs
+ * you something. `title` carries the detail, since an <option> has no room for it.
+ */
+function residencyNote(m) {
+    const r = m.residency;
+    if (!r || r.gpu >= 0.995) return { text: '', title: '' };
+
+    const gb = n => (n / 1e9).toFixed(1);
+    const text = r.gpu < 0.01 ? 'ran on CPU' : `ran ${Math.round(r.gpu * 100)}% on GPU`;
+    const title = `Last time it ran here, ${gb(r.sizeVram)} of ${gb(r.size)} GB fitted in VRAM `
+        + 'and the rest ran on the CPU, which is much slower. Measured, not predicted — it '
+        + 'depends on the context length it ran with as well as the card, so a shorter '
+        + 'context or a smaller quantisation may fit where this did not.';
+    return { text, title };
+}
+
+/**
+ * The picker's groups. Shared with duet.js so the two can never disagree about which
+ * side of the boundary a model is on.
+ *
+ * ⚠ "Local" is tier === 'local' exactly — never "not remote". The server answers
+ * 'unknown' for a model no catalogue claims, and a filter written as `!== 'remote'`
+ * files that under "stays on this machine", which is the one label a picker must not
+ * get wrong. Unclassified models are listed, not hidden, under a label that says what
+ * the server will do with them.
+ */
+function groupModels(models) {
+    return [
+        ['Local — stays on this machine', models.filter(m => m.tier === 'local')],
+        ['Oversight — Nemotron, across the boundary',
+            models.filter(m => m.tier === 'remote' && !m.via && m.family === 'nemotron')],
+        ['Oversight — other remote models',
+            models.filter(m => m.tier === 'remote' && !m.via && m.family !== 'nemotron')],
+        ['Ollama cloud — listed by Ollama, answered on ollama.com',
+            models.filter(m => m.tier === 'remote' && m.via === 'ollama-cloud')],
+        ['Unclassified — treated as a crossing and gated',
+            models.filter(m => m.tier !== 'local' && m.tier !== 'remote')]
+    ];
+}
+
+/**
+ * For a RECORDED tier, on a packet. Shared with duet.js.
+ *
+ * Not `!== 'local'`: packets written before tiers were recorded carry null, and those were
+ * all local. What the server now writes for a model it could not place is 'unknown', and
+ * it logs that turn as a crossing — so the transcript shows it as one, or the record and
+ * the screen disagree.
+ */
+const crossedTier = t => t === 'remote' || t === 'unknown';
+
+/** One <option>, identical in both pickers. */
+function modelOption(m, selected) {
+    const badges = [
+        m.caps?.includes('thinking') ? '◈' : '',
+        m.caps?.includes('vision') ? '👁' : '',
+        m.caps?.includes('tools') ? '⛁' : ''
+    ].filter(Boolean).join('');
+    // Remote models report no size — there is no local file — so the GB suffix is
+    // omitted rather than NaN.
+    const size = m.size ? `  (${(m.size / 1e9).toFixed(1)} GB)` : '';
+    const note = residencyNote(m);
+    return `<option value="${escapeHtml(m.name)}"${m.name === selected ? ' selected' : ''}`
+        + `${note.title ? ` title="${escapeHtml(note.title)}"` : ''}>`
+        + `${escapeHtml(m.name)}${size}${badges ? '  ' + badges : ''}`
+        + `${note.text ? '  · ' + escapeHtml(note.text) : ''}</option>`;
+}
+
+const modelOptgroups = (models, selected) => groupModels(models)
+    .filter(([, list]) => list.length)
+    .map(([label, list]) =>
+        `<optgroup label="${escapeHtml(label)}">${list.map(m => modelOption(m, selected)).join('')}</optgroup>`)
+    .join('');
+
 function inline(s) {
     return escapeHtml(s)
         .replace(/`([^`]+)`/g, '<code class="inline">$1</code>')
@@ -245,7 +325,7 @@ function render() {
 
         // The tier is on the element, not just in a badge: a reply that came from across
         // the boundary should be readable as such from the speaker line alone.
-        const tier = m.role === 'assistant' && m.tier === 'remote' ? ' remote' : '';
+        const tier = m.role === 'assistant' && crossedTier(m.tier) ? ' remote' : '';
 
         return `<div class="msg ${m.role}${tier}"${drag}${nest}>
                     <span class="who"${m.packetId ? ' draggable="true"' : ''}>${escapeHtml(speaker(m))}${
@@ -440,38 +520,19 @@ async function refreshHealth() {
         // Seats that can cross on their own. Everything else is carried by hand,
         // so with no key configured the committee behaves exactly as it always did.
         liveSeats = Object.fromEntries((h.seats || []).map(s => [s.actor, s.model]));
-        modelTier = Object.fromEntries(h.models.map(m => [m.name, m.tier || 'local']));
+        // A missing tier is 'unknown', not 'local' — the default is the claim.
+        modelTier = Object.fromEntries(h.models.map(m => [m.name, m.tier || 'unknown']));
 
         // A shared instance says so, every load. There is no dismiss control.
         if (el.demoNotice) el.demoNotice.hidden = !h.demo;
         paintSeats();
 
         // Grouped by tier, because which side of the boundary a model sits on is the
-        // one thing you must know before picking it. Remote models report no size —
-        // there is no local file — so the GB suffix is omitted rather than NaN.
-        const option = m => {
-            const badges = [
-                m.caps?.includes('thinking') ? '◈' : '',
-                m.caps?.includes('vision') ? '👁' : '',
-                m.caps?.includes('tools') ? '⛁' : ''
-            ].filter(Boolean).join('');
-            const size = m.size ? `  (${(m.size / 1e9).toFixed(1)} GB)` : '';
-            return `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}${size}`
-                 + `${badges ? '  ' + badges : ''}</option>`;
-        };
-        const group = (label, list) => list.length
-            ? `<optgroup label="${label}">${list.map(option).join('')}</optgroup>` : '';
-
-        const local = h.models.filter(m => m.tier !== 'remote');
-        const nemotron = h.models.filter(m => m.tier === 'remote' && m.family === 'nemotron');
-        const other = h.models.filter(m => m.tier === 'remote' && m.family !== 'nemotron');
-
-        // Three groups, not two: Nemotron is the tier this is built around, and
-        // burying it alphabetically among twenty other remote models made the
-        // dropdown read like a vendor list rather than an escalation ladder.
-        el.model.innerHTML = group('Local — stays on this machine', local)
-                           + group('Oversight — Nemotron, across the boundary', nemotron)
-                           + group('Oversight — other remote models', other);
+        // one thing you must know before picking it. Nemotron gets its own group rather
+        // than being buried alphabetically among twenty other remote models, which made
+        // the dropdown read like a vendor list rather than an escalation ladder. The
+        // groups themselves live in groupModels(), shared with the duet panes.
+        el.model.innerHTML = modelOptgroups(h.models);
 
         if (h.models.some(m => m.name === wanted)) {
             el.model.value = wanted;
@@ -1281,7 +1342,9 @@ function provenanceOf(m, packetId) {
     } else {
         bits.push(`model: ${m.model || 'unnamed local model'}`);
         // Stated outright, because it is the one fact a reader cannot recover downstream.
-        bits.push(m.tier === 'remote' ? 'ran off-machine' : 'ran on local hardware');
+        bits.push(m.tier === 'remote' ? 'ran off-machine'
+            : m.tier === 'unknown' ? 'ran on a model Airlock could not place — logged as a crossing'
+            : 'ran on local hardware');
     }
 
     if (m.origin && m.origin !== activeThread?.title) bits.push(`born in ${m.origin}`);

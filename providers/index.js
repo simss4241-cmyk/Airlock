@@ -71,9 +71,41 @@ async function capabilities(model) {
     return providerFor(model).capabilities(model);
 }
 
-/** Async generator of contract chunks. Throws ProviderError on an upstream refusal. */
-function chat(opts) {
-    return providerFor(opts.model).chat(opts);
+/**
+ * Async generator of contract chunks. Throws ProviderError on an upstream refusal.
+ *
+ * ⚠ Also a tripwire. Ollama stamps `remote_host` / `remote_model` on a response that
+ * was answered somewhere else, so a model the registry filed as local that answers
+ * with either set was not local. The registry is what PREVENTS that — it reads the same
+ * markers off /api/tags — and this is what notices if something gets past it: a model
+ * that became a cloud alias after the last catalogue read, or an Ollama that stops
+ * listing the markers. It cannot un-send anything; by the first chunk the request has
+ * already left. What it stops is everything after: a local ruling released on the
+ * strength of it, and an audit trail recording 'local' for text that crossed.
+ */
+async function* chat(opts) {
+    const expectLocal = tierOf(opts.model) === 'local';
+
+    for await (const chunk of providerFor(opts.model).chat(opts)) {
+        if (expectLocal && (chunk.remote_host || chunk.remote_model)) {
+            // Next read must not repeat the mistake.
+            registry.refresh().catch(() => {});
+            throw new ProviderError(
+                `${opts.model} is listed as local but was answered by `
+                + `${chunk.remote_host || 'a remote host'}${chunk.remote_model ? ` (${chunk.remote_model})` : ''}. `
+                + 'The request left this machine; nothing further is accepted from it.',
+                502, 'remote'
+            );
+        }
+        yield chunk;
+    }
+
+    // A finished local generation is the moment the model is certainly loaded, so it is
+    // the moment its VRAM residency can be read. Fire-and-forget: a measurement for the
+    // picker must never delay or fail the reply it followed.
+    if (expectLocal && providerFor(opts.model) === ollama) {
+        ollama.observeResidency().catch(() => {});
+    }
 }
 
 /**
