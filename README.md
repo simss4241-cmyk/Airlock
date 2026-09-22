@@ -54,11 +54,11 @@ what leaves it. This table is the honest version — clone it and check.
 | Tool results a remote model reads are gated, and recorded as crossed | working, 12 assertions end to end |
 | Redaction — crossing a brief with the sensitive parts stripped | not built |
 | Hosted: workspaces limited to an allowlist, and OFF if the allowlist is forgotten | working, 26 assertions |
-| Per-visitor sandboxes: each visitor's threads, packets and duets are private | working, 39 assertions |
-| Per-visitor config, budgets and gate memory (still shared between sandboxes) | next |
+| Per-visitor sandboxes: each visitor's threads, packets and duets are private | working, 62 assertions |
+| Per-visitor settings, remote budgets, gate memory and generation slots; a daily cap that survives restarts | working |
 | Hosted demo build | not built |
 
-**486 assertions across fourteen suites.** Run them:
+**509 assertions across fourteen suites.** Run them:
 
 ```
 npm start                          # in one terminal

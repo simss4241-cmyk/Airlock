@@ -81,6 +81,7 @@ function guard(req, res, next) {
  * be gameable by whoever holds the shared token.
  */
 function spendRemote() {
+    if (require('./sandbox').sandboxed()) return spendHosted();
     const budget = REMOTE_BUDGET();
     if (!budget) return null;
     if (remoteCalls >= budget) {
@@ -92,7 +93,55 @@ function spendRemote() {
 }
 
 function remoteSpend() {
+    if (require('./sandbox').sandboxed()) return hostedSpend();
     return { used: remoteCalls, budget: REMOTE_BUDGET() };
+}
+
+// ── hosted: per visitor, and per day for the whole demo ──
+//
+// With sandboxes on, one process serves many strangers, and a single per-process count
+// is wrong twice: one visitor can spend everyone's allowance, and a restart refills it.
+// So there are two limits, and a crossing has to fit both:
+//
+//   AIRLOCK_SANDBOX_REMOTE_BUDGET   per visitor, kept in their own sandbox (default 40)
+//   AIRLOCK_REMOTE_BUDGET           per UTC day for the whole demo, kept in the operator
+//                                   index, so it survives restarts (0 = unlimited)
+//
+// A desk keeps the per-process count above — there is one person, and nothing to protect
+// the budget from but a restart they chose.
+
+const VISITOR_BUDGET = () => {
+    const n = Number(process.env.AIRLOCK_SANDBOX_REMOTE_BUDGET);
+    return Number.isFinite(n) && n > 0 ? n : 40;
+};
+const VISITOR_KEY = 'remote_calls';
+
+function spendHosted() {
+    const store = require('./db');
+    const ledger = require('./sandbox').ledger();
+    const daily = REMOTE_BUDGET();
+    const mine = Number(store.getMeta(VISITOR_KEY)) || 0;
+
+    if (daily && ledger.calls() >= daily) {
+        return `This demo has used its shared remote allowance for today (${daily}). `
+             + 'The local tier still works, and the allowance resets at midnight UTC.';
+    }
+    if (mine >= VISITOR_BUDGET()) {
+        return `This sandbox has used its ${VISITOR_BUDGET()} remote calls. `
+             + 'The local tier still works.';
+    }
+    store.setMeta(VISITOR_KEY, String(mine + 1));
+    ledger.add();
+    return null;
+}
+
+function hostedSpend() {
+    return {
+        used: Number(require('./db').getMeta(VISITOR_KEY)) || 0,
+        budget: VISITOR_BUDGET(),
+        today: require('./sandbox').ledger().calls(),
+        dailyBudget: REMOTE_BUDGET()
+    };
 }
 
 /** One line at boot, because an unauthenticated hosted instance is a mistake. */
@@ -106,7 +155,10 @@ function describe(port) {
     } else {
         lines.push('  auth      -> OPEN. Correct for localhost; set AIRLOCK_TOKEN before hosting.');
     }
-    lines.push(budget
+    lines.push(require('./sandbox').sandboxed()
+        ? `  remote    -> ${VISITOR_BUDGET()} call(s) per visitor; `
+          + (budget ? `${budget} per day in total, surviving restarts` : 'no daily total — set AIRLOCK_REMOTE_BUDGET')
+        : budget
         ? `  remote    -> capped at ${budget} call(s) per process`
         : '  remote    -> uncapped. Set AIRLOCK_REMOTE_BUDGET before hosting.');
 

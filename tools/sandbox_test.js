@@ -110,6 +110,32 @@ async function main() {
     ok(!unboundRun.includes(MARK),
        'an unbound one runs as whoever started it — which is why the queue must bind');
 
+    // ── the kernel remembers per visitor ──
+    //
+    // A shared record of what has been ruled on would tell one visitor about another: a
+    // message that crosses with no gate call is one somebody already sent.
+    const providers = require('../providers');
+    const kernel = require('../kernel');
+    const boundary = require('../boundary');
+    const REMOTE = 'test/remote-for-sandboxes';
+    providers.registry._entries.set(REMOTE, { id: REMOTE, tier: 'remote', source: 'remote' });
+    const shown = [];
+    boundary.runGate = async md => { shown.push(md); return { release: true, reason: 'ok', concerns: [], model: 'stub' }; };
+    const msg = [{ role: 'user', content: 'the same words, sent by two different people' }];
+
+    const inA = await sandbox.run(A, () => kernel.clear({ model: REMOTE, messages: msg }));
+    const inB = await sandbox.run(B, () => kernel.clear({ model: REMOTE, messages: msg }));
+    ok(inA.fresh === 1 && inB.fresh === 1 && shown.length === 2,
+       'text ruled on in A is ruled on afresh in B, not waved through as already seen',
+       `A fresh=${inA.fresh}, B fresh=${inB.fresh}, gate calls=${shown.length}`);
+    const again = await sandbox.run(A, () => kernel.clear({ model: REMOTE, messages: msg }));
+    ok(again.fresh === 0 && shown.length === 2, 'while within A the ruling still stands');
+
+    ok(sandbox.run(A, () => kernel.covers(inA.token, REMOTE, msg)), "A's clearance covers A's words in A");
+    ok(!sandbox.run(B, () => kernel.covers(inA.token, REMOTE, msg))
+       && !sandbox.run(B, () => kernel.isIssuedFor(inA.token, REMOTE)),
+       "and opens nothing in B — for the kernel or for egress");
+
     // ── desk mode is unchanged ──
     delete process.env.AIRLOCK_SANDBOXES;
     process.env.AIRLOCK_DB = path.join(tmp, 'desk.db');

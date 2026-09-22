@@ -43,6 +43,7 @@ const duet = require('./duet-store');
 const providers = require('./providers');
 const auth = require('./auth');
 const kernel = require('./kernel');
+const sandbox = require('./sandbox');
 const { buildContext } = require('./duet-context');
 
 const { STATUS } = duet;
@@ -297,7 +298,11 @@ async function generate({ threadId, participantId, text, clientRequestId, retryO
     let crossingRecorded = false;
 
     try {
-        await queue.run(async () => {
+        // ⚠ Bound to the visitor who queued it. The queue is shared, and a waiting job is
+        // started from the `finally` of whichever job finished before it — so, unbound, it
+        // would run in THAT visitor's async context and write its reply into their sandbox.
+        // sandbox_http_test drives two visitors through this queue to hold the line.
+        await queue.run(sandbox.bind(async () => {
             started = true;
 
             // A generation cancelled while it was still waiting must not start now.
@@ -350,7 +355,7 @@ async function generate({ threadId, participantId, text, clientRequestId, retryO
                 }
                 if (chunk.done) finalChunk = chunk;
             }
-        }, position => {
+        }), position => {
             // Position updates keep arriving as the queue drains; once this job is running
             // they are about somebody else, so drop them rather than re-queue the pane.
             if (!started) emit({ type: 'queued', messageId: reply.id, position });

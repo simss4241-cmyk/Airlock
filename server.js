@@ -161,7 +161,46 @@ function summarise(name, args, result, ok) {
     }
 }
 
-let config = { ...DEFAULTS };
+// ── config: the operator's, and on a hosted instance each visitor's own on top ──
+//
+// `baseConfig` is the file: the operator's settings, and on a desk simply the settings.
+// `config` is what a request should see — a READ-ONLY view. On a desk it is baseConfig.
+// With sandboxes on it is baseConfig overlaid with the current visitor's own choices,
+// kept in their sandbox, so one visitor changing the model or the system prompt no
+// longer changes it for everyone. Reads, spreads and res.json(config) all work on the
+// view; a write to it throws, because a write there would have to mean one of two
+// different things and the code should say which.
+let baseConfig = { ...DEFAULTS };
+
+/**
+ * What a visitor may change for themselves. Everything else in DEFAULTS affects the host
+ * and so every other visitor: num_ctx (a huge context pushes the model off the GPU for
+ * all of them), keep_alive (pins models in memory), maxConcurrent (the limit on the
+ * SHARED generation queue). Those stay the operator's.
+ */
+const VISITOR_KEYS = ['model', 'temperature', 'top_p', 'top_k', 'think', 'systemPrompt'];
+const OVERLAY_KEY = 'config_overlay';
+
+function visitorOverlay() {
+    if (!sandbox.sandboxed() || !sandbox.inContext()) return null;
+    try { return JSON.parse(store.getMeta(OVERLAY_KEY) || 'null'); } catch { return null; }
+}
+const effectiveConfig = () => {
+    const overlay = visitorOverlay();
+    return overlay ? { ...baseConfig, ...overlay } : baseConfig;
+};
+
+const config = new Proxy({}, {
+    get: (_, key) => effectiveConfig()[key],
+    has: (_, key) => key in effectiveConfig(),
+    ownKeys: () => Reflect.ownKeys(effectiveConfig()),
+    getOwnPropertyDescriptor: (_, key) => {
+        const e = effectiveConfig();
+        return key in e ? { value: e[key], enumerable: true, configurable: true, writable: false } : undefined;
+    },
+    set: () => { throw new TypeError('config is a read-only view: write baseConfig, or the visitor overlay'); },
+    deleteProperty: () => { throw new TypeError('config is a read-only view'); }
+});
 
 app.use(express.json({ limit: '32mb' }));  // images ride along as base64
 
@@ -236,42 +275,53 @@ async function pickDefaultModel() {
 
 async function loadConfig() {
     try {
-        config = { ...DEFAULTS, ...JSON.parse(await fs.readFile(CONFIG_FILE, 'utf8')) };
+        baseConfig = { ...DEFAULTS, ...JSON.parse(await fs.readFile(CONFIG_FILE, 'utf8')) };
     } catch { /* first run, no config yet */ }
 
-    if (!config.model) config.model = await pickDefaultModel();
+    if (!baseConfig.model) baseConfig.model = await pickDefaultModel();
 
     // Before workspaces belonged to threads, one global root lived in the JSON config.
     // Copy it to each existing thread exactly once, then delete the key outright rather
     // than blanking it — an empty hook is still a hook. db.migrateWorkspaceRoot keeps its
     // own marker, so even a config restored from before this change won't re-run it.
-    if ('workspaceRoot' in config) {
+    if ('workspaceRoot' in baseConfig) {
         // A desk's own migration. Hosted there is no single database to migrate, and a
         // global root is exactly what a visitor must never inherit.
-        if (config.workspaceRoot && !sandbox.sandboxed()) store.migrateWorkspaceRoot(path.resolve(config.workspaceRoot));
-        delete config.workspaceRoot;
+        if (baseConfig.workspaceRoot && !sandbox.sandboxed()) store.migrateWorkspaceRoot(path.resolve(baseConfig.workspaceRoot));
+        delete baseConfig.workspaceRoot;
         await saveConfig();
     }
 
     // Same treatment for the retired global tools flag: a key that reads like a switch but
     // controls nothing is worse than no key, so drop it rather than leave it lying there.
-    if ('tools' in config) {
-        delete config.tools;
+    if ('tools' in baseConfig) {
+        delete baseConfig.tools;
         await saveConfig();
     }
 }
 
 async function saveConfig() {
-    await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), 'utf8');
+    await fs.writeFile(CONFIG_FILE, JSON.stringify(baseConfig, null, 2), 'utf8');
 }
 
 // ── Config ──
 app.get('/api/config', (req, res) => res.json(config));
 
 app.post('/api/config', async (req, res) => {
-    const allowed = Object.keys(DEFAULTS);
-    for (const key of allowed) {
-        if (req.body[key] !== undefined) config[key] = req.body[key];
+    // Hosted: a visitor's changes go into their own sandbox, limited to what is theirs to
+    // change. Anything else they send is ignored, not an error — the page sends the whole
+    // settings form, and the host-wide fields in it are simply not theirs.
+    if (sandbox.sandboxed()) {
+        const overlay = visitorOverlay() || {};
+        for (const key of VISITOR_KEYS) {
+            if (req.body[key] !== undefined) overlay[key] = req.body[key];
+        }
+        store.setMeta(OVERLAY_KEY, JSON.stringify(overlay));
+        return res.json(config);
+    }
+
+    for (const key of Object.keys(DEFAULTS)) {
+        if (req.body[key] !== undefined) baseConfig[key] = req.body[key];
     }
     await saveConfig();
     res.json(config);
@@ -423,6 +473,17 @@ app.get('/api/health', async (req, res) => {
 
 // ── Chat: stream Ollama's NDJSON straight through, and abort if the client leaves ──
 app.post('/api/chat', async (req, res) => {
+    // One visitor, a bounded number of generations at once. The GPU and the duet queue are
+    // shared by every visitor on a hosted instance; without this, one tab sending in a loop
+    // starves the rest. A no-op on a desk.
+    const slot = sandbox.takeSlot();
+    if (!slot) {
+        return res.status(429).json({ error: 'You already have replies in progress. '
+            + 'Wait for one to finish, or stop it, before sending another.' });
+    }
+    res.on('close', slot);
+    res.on('finish', slot);
+
     const controller = new AbortController();
 
     // Abort upstream only when the *response* closes early (user hit Stop / closed the
@@ -967,6 +1028,17 @@ app.patch('/api/duet/participants/:id', duetRoute(req => {
  * whose token it just received. Closing the response is the stop signal, as on /api/chat.
  */
 app.post('/api/duet/:id/send', async (req, res) => {
+    // One visitor, a bounded number of generations at once. The GPU and the duet queue are
+    // shared by every visitor on a hosted instance; without this, one tab sending in a loop
+    // starves the rest. A no-op on a desk.
+    const slot = sandbox.takeSlot();
+    if (!slot) {
+        return res.status(429).json({ error: 'You already have replies in progress. '
+            + 'Wait for one to finish, or stop it, before sending another.' });
+    }
+    res.on('close', slot);
+    res.on('finish', slot);
+
     const controller = new AbortController();
 
     // Hang the abort off the *response*, never the request: express.json() drains the body

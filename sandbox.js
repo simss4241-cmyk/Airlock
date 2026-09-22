@@ -316,6 +316,64 @@ function middleware({ onOpen = async () => {}, exempt = [] } = {}) {
     };
 }
 
+// ─────────────────────────── per-visitor state that is not in a database ───────────────────────────
+
+/** Is a visitor's store current right now? Never throws. */
+const inContext = () => Boolean(context.getStore());
+
+/**
+ * A key for per-visitor state kept in memory: the kernel's record of what it has ruled on,
+ * and the count of generations in flight. The store itself in sandbox mode; on a desk, one
+ * fixed object — deliberately not the primary store, so asking whose memory this is never
+ * opens a database as a side effect.
+ */
+const DESK = Object.freeze({ desk: true });
+function scopeKey() {
+    const store = context.getStore();
+    if (store) return store;
+    if (sandboxed()) current();      // throws, with the reason
+    return DESK;
+}
+
+/**
+ * How many generations one visitor may have in flight at once. The duet queue and the
+ * GPU behind it are shared by every visitor; without a per-visitor cap, one tab firing
+ * requests in a loop starves everyone else. Unlimited on a desk, where there is one person.
+ */
+const inFlight = new WeakMap();      // scope -> count
+
+function takeSlot() {
+    if (!sandboxed()) return () => {};
+    const scope = scopeKey();
+    const limit = num('AIRLOCK_SANDBOX_CONCURRENT', 2);
+    const n = inFlight.get(scope) || 0;
+    if (n >= limit) return null;
+    inFlight.set(scope, n + 1);
+    let released = false;
+    return () => {
+        if (released) return;
+        released = true;
+        inFlight.set(scope, Math.max(0, (inFlight.get(scope) || 1) - 1));
+    };
+}
+
+/**
+ * The demo's total remote spend, per UTC day, kept in the operator index — not in any
+ * visitor's database, and not in memory, so a restart or a crash loop does not refill it.
+ * A per-process counter had exactly that gap, which matters most on the one kind of
+ * instance a stranger can reach.
+ */
+const today = () => new Date().toISOString().slice(0, 10);
+function ledger() {
+    const db = index();
+    db.exec('CREATE TABLE IF NOT EXISTS ledger (day TEXT PRIMARY KEY, calls INTEGER NOT NULL)');
+    return {
+        calls: () => db.prepare('SELECT calls FROM ledger WHERE day = ?').get(today())?.calls || 0,
+        add: () => db.prepare(`INSERT INTO ledger (day, calls) VALUES (?, 1)
+                               ON CONFLICT(day) DO UPDATE SET calls = calls + 1`).run(today())
+    };
+}
+
 /** For the boot log. */
 function describe() {
     const { dir, ttlMs, max } = settings();
@@ -326,6 +384,7 @@ function describe() {
 module.exports = {
     openStore, primaryStore, current, run, bind, routed, sandboxed,
     middleware, sweep, startSweeper, destroy, describe,
+    inContext, scopeKey, takeSlot, ledger,
     COOKIE,
     _open: open, _index: index                         // tests
 };

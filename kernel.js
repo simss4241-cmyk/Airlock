@@ -52,9 +52,23 @@
 
 const crypto = require('crypto');
 const providers = require('./providers');
+const sandbox = require('./sandbox');
 
-/** hash -> { by: 'gate' | 'origin' | 'operator', at, gateModel } */
-const released = new Map();
+/**
+ * What has been ruled on: hash -> { by: 'gate' | 'origin' | 'operator', at, gateModel }.
+ *
+ * One record per visitor, not one per process. Hosted, a shared record would let a
+ * visitor learn something about another: a message that crosses with no gate delay is one
+ * somebody has already sent. That is a small leak, and this is the one product that
+ * should not have it. On a desk there is one scope and nothing changes.
+ */
+const memories = new WeakMap();      // scope -> Map
+function released() {
+    const scope = sandbox.scopeKey();
+    let memory = memories.get(scope);
+    if (!memory) memories.set(scope, memory = new Map());
+    return memory;
+}
 
 /** Bound the memory a long-running process spends remembering rulings. */
 const MAX_REMEMBERED = 50_000;
@@ -82,12 +96,12 @@ function unitHash(m) {
 }
 
 function remember(hash, by, gateModel = null) {
-    if (released.size >= MAX_REMEMBERED) {
+    if (released().size >= MAX_REMEMBERED) {
         // Oldest first. Forgetting is the safe direction: a forgotten message is simply
         // gated again the next time it would leave.
-        released.delete(released.keys().next().value);
+        released().delete(released().keys().next().value);
     }
-    released.set(hash, { by, at: Date.now(), gateModel });
+    released().set(hash, { by, at: Date.now(), gateModel });
 }
 
 /** What the gate is shown for one message. Tool calls and results say what they are. */
@@ -103,7 +117,10 @@ function describe(m) {
 }
 
 function issue(model, hashes, ruling) {
-    const token = Object.freeze({ model, hashes: new Set(hashes), ruling, at: Date.now() });
+    // Bound to the scope it was issued in, as well as to the model and the words: a
+    // clearance ruled in one visitor's sandbox opens nothing in another's.
+    const token = Object.freeze({ model, hashes: new Set(hashes), ruling, at: Date.now(),
+                                  scope: sandbox.scopeKey() });
     issued.add(token);
     return token;
 }
@@ -126,7 +143,7 @@ async function clear({ model, messages = [], config = {} }) {
 
     const units = messages.map(m => ({ m, h: unitHash(m) }));
     const seen = new Set();
-    const fresh = units.filter(u => !released.has(u.h) && !seen.has(u.h) && seen.add(u.h));
+    const fresh = units.filter(u => !released().has(u.h) && !seen.has(u.h) && seen.add(u.h));
 
     if (fresh.some(u => u.m.images?.length)) {
         return {
@@ -186,16 +203,19 @@ function acknowledge(messages = []) {
 /** Does this clearance cover exactly these messages, going to this model? */
 function covers(token, model, messages = []) {
     if (!token || !issued.has(token) || token.model !== model) return false;
+    if (token.scope !== sandbox.scopeKey()) return false;
     return messages.every(m => {
         const h = unitHash(m);
-        return token.hashes.has(h) || released.has(h);
+        return token.hashes.has(h) || released().has(h);
     });
 }
 
 /** For egress.js: was this token issued here, for this destination? */
-const isIssuedFor = (token, model) => Boolean(token) && issued.has(token) && token.model === model;
+const isIssuedFor = (token, model) => Boolean(token) && issued.has(token) && token.model === model
+    && token.scope === sandbox.scopeKey();
 
 module.exports = {
     clear, override, acknowledge, covers, isIssuedFor, unitHash,
-    _released: released     // tests reach in to simulate a restart
+    // Tests reach in to simulate a restart: the CURRENT scope's record.
+    get _released() { return released(); }
 };
