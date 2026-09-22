@@ -374,6 +374,12 @@ function ledger() {
     };
 }
 
+/** What the page is told about the visitor's sandbox, so its banner can say it plainly. */
+function summary() {
+    if (!sandboxed()) return null;
+    return { ttlHours: Math.round(settings().ttlMs / 3_600_000) };
+}
+
 /** For the boot log. */
 function describe() {
     const { dir, ttlMs, max } = settings();
@@ -384,7 +390,7 @@ function describe() {
 module.exports = {
     openStore, primaryStore, current, run, bind, routed, sandboxed,
     middleware, sweep, startSweeper, destroy, describe,
-    inContext, scopeKey, takeSlot, ledger,
+    inContext, scopeKey, takeSlot, ledger, summary,
     COOKIE,
     _open: open, _index: index                         // tests
 };

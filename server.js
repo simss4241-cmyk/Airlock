@@ -448,6 +448,7 @@ app.get('/api/health', async (req, res) => {
             remoteTier: remote.length > 0,
             seats: liveSeats(),
             demo: Boolean(process.env.AIRLOCK_DEMO),
+            sandbox: sandbox.sandboxed() ? { ...sandbox.summary(), remote: auth.remoteSpend() } : null,
             // Any model positively on this side of the boundary — not one model by name.
             // This used to test for muse-glimmer, inherited from Glimmer, so nearly every
             // desk showed "Local model not pulled" beside a working local model. It
@@ -466,6 +467,7 @@ app.get('/api/health', async (req, res) => {
             remoteTier: remote.length > 0,
             seats: liveSeats(),
             demo: Boolean(process.env.AIRLOCK_DEMO),
+            sandbox: sandbox.sandboxed() ? { ...sandbox.summary(), remote: auth.remoteSpend() } : null,
             localModelInstalled: false
         });
     }

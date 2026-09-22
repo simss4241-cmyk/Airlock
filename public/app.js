@@ -112,6 +112,58 @@ function residencyNote(m) {
 }
 
 /**
+ * The banner that says what kind of instance this is. Never dismissible.
+ *
+ * Two different truths, and the banner must not tell the wrong one:
+ *   - AIRLOCK_DEMO alone: a SHARED instance. Everything typed is visible to other
+ *     visitors, so the banner says so. (The markup in index.html.)
+ *   - Sandboxes on: the opposite. Each visitor's desk is private to their browser — and
+ *     "shared demo, visible to others" would now be a false warning, which is still a
+ *     wrong banner. What IS true, and worth saying: it lives on someone else's server,
+ *     it expires, a cleared cookie loses it for good, and crossings are still crossings.
+ */
+/**
+ * Where "local" is, in words a reader will not misread. Shared with duet.js.
+ *
+ * On a desk the local tier is the reader's own machine. Hosted, it is the SERVER — the
+ * invariant is the same (a local model never sends anything on), but "stays on this
+ * machine" read on a judge's laptop is a claim about the laptop, and it is false there.
+ * Every visible statement about where a local model runs reads this.
+ */
+let hostedView = false;
+const here = () => (hostedView ? 'this server' : 'this machine');
+
+function paintNotice(h) {
+    const hosted = Boolean(h.sandbox || h.demo);
+    // The idle screen is drawn before the first health check answers, so it would keep
+    // saying "on your machine" on a hosted page. Redraw once when the answer changes it —
+    // not on every poll.
+    if (hosted !== hostedView) { hostedView = hosted; render(); }
+    const node = el.demoNotice;
+    if (!node) return;
+    if (node.dataset.shared === undefined) node.dataset.shared = node.innerHTML;
+
+    if (h.sandbox) {
+        const days = Math.round((h.sandbox.ttlHours || 0) / 24);
+        const idle = days >= 1 ? `${days} day${days === 1 ? '' : 's'}` : `${h.sandbox.ttlHours} hours`;
+        const r = h.sandbox.remote || {};
+        const left = r.budget ? ` You have <b>${Math.max(0, r.budget - (r.used || 0))}</b> of `
+            + `${r.budget} remote calls left.` : '';
+        node.innerHTML = '<b>Your private sandbox.</b> Only this browser can see what you do '
+            + `here. It lives on this server, and is deleted after ${escapeHtml(idle)} idle — `
+            + 'clearing your cookies loses it for good, because there is no account to '
+            + 'recover it through. Anything sent to a remote model is still ruled on by the '
+            + `local gate first, and logged in your sandbox.${left} `
+            + 'To keep everything, run Airlock on your own machine.';
+        node.hidden = false;
+        return;
+    }
+
+    node.innerHTML = node.dataset.shared;
+    node.hidden = !h.demo;
+}
+
+/**
  * The picker's groups. Shared with duet.js so the two can never disagree about which
  * side of the boundary a model is on.
  *
@@ -123,7 +175,7 @@ function residencyNote(m) {
  */
 function groupModels(models) {
     return [
-        ['Local — stays on this machine', models.filter(m => m.tier === 'local')],
+        [`Local — stays on ${here()}`, models.filter(m => m.tier === 'local')],
         ['Oversight — Nemotron, across the boundary',
             models.filter(m => m.tier === 'remote' && !m.via && m.family === 'nemotron')],
         ['Oversight — other remote models',
@@ -273,8 +325,11 @@ function render() {
                </div>`
             : `<div class="empty">
                    <h2>Airlock is idle</h2>
-                   <p>Answering locally, on your machine. Nothing leaves the desk unless
-                   you send it across the boundary.<br>
+                   <p>${hostedView
+                       ? 'Answering locally, on this server, with its own model rather than a provider’s. '
+                         + 'Nothing is sent to a remote model unless you send it across the boundary.'
+                       : 'Answering locally, on your machine. Nothing leaves the desk unless you '
+                         + 'send it across the boundary.'}<br>
                    Ask something, or drop an image in — the local model sees.</p>
                    <p class="stats">Pick a thread on the left to save this as packets.</p>
                </div>`;
@@ -524,7 +579,7 @@ async function refreshHealth() {
         modelTier = Object.fromEntries(h.models.map(m => [m.name, m.tier || 'unknown']));
 
         // A shared instance says so, every load. There is no dismiss control.
-        if (el.demoNotice) el.demoNotice.hidden = !h.demo;
+        paintNotice(h);
         paintSeats();
 
         // Grouped by tier, because which side of the boundary a model sits on is the
@@ -550,7 +605,7 @@ async function refreshHealth() {
             // every crossing is refused. Say what to do about it, specifically.
             el.dot.className = 'dot warn';
             el.statusText.textContent = 'No local model';
-            el.statusText.title = 'Ollama is running but has no model installed on this machine, so '
+            el.statusText.title = `Ollama is running but has no model installed on ${here()}, so `
                 + 'there is nothing to answer locally and nothing to run the gate — every crossing '
                 + 'will be refused. Try: ollama pull nemotron-3-nano:4b (2.8 GB).';
         }
@@ -1349,7 +1404,7 @@ function provenanceOf(m, packetId) {
         // Stated outright, because it is the one fact a reader cannot recover downstream.
         bits.push(m.tier === 'remote' ? 'ran off-machine'
             : m.tier === 'unknown' ? 'ran on a model Airlock could not place — logged as a crossing'
-            : 'ran on local hardware');
+            : hostedView ? "ran on this server's own model" : 'ran on local hardware');
     }
 
     if (m.origin && m.origin !== activeThread?.title) bits.push(`born in ${m.origin}`);

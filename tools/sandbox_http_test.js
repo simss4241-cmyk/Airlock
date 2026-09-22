@@ -130,6 +130,11 @@ async function isolation() {
         ok((duet.body?.participants || []).length === 2,
            "B's seeded thread has its participants seated, the way a desk's is at boot");
 
+        // The banner is only as honest as what the page is told.
+        const h = await B.api('GET', '/api/health');
+        ok(h.body?.sandbox?.ttlHours === 168 && h.body.sandbox.remote?.budget === 40 && h.body.sandbox.remote.used === 0,
+           'the page is told it is a sandbox, when it expires, and what remote allowance is left', JSON.stringify(h.body?.sandbox));
+
         const stats = await B.api('GET', '/api/stats');
         ok(stats.status === 200 && !('dbPath' in (stats.body || {})), "/api/stats does not tell a visitor the server's file paths");
 

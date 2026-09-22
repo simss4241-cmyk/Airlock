@@ -432,7 +432,7 @@ function paintPaneTier(participantId) {
         : remote
         ? 'Airlock cannot place this model on either side of the boundary, so it is '
           + 'treated as a crossing: the local gate rules first, and the crossing is logged.'
-        : 'This participant runs on this machine. Nothing sent here leaves it.';
+        : `This participant runs on ${here()}. Nothing sent here goes to a remote model.`;
 
     pane.nodes.node.classList.toggle('is-remote', remote);
 }

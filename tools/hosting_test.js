@@ -154,6 +154,8 @@ async function httpTests() {
         threadId = (await desk.api('POST', '/api/threads', { folderId: tree.body[0].id, title: 'carried' })).body.id;
         const set = await desk.api('POST', '/api/workspace', { threadId, root: outside });
         ok(set.status === 200, 'on a desk, any folder can be set as a workspace', JSON.stringify(set.body));
+        const h = await desk.api('GET', '/api/health');
+        ok(h.body && h.body.sandbox === null, 'and a desk is not told it is a sandbox, so it shows no banner');
     } finally { await desk.stop(); }
 
     // ...and the same database is then served hosted, with an allowlist.

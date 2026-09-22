@@ -53,12 +53,12 @@ what leaves it. This table is the honest version — clone it and check.
 | One door: nothing reaches the network without a clearance the kernel issued | working, 34 assertions |
 | Tool results a remote model reads are gated, and recorded as crossed | working, 12 assertions end to end |
 | Redaction — crossing a brief with the sensitive parts stripped | not built |
-| Hosted: workspaces limited to an allowlist, and OFF if the allowlist is forgotten | working, 26 assertions |
-| Per-visitor sandboxes: each visitor's threads, packets and duets are private | working, 62 assertions |
+| Hosted: workspaces limited to an allowlist, and OFF if the allowlist is forgotten | working, 27 assertions |
+| Per-visitor sandboxes: each visitor's threads, packets and duets are private | working, 63 assertions |
 | Per-visitor settings, remote budgets, gate memory and generation slots; a daily cap that survives restarts | working |
-| Hosted demo build | not built |
+| Hosted deployment on Nebius AI Cloud, with the gate beside the app | not built |
 
-**509 assertions across fourteen suites.** Run them:
+**511 assertions across fourteen suites.** Run them:
 
 ```
 npm start                          # in one terminal
@@ -437,66 +437,121 @@ still make sense a month later.
 ## Hosting it
 
 Airlock was built as a desktop app: one person, one machine, no login. Hosting
-inverts every one of those assumptions, so two environment variables exist and
-both are **unset by default**.
+inverts every one of those assumptions, so everything below is **unset by
+default** and a desk never sees any of it.
 
-| Variable | Unset (local) | Set (hosted) |
-|---|---|---|
-| `AIRLOCK_TOKEN` | every route open | `/api/*` requires the token, as an `X-Airlock-Token` header or an `airlock_token` cookie |
-| `AIRLOCK_REMOTE_BUDGET` | remote calls uncapped | that many remote calls per process, then the local tier only |
+For a public demo, this is the configuration that is actually safe to hand to
+strangers:
+
+```
+AIRLOCK_SANDBOXES=1                     # one private sandbox per visitor
+AIRLOCK_REMOTE_BUDGET=500               # remote calls per UTC day, for the whole demo
+AIRLOCK_SANDBOX_REMOTE_BUDGET=40        # and per visitor
+AIRLOCK_WORKSPACE_ROOTS=/srv/airlock/samples   # the only folders a visitor may open
+```
+
+### One sandbox per visitor
+
+With `AIRLOCK_SANDBOXES=1`, a first visit gets a random, unguessable id in an
+HttpOnly cookie and a private SQLite file of its own, seeded like a fresh install.
+There is no login and no personal data: a judge clicks the link and has a desk
+nobody else can see. Every store call is routed to the visitor whose request made
+it (`sandbox.js`), so isolation is enforced where data is touched rather than at
+each of the ~70 call sites — and in sandbox mode a store call with no visitor in
+context **throws** rather than landing in someone's database.
+
+Per visitor: threads, packets, duets and the audit trail; settings (model,
+sampling, thinking, system prompt — not context size, keep-alive or the queue
+limit, which affect the host and so everyone on it); the remote allowance; the
+kernel's record of what it has ruled on; and a cap on generations in flight, since
+the GPU and the queue behind it are shared.
+
+The page says what this is, on every load, with no dismiss control:
+
+> **Your private sandbox.** Only this browser can see what you do here. It lives on
+> this server, and is deleted after 7 days idle — clearing your cookies loses it for
+> good, because there is no account to recover it through. …
+
+and says *this server* rather than *your machine* everywhere the desk would say
+where a local model runs, because read on a judge's laptop that would be false.
+
+⚠ **A sandbox is a try-it, not the product.** The product is a desk you install,
+which keeps everything, indefinitely, on your own machine. A hosted sandbox expires
+after a week idle and belongs to whichever browser holds the cookie. That is the
+right trade for a public link and the wrong one for your actual notes.
+
+Bounds, all configurable: a cap on live sandboxes (answered *"this demo is full"*),
+new sandboxes per address per hour, and idle expiry. Addresses are counted in
+memory and never written down. `tools/sandbox_test.js` and
+`tools/sandbox_http_test.js` hold all of this, including a planted id, a cookie
+shaped like a path, and three visitors racing through the shared queue.
+
+### Remote spend
+
+Each crossing spends real credits, so it has to fit two limits when sandboxed:
+the visitor's own allowance, and the demo's daily total. The daily total is kept on
+disk, so a restart or a crash loop does not refill it. Without sandboxes,
+`AIRLOCK_REMOTE_BUDGET` is a per-process count, as it was — which is fine on a desk
+and the reason it is not the setting to rely on in front of strangers.
+
+### Workspaces
+
+On a desk a workspace can be any folder: it is your machine. Hosted, "any absolute
+folder that exists" means a visitor pointing a workspace at `/` and reading every
+`.json`, `.yml` and `.log` on the server. So `AIRLOCK_WORKSPACE_ROOTS` limits roots
+to an allowlist — compared by real path, so neither a junction planted inside an
+allowed folder nor a sibling whose name merely starts the same gets out — and if
+the instance is hosted and nobody set it, workspaces are **off** rather than open.
+The native folder picker is a Windows dialog on the server's own desktop, so it is
+not offered to visitors at all; they get the allowed folders instead.
+
+### Token and banner, for a shared instance
+
+Without sandboxes, `AIRLOCK_TOKEN` answers "may you use this instance" — as an
+`X-Airlock-Token` header or an `airlock_token` cookie — and **everyone holding it
+sees the same packets**. That is a shared desk, not multi-tenancy, and
+`AIRLOCK_DEMO=1` puts up a permanent banner saying anything typed there is visible
+to other visitors. With sandboxes on, that banner is replaced by the one above,
+because the shared warning would then be false.
 
 Conditional rather than always-on, deliberately. Auth that cannot be turned off
 would make every local user store a credential to talk to their own machine, and
-the reliable outcome of that is a token committed to a repository.
+the reliable outcome of that is a token committed to a repository. Static files
+stay open either way — the page has to load in order to ask for a token — and a
+`?t=<token>` link is claimed into `localStorage` and stripped from the address bar,
+so the token does not live in browser history.
 
-The server says which posture it is in at boot, because an unauthenticated
-hosted instance is a mistake worth shouting about:
+The server states its posture at boot, because a hosted instance set up wrong is a
+mistake worth shouting about:
 
 ```
+  sandboxes -> one per visitor in /srv/airlock/sandboxes, 0 live, removed after 168 h idle (max 500).
   auth      -> OPEN. Correct for localhost; set AIRLOCK_TOKEN before hosting.
-  remote    -> uncapped. Set AIRLOCK_REMOTE_BUDGET before hosting.
+  remote    -> 40 call(s) per visitor; 500 per day in total, surviving restarts
+  workspace -> limited to /srv/airlock/samples
 ```
 
-Static files stay open even when the token is set: the page has to load in order
-to ask for one. It ships no data of its own — everything comes from `/api`. A
-`?t=<token>` query parameter is claimed into `localStorage` and then stripped
-from the address bar, so a link can be handed out once without the token living
-in browser history.
+### The local tier on a host
 
-### ⚠ A shared token is not multi-tenancy
-
-`AIRLOCK_TOKEN` answers "may you use this instance", not "who are you".
-**Everyone holding it sees the same packets.** That is honest for a demo and it
-is not per-user isolation — the store is a single SQLite file with no user
-dimension, and giving it one is a real piece of work rather than a flag.
-
-It also means **the model choice is shared**. The current model lives in the
-server's config rather than in each browser, so one visitor switching tiers
-switches it for everyone. That is the right behaviour for a desktop app with two
-windows open and the wrong behaviour for a shared demo; it is the same missing
-per-visitor dimension, not a separate bug.
-
-Which is why `AIRLOCK_DEMO=1` exists. It shows a permanent banner saying the
-instance is shared and anything typed into it is visible to other visitors.
-There is no dismiss control, deliberately: an application about knowing where
-your data goes does not get to let people hide the notice explaining that this
-particular copy is shared. Set it on any instance more than one person can
-reach.
-
-Two more things a hosted build does not inherit from the desktop one:
-
-- **Per-thread workspaces are Windows-only.** The folder picker shells out to
-  PowerShell and WinForms, so file tools do not exist on a Linux host.
-- **The local tier needs a local model.** A hosted instance has no Ollama unless
-  one is deployed beside it, so "local" there means a small model on the same
-  host rather than on the viewer's machine.
+A hosted instance has no Ollama unless one is deployed beside it, and "local" there
+means a model on the same host — inside the deployment's trust boundary — rather
+than on the viewer's machine. The gate is the same local model, so it has to run
+there too: on this desk that is `nemotron-3-nano:4b`, which measured 1.7 s per ruling
+on CPU alone, so the host does not need a GPU for the gate.
 
 ## Layout
 
 | File | Role |
 |---|---|
 | `server.js` | Express static host + streaming Ollama proxy, `/api/health`, `/api/config`, packet routes |
-| `db.js` | The packet store — schema, provenance log, move/fork/nest/review, search |
+| `db.js` | The packet store — schema, provenance log, move/fork/nest/review, search. One database per `createCore` |
+| `sandbox.js` | Which store a call belongs to: the desk's one database, or the visitor's sandbox; the sandbox lifecycle |
+| `kernel.js` | Whether content may leave: per-turn clearances bound to the exact words and destination |
+| `boundary.js` | The gate — a local model that rules on a crossing, and fails closed |
+| `providers/registry.js` | Which side of the boundary each model is on, read from the providers' own catalogues |
+| `providers/egress.js` | The only file allowed to reach the network; refuses content without a clearance |
+| `files.js` | Read-only workspace access, containment, and which folders a root may be |
+| `duet-store.js` · `duet-runner.js` · `duet-context.js` | Two participants over one conversation — see [docs/duet.md](docs/duet.md) |
 | `public/index.html` · `app.js` · `styles.css` | Frontend — no dependencies, no CDN, works offline |
 | `public/manifest.webmanifest` | PWA manifest; what makes the taskbar install possible |
 | `tools/focus_airlock.ps1` | Finds and raises an existing Airlock window; exit code says which |
@@ -526,7 +581,8 @@ Launcher paths use `%~dp0` / self-resolving paths, so the folder can be moved.
 - **Write access or a shell.** File tools are read-only on purpose. Adding either should
   stay a deliberate decision rather than a convenience.
 - **Tool results as packets.** Tool calls render as cards in the transcript but aren't stored
-  in the packet store, so briefs stay readable.
+  in the packet store, so briefs stay readable. When one crosses to a remote model it is
+  recorded as a crossing, by name, size and content hash — just not kept as a packet.
 
 ## Further reading
 
