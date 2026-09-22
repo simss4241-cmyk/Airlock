@@ -11,6 +11,7 @@ const files = require('./files');
 const providers = require('./providers');
 const { runGate } = require('./boundary');
 const kernel = require('./kernel');
+const sandbox = require('./sandbox');
 const auth = require('./auth');
 const duet = require('./duet-store');
 const { generate: generateDuet, queueState } = require('./duet-runner');
@@ -188,6 +189,18 @@ app.get('/api/whoami', (req, res) => res.json({ app: 'airlock', port: PORT }));
 
 app.use('/api', auth.guard);
 
+// Hosted with AIRLOCK_SANDBOXES=1: every visitor gets a private database, and everything
+// below runs inside it — each store call is routed to the visitor whose request made it.
+// On a desk this does nothing. What a desk does once at boot, a sandbox does once when it
+// is opened: settle stranded duet replies, and seat participants on its threads.
+app.use('/api', sandbox.middleware({
+    exempt: ['/whoami'],
+    onOpen: async () => {
+        duet.resetStaleGenerations();
+        await seatExistingThreads();
+    }
+}));
+
 // Lets the page discover whether it needs a token before it asks for anything
 // else, so an unauthorised visitor sees a prompt rather than a wall of 401s.
 app.get('/api/access', (req, res) => res.json({
@@ -233,7 +246,9 @@ async function loadConfig() {
     // than blanking it — an empty hook is still a hook. db.migrateWorkspaceRoot keeps its
     // own marker, so even a config restored from before this change won't re-run it.
     if ('workspaceRoot' in config) {
-        if (config.workspaceRoot) store.migrateWorkspaceRoot(path.resolve(config.workspaceRoot));
+        // A desk's own migration. Hosted there is no single database to migrate, and a
+        // global root is exactly what a visitor must never inherit.
+        if (config.workspaceRoot && !sandbox.sandboxed()) store.migrateWorkspaceRoot(path.resolve(config.workspaceRoot));
         delete config.workspaceRoot;
         await saveConfig();
     }
@@ -1009,7 +1024,13 @@ const ok = handler => (req, res) => {
 const id = req => Number(req.params.id);
 
 app.get('/api/tree', ok(() => store.getTree()));
-app.get('/api/stats', ok(() => store.stats()));
+app.get('/api/stats', ok(() => {
+    // The database's path is the server's business. Harmless on a desk; hosted it tells a
+    // visitor where the host keeps its files.
+    const s = store.stats();
+    if (sandbox.sandboxed()) delete s.dbPath;
+    return s;
+}));
 app.get('/api/travelled', ok(req => store.getTravelled(req.query.limit)));
 app.get('/api/search', ok(req => store.search(req.query)));
 
@@ -1310,7 +1331,9 @@ loadConfig().then(async () => {
     // A duet reply left mid-stream by a crash or a restart is neither finished nor
     // abandoned, and until it is settled it would sit in the UI as a permanently
     // thinking pane.
-    const stranded = duet.resetStaleGenerations();
+    // Hosted there is no single database at boot — each sandbox does this when it opens.
+    const hosted = sandbox.sandboxed();
+    const stranded = hosted ? 0 : duet.resetStaleGenerations();
 
     // Resolve which models are on which side before serving anything. Left cold, every
     // model reads 'unknown' until the first catalogue fetch, and 'unknown' is gated — so
@@ -1322,13 +1345,15 @@ loadConfig().then(async () => {
             return 0;
         });
 
-    const seated = await seatExistingThreads().catch(err => {
+    const seated = hosted ? 0 : await seatExistingThreads().catch(err => {
         console.error('could not seat existing threads:', err.message);
         return 0;
     });
 
+    if (hosted) sandbox.startSweeper();
+
     app.listen(PORT, () => {
-        const s = store.stats();
+        const s = hosted ? null : store.stats();
         console.log('');
         console.log(`  Airlock is running -> http://localhost:${PORT}`);
         if (stranded) console.log(`  Settled ${stranded} duet generation(s) stranded by the last shutdown`);
@@ -1337,7 +1362,8 @@ loadConfig().then(async () => {
         console.log(config.model
             ? `  Model: ${config.model}   ctx: ${config.num_ctx}`
             : '  Model: none reachable. Pull an Ollama model, or set NEBIUS_API_KEY.');
-        console.log(`  Store: ${s.packets} packets in ${s.threads} threads / ${s.folders} trays`);
+        console.log(hosted ? sandbox.describe()
+            : `  Store: ${s.packets} packets in ${s.threads} threads / ${s.folders} trays`);
         console.log(auth.describe(PORT));
         const ws = files.workspacePolicy();
         console.log(ws.mode === 'any'

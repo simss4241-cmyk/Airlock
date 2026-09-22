@@ -84,7 +84,8 @@ async function resolveInside(root, rel = '.') {
  *   'any'        AIRLOCK_WORKSPACE_ROOTS unset, and nothing says this is hosted.
  *   'allowlist'  AIRLOCK_WORKSPACE_ROOTS names folders (path.delimiter separated: ';' on
  *                Windows, ':' elsewhere). A root must be one of them or inside one.
- *   'off'        Hosted — AIRLOCK_TOKEN or AIRLOCK_DEMO is set — with no allowlist.
+ *   'off'        Hosted — AIRLOCK_TOKEN, AIRLOCK_DEMO or AIRLOCK_SANDBOXES is set — with
+ *                no allowlist.
  *                Workspaces are refused outright rather than falling back to 'any'.
  *
  * ⚠ 'off' is the point. The failure this prevents is someone setting up a hosted
@@ -97,7 +98,8 @@ function workspacePolicy() {
     const roots = (process.env.AIRLOCK_WORKSPACE_ROOTS || '')
         .split(path.delimiter).map(r => r.trim()).filter(Boolean).map(r => path.resolve(r));
     if (roots.length) return { mode: 'allowlist', roots };
-    const hosted = Boolean((process.env.AIRLOCK_TOKEN || '').trim() || process.env.AIRLOCK_DEMO);
+    const hosted = Boolean((process.env.AIRLOCK_TOKEN || '').trim() || process.env.AIRLOCK_DEMO
+        || process.env.AIRLOCK_SANDBOXES === '1');
     return { mode: hosted ? 'off' : 'any', roots: [] };
 }
 

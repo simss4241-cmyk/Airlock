@@ -97,4 +97,235 @@ function routed(part, statics) {
     });
 }
 
-module.exports = { openStore, primaryStore, current, run, bind, routed, sandboxed };
+// ─────────────────────────── hosted: one sandbox per visitor ───────────────────────────
+//
+// On only with AIRLOCK_SANDBOXES=1. A first visit gets a random, unguessable id in an
+// HttpOnly cookie and a private database, seeded like a fresh install. No login and no
+// personal data: a judge clicks the link and has a desk of their own.
+//
+// ⚠ The id is the only key. Whoever holds the cookie holds the sandbox, and a lost cookie
+// is a lost sandbox — there is deliberately no account to recover it through. That is
+// the trade that keeps identities out of a product whose pitch is that nothing leaves.
+
+const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const COOKIE = 'airlock_sandbox';
+const ID = /^[a-f0-9]{32}$/;          // it becomes a filename, so nothing else is accepted
+const TOUCH_MS = 60_000;              // how often last_seen is written, at most
+
+const num = (name, fallback) => {
+    const v = Number(process.env[name]);
+    return Number.isFinite(v) && v > 0 ? v : fallback;
+};
+const settings = () => ({
+    dir: path.resolve(process.env.AIRLOCK_SANDBOX_DIR || path.join(__dirname, 'sandboxes')),
+    // Idle expiry. Seven days rather than one, because judging happens after the deadline
+    // and a judge who comes back the next day should find their work where they left it.
+    ttlMs: num('AIRLOCK_SANDBOX_TTL_MS', num('AIRLOCK_SANDBOX_TTL_HOURS', 168) * 3_600_000),
+    max: num('AIRLOCK_SANDBOX_MAX', 500),               // live sandboxes, in total
+    perIpHour: num('AIRLOCK_SANDBOX_PER_IP_HOUR', 20),   // new sandboxes per address per hour
+    openMax: num('AIRLOCK_SANDBOX_OPEN_MAX', 32),        // database handles kept open
+    sweepMs: num('AIRLOCK_SANDBOX_SWEEP_MS', 10 * 60_000)
+});
+
+const fileFor = id => path.join(settings().dir, `${id}.db`);
+
+// ── the index: which sandboxes exist, and when each was last used ──
+//
+// Kept in its own small database beside the sandboxes, never in any visitor's, and
+// holding no content — an id and two timestamps.
+
+let indexDb = null;
+function index() {
+    if (!indexDb) {
+        const { DatabaseSync } = require('node:sqlite');
+        fs.mkdirSync(settings().dir, { recursive: true });
+        indexDb = new DatabaseSync(path.join(settings().dir, '_index.db'));
+        indexDb.exec(`CREATE TABLE IF NOT EXISTS sandboxes (
+            id TEXT PRIMARY KEY, created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL)`);
+    }
+    return indexDb;
+}
+const indexed = id => index().prepare('SELECT * FROM sandboxes WHERE id = ?').get(id) || null;
+const liveCount = () => index().prepare('SELECT COUNT(*) AS c FROM sandboxes').get().c;
+
+// ── open handles: an LRU, and never closing one that a request is using ──
+//
+// refs counts requests in flight. A sandbox is only closed — for eviction or expiry — at
+// zero, because a duet reply streams for as long as its request stays open, and closing
+// the database under it would lose the reply.
+
+const open = new Map();     // id -> { store, refs, lastUsed, ready }
+
+async function acquire(id, onOpen) {
+    let entry = open.get(id);
+    if (!entry) {
+        const store = openStore(fileFor(id));
+        entry = { store, refs: 0, lastUsed: Date.now(), ready: null };
+        // Whatever a desk does once at boot, a sandbox does once when it is opened.
+        entry.ready = run(store, () => onOpen(store));
+        open.set(id, entry);
+        evict();
+    }
+    entry.refs++;
+    try { await entry.ready; } catch (err) { entry.refs--; throw err; }
+    return entry;
+}
+
+function evict() {
+    const { openMax } = settings();
+    if (open.size <= openMax) return;
+    const idle = [...open.entries()].filter(([, e]) => e.refs === 0)
+        .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+    for (const [id, e] of idle) {
+        if (open.size <= openMax) break;
+        try { e.store.db.close(); } catch { /* already closed */ }
+        open.delete(id);
+    }
+}
+
+/** Delete a sandbox outright: its database files and its index row. Not while in use. */
+function destroy(id) {
+    const entry = open.get(id);
+    if (entry && entry.refs > 0) return false;
+    if (entry) { try { entry.store.db.close(); } catch { /* closed */ } open.delete(id); }
+    for (const suffix of ['', '-wal', '-shm']) {
+        try { fs.rmSync(fileFor(id) + suffix, { force: true }); } catch { /* gone */ }
+    }
+    index().prepare('DELETE FROM sandboxes WHERE id = ?').run(id);
+    return true;
+}
+
+/** Remove every sandbox idle longer than the TTL. Returns how many went. */
+function sweep() {
+    const cutoff = Date.now() - settings().ttlMs;
+    const stale = index().prepare('SELECT id FROM sandboxes WHERE last_seen < ?').all(cutoff);
+    return stale.filter(({ id }) => destroy(id)).length;
+}
+
+let sweeper = null;
+function startSweeper() {
+    if (sweeper) return;
+    sweeper = setInterval(() => { try { sweep(); } catch (err) { console.error('sandbox sweep:', err.message); } },
+        settings().sweepMs);
+    sweeper.unref();
+}
+
+// ── admission: bounds on how fast, and how many, new sandboxes are made ──
+//
+// Addresses are counted in memory only and never written down. Behind a reverse proxy
+// every visitor shares the proxy's address, so the per-address limit would become one
+// global limit; AIRLOCK_TRUST_PROXY=1 reads the first X-Forwarded-For entry instead —
+// only safe when a proxy you run sets that header, since anyone can send one.
+
+const recent = new Map();   // address -> timestamps of sandboxes made in the last hour
+
+function addressOf(req) {
+    if (process.env.AIRLOCK_TRUST_PROXY === '1') {
+        const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+        if (forwarded) return forwarded;
+    }
+    return req.socket?.remoteAddress || 'unknown';
+}
+
+function admit(req) {
+    const { max, perIpHour } = settings();
+    if (liveCount() >= max) {
+        return { status: 503, error: 'This demo is full right now. Try again later — idle sandboxes are cleared regularly.' };
+    }
+    const ip = addressOf(req);
+    const hourAgo = Date.now() - 3_600_000;
+    const times = (recent.get(ip) || []).filter(t => t > hourAgo);
+    if (times.length >= perIpHour) {
+        return { status: 429, error: 'Too many new sandboxes from this address in the last hour.' };
+    }
+    times.push(Date.now());
+    recent.set(ip, times);
+    return null;
+}
+
+// ── the cookie ──
+
+function readCookie(req) {
+    const m = new RegExp(`(?:^|;\\s*)${COOKIE}=([^;]+)`).exec(req.headers.cookie || '');
+    const value = m ? decodeURIComponent(m[1]).trim() : '';
+    return ID.test(value) ? value : null;
+}
+
+function setCookie(req, res) {
+    return id => {
+        const secure = req.secure || String(req.headers['x-forwarded-proto'] || '') === 'https';
+        res.append('Set-Cookie', `${COOKIE}=${id}; Path=/; HttpOnly; SameSite=Lax; `
+            + `Max-Age=${Math.floor(settings().ttlMs / 1000)}${secure ? '; Secure' : ''}`);
+    };
+}
+
+/**
+ * Express middleware for /api: find this visitor's sandbox, or make one, and serve the
+ * rest of the request inside it.
+ *
+ * A cookie that is malformed, unknown or expired gets a FRESH id, never the one it
+ * offered: a sandbox is only ever reached through an id this server minted, so nobody
+ * can plant a cookie on someone else's browser and then read what they do in it.
+ *
+ * `exempt` paths are served without a sandbox — /api/whoami, which launchers and tests
+ * poll before anything else happens and which would otherwise mint one per probe.
+ */
+function middleware({ onOpen = async () => {}, exempt = [] } = {}) {
+    return async (req, res, next) => {
+        if (!sandboxed() || exempt.includes(req.path)) return next();
+        try {
+            const now = Date.now();
+            let id = readCookie(req);
+            let row = id ? indexed(id) : null;
+
+            if (row && now - row.last_seen > settings().ttlMs) {
+                destroy(id);
+                row = null;
+            }
+
+            if (!row) {
+                const refused = admit(req);
+                if (refused) return res.status(refused.status).json({ error: refused.error });
+                id = crypto.randomBytes(16).toString('hex');
+                index().prepare('INSERT INTO sandboxes (id, created_at, last_seen) VALUES (?, ?, ?)')
+                    .run(id, now, now);
+                setCookie(req, res)(id);
+            } else if (now - row.last_seen > TOUCH_MS) {
+                index().prepare('UPDATE sandboxes SET last_seen = ? WHERE id = ?').run(now, id);
+                setCookie(req, res)(id);   // sliding expiry
+            }
+
+            const entry = await acquire(id, onOpen);
+            let released = false;
+            const release = () => {
+                if (released) return;
+                released = true;
+                entry.refs--;
+                entry.lastUsed = Date.now();
+            };
+            res.on('finish', release);
+            res.on('close', release);
+
+            run(entry.store, next);
+        } catch (err) {
+            next(err);
+        }
+    };
+}
+
+/** For the boot log. */
+function describe() {
+    const { dir, ttlMs, max } = settings();
+    return `  sandboxes -> one per visitor in ${dir}, ${liveCount()} live, `
+        + `removed after ${Math.round(ttlMs / 3_600_000)} h idle (max ${max}).`;
+}
+
+module.exports = {
+    openStore, primaryStore, current, run, bind, routed, sandboxed,
+    middleware, sweep, startSweeper, destroy, describe,
+    COOKIE,
+    _open: open, _index: index                         // tests
+};

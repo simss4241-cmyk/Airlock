@@ -31,3 +31,6 @@ airlock-config.json
 
 # Python bytecode from tools/make_icons.py
 __pycache__/
+
+# Hosted visitors' private databases (AIRLOCK_SANDBOXES=1). Never committed.
+sandboxes/

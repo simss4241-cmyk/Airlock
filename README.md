@@ -54,10 +54,11 @@ what leaves it. This table is the honest version — clone it and check.
 | Tool results a remote model reads are gated, and recorded as crossed | working, 12 assertions end to end |
 | Redaction — crossing a brief with the sensitive parts stripped | not built |
 | Hosted: workspaces limited to an allowlist, and OFF if the allowlist is forgotten | working, 26 assertions |
-| Per-visitor isolation (a shared token is not multi-tenancy) | not built |
+| Per-visitor sandboxes: each visitor's threads, packets and duets are private | working, 39 assertions |
+| Per-visitor config, budgets and gate memory (still shared between sandboxes) | next |
 | Hosted demo build | not built |
 
-**447 assertions across twelve suites.** Run them:
+**486 assertions across fourteen suites.** Run them:
 
 ```
 npm start                          # in one terminal
@@ -73,6 +74,8 @@ node tools/clearance_test.js       # retired per-thread consent is removed from 
 node tools/kernel_test.js          # the kernel, both locks, one door
 node tools/kernel_http_test.js     # tool results crossing, end to end (fake remote)
 node tools/hosting_test.js         # what a hosted instance lets a visitor reach
+node tools/sandbox_test.js         # every store call routed to its visitor's database
+node tools/sandbox_http_test.js    # two visitors, two sandboxes, and the ways around it
 ```
 
 ⚠ `smoke_test`, `boundary_test` and `duet_test` test **whatever server is answering on
@@ -85,8 +88,8 @@ PORT=8126 AIRLOCK_DB=/tmp/airlock-verify.db npm start
 AIRLOCK_URL=http://localhost:8126 node tools/boundary_test.js
 ```
 
-`workspace_http_test.js`, `kernel_http_test.js` and `hosting_test.js` start their own
-servers and are not affected.
+`workspace_http_test.js`, `kernel_http_test.js`, `hosting_test.js` and
+`sandbox_http_test.js` start their own servers and are not affected.
 
 The remote suites **skip** rather than fail without a Nebius key, so the tests
 run on a clean clone with no credentials. With a key they *still* skip every call
