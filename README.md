@@ -53,10 +53,11 @@ what leaves it. This table is the honest version — clone it and check.
 | One door: nothing reaches the network without a clearance the kernel issued | working, 34 assertions |
 | Tool results a remote model reads are gated, and recorded as crossed | working, 12 assertions end to end |
 | Redaction — crossing a brief with the sensitive parts stripped | not built |
+| Hosted: workspaces limited to an allowlist, and OFF if the allowlist is forgotten | working, 26 assertions |
 | Per-visitor isolation (a shared token is not multi-tenancy) | not built |
 | Hosted demo build | not built |
 
-**421 assertions across eleven suites.** Run them:
+**447 assertions across twelve suites.** Run them:
 
 ```
 npm start                          # in one terminal
@@ -71,6 +72,7 @@ node tools/duet_test.js            # two panes, one conversation
 node tools/clearance_test.js       # retired per-thread consent is removed from old databases
 node tools/kernel_test.js          # the kernel, both locks, one door
 node tools/kernel_http_test.js     # tool results crossing, end to end (fake remote)
+node tools/hosting_test.js         # what a hosted instance lets a visitor reach
 ```
 
 ⚠ `smoke_test`, `boundary_test` and `duet_test` test **whatever server is answering on
@@ -83,8 +85,8 @@ PORT=8126 AIRLOCK_DB=/tmp/airlock-verify.db npm start
 AIRLOCK_URL=http://localhost:8126 node tools/boundary_test.js
 ```
 
-`workspace_http_test.js` and `kernel_http_test.js` start their own servers and are
-not affected.
+`workspace_http_test.js`, `kernel_http_test.js` and `hosting_test.js` start their own
+servers and are not affected.
 
 The remote suites **skip** rather than fail without a Nebius key, so the tests
 run on a clean clone with no credentials. With a key they *still* skip every call

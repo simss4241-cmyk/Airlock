@@ -70,6 +70,61 @@ async function resolveInside(root, rel = '.') {
     }
 }
 
+/**
+ * Which folders may become a workspace root at all.
+ *
+ * Containment above keeps a tool inside its root. This decides what a root may BE — and
+ * on a desk that is anything: it is your machine and your folders. On a hosted instance
+ * it cannot be. There, every visitor is someone else, and "any absolute folder that
+ * exists" means pointing a workspace at / and reading every .json, .yml, .conf and .log
+ * on the server — where service-account keys, Docker auth and application logs live.
+ * The extension allowlist happens to stop .env and SSH keys; it was never meant to be
+ * the thing standing between a stranger and the host's filesystem.
+ *
+ *   'any'        AIRLOCK_WORKSPACE_ROOTS unset, and nothing says this is hosted.
+ *   'allowlist'  AIRLOCK_WORKSPACE_ROOTS names folders (path.delimiter separated: ';' on
+ *                Windows, ':' elsewhere). A root must be one of them or inside one.
+ *   'off'        Hosted — AIRLOCK_TOKEN or AIRLOCK_DEMO is set — with no allowlist.
+ *                Workspaces are refused outright rather than falling back to 'any'.
+ *
+ * ⚠ 'off' is the point. The failure this prevents is someone setting up a hosted
+ * instance, forgetting one variable, and shipping a filesystem browser. Forgetting it
+ * now costs the workspace feature, not the host.
+ *
+ * Read at call time, not load time, so the policy is whatever the environment says now.
+ */
+function workspacePolicy() {
+    const roots = (process.env.AIRLOCK_WORKSPACE_ROOTS || '')
+        .split(path.delimiter).map(r => r.trim()).filter(Boolean).map(r => path.resolve(r));
+    if (roots.length) return { mode: 'allowlist', roots };
+    const hosted = Boolean((process.env.AIRLOCK_TOKEN || '').trim() || process.env.AIRLOCK_DEMO);
+    return { mode: hosted ? 'off' : 'any', roots: [] };
+}
+
+/**
+ * May `root` be a workspace? Throws with a reason the UI can show if not.
+ *
+ * Compared by real path, like resolveInside, so a junction or symlink cannot make a
+ * folder outside the allowlist look like one inside it.
+ */
+async function permitRoot(root) {
+    const policy = workspacePolicy();
+    if (policy.mode === 'any') return;
+    if (policy.mode === 'off') {
+        throw new Error('Workspaces are off on this instance: it is hosted, and no '
+            + 'AIRLOCK_WORKSPACE_ROOTS says which folders visitors may open.');
+    }
+
+    const real = await fs.realpath(root);
+    for (const allowed of policy.roots) {
+        const base = await fs.realpath(allowed).catch(() => null);
+        if (!base) continue;
+        const rel = path.relative(base, real);
+        if (!rel.startsWith('..') && !path.isAbsolute(rel)) return;
+    }
+    throw new Error(`Workspaces on this instance are limited to: ${policy.roots.join(', ')}`);
+}
+
 /** Path as the model should see it — relative to the root, forward slashes. */
 const display = (root, abs) => {
     const rel = path.relative(path.resolve(root), abs).replace(/\\/g, '/');
@@ -185,5 +240,6 @@ async function findFiles(root, query) {
 
 module.exports = {
     resolveInside, listDirectory, readTextFile, findFiles, isTextFile,
+    workspacePolicy, permitRoot,
     MAX_BYTES, TEXT_EXT, SKIP_DIRS
 };

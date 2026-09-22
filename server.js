@@ -426,8 +426,12 @@ app.post('/api/chat', async (req, res) => {
 
     // A root pointing at a folder that no longer exists is worse than no tools at all:
     // every call fails, and the model spends the whole round budget finding that out.
+    //
+    // And a root must still be PERMITTED when it is used, not just when it was chosen: a
+    // database carried onto a hosted box holds whatever roots were set on the desk.
     const rootUsable = workspaceRoot
         ? await fs.stat(workspaceRoot).then(s => s.isDirectory()).catch(() => false)
+            && await files.permitRoot(workspaceRoot).then(() => true, () => false)
         : false;
     const useTools = rootUsable && caps.includes('tools');
 
@@ -689,11 +693,17 @@ const workspaceState = async threadId => {
 
     const root = thread.workspace_root || null;
     const exists = root ? await fs.access(root).then(() => true).catch(() => false) : false;
+    const policy = files.workspacePolicy();
+    const permitted = root ? await files.permitRoot(root).then(() => true, () => false) : true;
     return {
         threadId: thread.id,
         threadTitle: thread.title,
         root,
         exists,
+        permitted,
+        // What a visitor may open, so the UI can offer it instead of a path to guess.
+        policy: policy.mode,
+        allowedRoots: policy.roots,
         tools: TOOLS.map(tool => tool.function.name)
     };
 };
@@ -729,6 +739,7 @@ app.post('/api/workspace', async (req, res) => {
         const resolved = path.resolve(typed);
         const stat = await fs.stat(resolved);
         if (!stat.isDirectory()) throw new Error('Not a directory.');
+        await files.permitRoot(resolved);          // the allowlist, on a hosted instance
         store.setThreadWorkspace(thread.id, resolved);
         res.json(await workspaceState(thread.id));
     } catch (err) {
@@ -749,6 +760,19 @@ app.post('/api/workspace', async (req, res) => {
  * nothing happened. A TopMost owner makes it come to the front.
  */
 app.get('/api/workspace/browse', async (req, res) => {
+    // A native folder dialog on the SERVER's desktop, starting in the server's home
+    // directory, holding the request open for up to three minutes. On a desk that is the
+    // user's own screen. Anywhere workspaces are restricted it is someone else's machine,
+    // so it is not offered at all — the allowed roots are listed instead.
+    const policy = files.workspacePolicy();
+    if (policy.mode !== 'any') {
+        return res.status(403).json({
+            error: policy.mode === 'off'
+                ? 'Workspaces are off on this instance.'
+                : 'The folder picker is not available here. Allowed workspaces: ' + policy.roots.join(', '),
+            allowedRoots: policy.roots
+        });
+    }
     const os = require('os');
     const { execFile } = require('child_process');
     const tmp = path.join(os.tmpdir(), `airlock-pick-${process.pid}-${Date.now()}.ps1`);
@@ -849,15 +873,16 @@ const fsRoute = handler => async (req, res) => {
     }
 };
 
-const requestWorkspace = req => {
+const requestWorkspace = async req => {
     const thread = store.getThread(Number(req.query.threadId));
     if (!thread) throw new Error('Pick a thread first.');
+    if (thread.workspace_root) await files.permitRoot(thread.workspace_root);
     return thread.workspace_root;
 };
 
-app.get('/api/fs/list', fsRoute(req => files.listDirectory(requestWorkspace(req), req.query.path || '.')));
-app.get('/api/fs/read', fsRoute(req => files.readTextFile(requestWorkspace(req), req.query.path)));
-app.get('/api/fs/find', fsRoute(req => files.findFiles(requestWorkspace(req), req.query.q)));
+app.get('/api/fs/list', fsRoute(async req => files.listDirectory(await requestWorkspace(req), req.query.path || '.')));
+app.get('/api/fs/read', fsRoute(async req => files.readTextFile(await requestWorkspace(req), req.query.path)));
+app.get('/api/fs/find', fsRoute(async req => files.findFiles(await requestWorkspace(req), req.query.q)));
 
 // ─────────────────────── Duet: two participants, one conversation ───────────────────────
 //
@@ -1314,6 +1339,12 @@ loadConfig().then(async () => {
             : '  Model: none reachable. Pull an Ollama model, or set NEBIUS_API_KEY.');
         console.log(`  Store: ${s.packets} packets in ${s.threads} threads / ${s.folders} trays`);
         console.log(auth.describe(PORT));
+        const ws = files.workspacePolicy();
+        console.log(ws.mode === 'any'
+            ? '  workspace -> any folder. Correct for a desk; set AIRLOCK_WORKSPACE_ROOTS before hosting.'
+            : ws.mode === 'off'
+            ? '  workspace -> OFF: hosted with no AIRLOCK_WORKSPACE_ROOTS, so visitors cannot open folders.'
+            : `  workspace -> limited to ${ws.roots.join(', ')}`);
         console.log('');
     });
 });
