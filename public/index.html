@@ -21,7 +21,7 @@
                  green on the inside half and amber on the outside. It is the boundary,
                  which is what this app is. The sparkle it replaced was Glimmer's, and
                  said nothing about a pressure door. -->
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="3"
+            <svg class="brand-seal" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke-width="3"
                  stroke-linecap="butt" aria-hidden="true">
                 <path d="M11.3 4.03 A 8 8 0 0 0 11.3 19.97" stroke="#76b900"/>
                 <path d="M12.7 4.03 A 8 8 0 0 1 12.7 19.97" stroke="#ffb020"/>
@@ -127,7 +127,29 @@
                 </span>
                 <button class="icon-btn sm" id="airlockToggle" title="Collapse the chamber">▾</button>
             </header>
-            <div class="airlock-log" id="airlockLog"></div>
+            <!-- The bay holds the log and, over it, a pair of pressure doors. When a new
+                 message enters the chamber the doors close, the chamber cycles, and they
+                 open on the new row — green leaf on the local side, amber on the side that
+                 faces the boundary. A crossed row enters from the amber side. -->
+            <div class="airlock-bay">
+                <div class="airlock-log" id="airlockLog"></div>
+                <div class="airlock-doors" aria-hidden="true">
+                    <div class="door left"></div>
+                    <div class="door right"></div>
+                    <div class="door-seal">
+                        <svg viewBox="0 0 24 24" width="30" height="30" fill="none"
+                             stroke-width="3" stroke-linecap="butt">
+                            <path d="M11.3 4.03 A 8 8 0 0 0 11.3 19.97" stroke="#76b900"/>
+                            <path d="M12.7 4.03 A 8 8 0 0 1 12.7 19.97" stroke="#ffb020"/>
+                            <circle cx="12" cy="12" r="1.7" fill="#e6e9ed" stroke="none"/>
+                        </svg>
+                        <span class="door-label">
+                            <b id="doorState">cycling</b>
+                            <span id="doorRoute"></span>
+                        </span>
+                    </div>
+                </div>
+            </div>
         </section>
     </section>
 

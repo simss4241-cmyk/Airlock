@@ -316,14 +316,28 @@ function badges(m) {
     return out.length ? `<div class="badges">${out.join('')}</div>` : '';
 }
 
+/**
+ * The hatch seal, large, for an empty desk. Same geometry as the brand mark — the seam is the
+ * boundary — with a slow outer ring so an idle screen looks idle rather than broken.
+ */
+const HATCH_EMBLEM = `<div class="emblem" aria-hidden="true">
+        <svg viewBox="0 0 120 120" fill="none">
+            <circle class="emblem-orbit" cx="60" cy="60" r="56" stroke-width="1"/>
+            <circle class="emblem-ticks" cx="60" cy="60" r="48" stroke-width="4"/>
+            <path d="M56.5 20.2 A 40 40 0 0 0 56.5 99.8" stroke="#76b900" stroke-width="12"/>
+            <path d="M63.5 20.2 A 40 40 0 0 1 63.5 99.8" stroke="#ffb020" stroke-width="12"/>
+            <circle cx="60" cy="60" r="8" fill="#e6e9ed"/>
+        </svg>
+    </div>`;
+
 function render() {
     if (!messages.length) {
         el.messages.innerHTML = activeThread
-            ? `<div class="empty">
+            ? `<div class="empty">${HATCH_EMBLEM}
                    <h2>${escapeHtml(activeThread.title)} is empty</h2>
                    <p>Anything you send here is stored as a packet in this thread.</p>
                </div>`
-            : `<div class="empty">
+            : `<div class="empty">${HATCH_EMBLEM}
                    <h2>Airlock is idle</h2>
                    <p>${hostedView
                        ? 'Answering locally, on this server, with its own model rather than a provider’s. '

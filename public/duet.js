@@ -246,6 +246,7 @@ function paintAirlock() {
 
     const messages = state.messages;
     const crossed = messages.filter(m => crossedTier(m.tier)).length;
+    const fresh = noteArrivals(messages);
 
     duetEl.railSub.textContent = messages.length
         ? `one conversation · ${messages.length} message${messages.length === 1 ? '' : 's'}`
@@ -262,6 +263,191 @@ function paintAirlock() {
                is told, or says, lands here — the separate composers are not private.</div>`;
 
     if (atBottom) duetEl.railLog.scrollTop = duetEl.railLog.scrollHeight;
+    if (fresh.length) cycleDoors(fresh[fresh.length - 1]);
+}
+
+// ─────────────────────────── the doors ───────────────────────────
+
+/**
+ * Which rows are new since the chamber last looked.
+ *
+ * The log is rebuilt from innerHTML on every token, so "this row is entering" cannot live on
+ * the DOM node — the node is gone a frame later. It lives here instead, as the time each id
+ * was first seen, and airRow() replays the entrance from the right point in it with a
+ * negative animation-delay. A thread that is merely OPENED is seeded silently: its history
+ * was already in the chamber, and a wall of rows cycling in at once would say otherwise.
+ */
+const arrivals = {
+    thread: null,
+    seen: new Set(),
+    born: new Map(),        // id -> when the row entered (or re-entered, see releaseDoors)
+    stamped: new Map()      // id -> when its seal was pressed; seeded rows are pressed at 0
+};
+const ENTRY_MS = 2400;      // matches the longest .air-row.entering animation
+const CYCLE_MS = 1250;      // matches the door keyframes
+const STAMP_MS = 900;       // matches the .stamp keyframes
+const STAMP_AFTER_MS = 1000; // an entering row is stamped once it has slid into place
+
+function noteArrivals(messages) {
+    const now = performance.now();
+
+    if (arrivals.thread !== state.threadId) {
+        arrivals.thread = state.threadId;
+        arrivals.seen = new Set(messages.map(m => m.id).filter(Boolean));
+        arrivals.born.clear();
+        // History arrives already sealed. Only a verdict reached while you watch is pressed.
+        arrivals.stamped = new Map(messages.filter(m => m.id).map(m => [m.id, 0]));
+        return [];
+    }
+
+    for (const [id, at] of arrivals.born) if (now - at > ENTRY_MS) arrivals.born.delete(id);
+
+    const fresh = [];
+    for (const m of messages) {
+        if (!m.id || arrivals.seen.has(m.id)) continue;
+        arrivals.seen.add(m.id);
+        arrivals.born.set(m.id, now);
+        fresh.push(m);
+    }
+    return fresh;
+}
+
+// reducedMotion() lives in app.js, shared with the packet animations.
+
+/**
+ * The doors have three motions:
+ *
+ *   cycling    a message entered — shut, turn the seal, open           (CYCLE_MS)
+ *   holding    a turn is at the gate — shut and STAY shut, seal turning, until it rules
+ *   releasing  the gate ruled — show the verdict on the seal, then open (RELEASE_MS)
+ *
+ * The hold is the honest one. The local gate can take several seconds on a reasoning model,
+ * and during that time nothing has crossed and nothing may — which is exactly a sealed
+ * airlock. So the chamber shows it sealed, rather than a spinner somewhere saying "wait".
+ */
+const doors = {
+    holds: new Map(),       // participantId -> the reply id waiting at the gate
+    heldAt: 0,
+    cycleAt: 0,
+    timer: null
+};
+const HOLD_MIN_MS = 900;    // a gate that answers instantly still reads as a ruling
+const RELEASE_MS = 900;     // matches the release keyframes
+const OPEN_AT_MS = 360;     // when, in the release, the doors start to part
+const ROW_SHOWS_MS = 700;   // when, in .air-row.entering, the row becomes visible (56%)
+
+const setSeal = (kind, verdict, route) => {
+    duetEl.rail.dataset.cycle = kind;
+    $('doorState').textContent = verdict;
+    if (route != null) $('doorRoute').textContent = route;
+};
+
+const doorsBusy = () => duetEl.rail.matches('.cycling, .holding, .releasing');
+
+/** Close the doors, cycle, open them on the row that just arrived. */
+function cycleDoors(message) {
+    const rail = duetEl.rail;
+    if (reducedMotion() || doorsBusy()) return;
+
+    const remote = crossedTier(message.tier);
+    setSeal(remote ? 'crossed' : 'local', remote ? '↗ crossing' : 'sealed · local',
+        `${nameOf(message)} → ${addresseeOf(message)}`);
+
+    doors.cycleAt = performance.now();
+    rail.classList.add('cycling');
+    clearTimeout(doors.timer);
+    doors.timer = setTimeout(() => rail.classList.remove('cycling'), CYCLE_MS);
+}
+
+/** A turn has reached the gate. Shut the doors and keep them shut until it rules. */
+function holdDoors(participantId, reply) {
+    const rail = duetEl.rail;
+    doors.holds.set(participantId, reply?.id ?? null);
+    if (reducedMotion()) return;
+
+    setSeal('gating', 'gate ruling…',
+        reply ? `${nameOf(reply)} is waiting at the boundary` : 'waiting at the boundary');
+
+    if (rail.classList.contains('holding')) return;
+
+    // If a cycle is already closing the doors, pick the shut up from where it has got to
+    // instead of snapping them open to start again. Both close in about the same time.
+    const into = rail.classList.contains('cycling')
+        ? Math.min(performance.now() - doors.cycleAt, 280) : 0;
+    rail.style.setProperty('--hold-into', `-${Math.round(into)}ms`);
+
+    clearTimeout(doors.timer);
+    rail.classList.remove('cycling', 'releasing');
+    rail.classList.add('holding');
+    doors.heldAt = performance.now();
+}
+
+const VERDICT = {
+    cleared:  ['crossed',  '↗ cleared · crossing', 'the local gate released it'],
+    withheld: ['withheld', 'withheld · nothing sent', 'nothing left this machine'],
+    failed:   ['withheld', 'refused · nothing sent', 'nothing left this machine'],
+    stopped:  ['stopped',  'stopped', 'you stopped it at the gate']
+};
+
+/** The gate ruled (or the turn ended). Show the verdict on the seal, then open. */
+function releaseDoors(participantId, outcome) {
+    if (!doors.holds.has(participantId)) return;
+    const replyId = doors.holds.get(participantId);
+    doors.holds.delete(participantId);
+
+    // The other participant is still at the gate: the chamber stays sealed for them.
+    if (doors.holds.size || reducedMotion()) return;
+
+    const rail = duetEl.rail;
+    const wait = Math.max(0, HOLD_MIN_MS - (performance.now() - doors.heldAt));
+
+    clearTimeout(doors.timer);
+    doors.timer = setTimeout(() => {
+        const [kind, verdict, route] = VERDICT[outcome] || VERDICT.stopped;
+        setSeal(kind, verdict, route);
+        rail.classList.remove('holding');
+        rail.classList.add('releasing');
+
+        // The reply's row has been in the log behind shut doors since the gate began. Enter
+        // it again so it slides in as they part — and is stamped once it has.
+        if (replyId) {
+            arrivals.born.set(replyId, performance.now() - (ROW_SHOWS_MS - OPEN_AT_MS));
+            arrivals.stamped.delete(replyId);
+            paintAirlock();
+        }
+
+        doors.timer = setTimeout(() => rail.classList.remove('releasing'), RELEASE_MS);
+    }, wait);
+}
+
+/** Thread switched: nothing is waiting at this chamber's gate any more. */
+function resetDoors() {
+    doors.holds.clear();
+    clearTimeout(doors.timer);
+    duetEl.rail?.classList.remove('cycling', 'holding', 'releasing');
+}
+
+/**
+ * The seal a row is stamped with once its fate is settled: amber for a reply that crossed,
+ * red for one the gate withheld. Pressed on the row, with a thud, the first time it is
+ * rendered settled — after the row has slid in, if it is still entering.
+ */
+const SEAL_SVG = `<svg viewBox="0 0 24 24" width="12" height="12" fill="none"
+        stroke-width="3.4" stroke-linecap="butt" aria-hidden="true">
+        <path d="M11.3 4.03 A 8 8 0 0 0 11.3 19.97" stroke="currentColor" opacity=".55"/>
+        <path d="M12.7 4.03 A 8 8 0 0 1 12.7 19.97" stroke="currentColor"/>
+        <circle cx="12" cy="12" r="2" fill="currentColor" stroke="none"/></svg>`;
+
+function stampHtml(message, kind) {
+    const now = performance.now();
+    if (!arrivals.stamped.has(message.id)) {
+        const born = arrivals.born.get(message.id);
+        arrivals.stamped.set(message.id, born == null ? now : Math.max(now, born + STAMP_AFTER_MS));
+    }
+    const age = now - arrivals.stamped.get(message.id);
+    const live = age < STAMP_MS && !reducedMotion();
+    return `<span class="stamp ${kind}${live ? ' pressing' : ''}"${
+        live ? ` style="--stamp-delay:${Math.round(-age)}ms"` : ''}>${SEAL_SVG}</span>`;
 }
 
 const AIR_TAG = {
@@ -285,10 +471,27 @@ function airRow(message) {
     const text = escapeHtml((message.content || '').replace(/\s+/g, ' ').trim())
         || (message.streaming ? 'generating…' : '—');
 
-    const tag = AIR_TAG[message.streaming ? 'streaming' : message.status]
+    let tag = AIR_TAG[message.streaming ? 'streaming' : message.status]
         || (remote ? '↗ crossed' : '');
 
-    return `<div class="${classes.join(' ')}" data-message="${message.id}">
+    // Settled on one side of the boundary or the other: pressed with the seal.
+    if (!message.streaming && message.status === 'blocked') {
+        tag = stampHtml(message, 'withheld') + tag;
+    } else if (!message.streaming && remote && message.status === 'complete') {
+        tag = stampHtml(message, 'crossed') + tag;
+    }
+
+    // Still mid-entrance: resume the animation where it had got to rather than restarting it,
+    // because this node replaced the one that was animating.
+    const born = arrivals.born.get(message.id);
+    const age = born == null ? Infinity : performance.now() - born;
+    let entering = '';
+    if (age < ENTRY_MS && !reducedMotion()) {
+        classes.push('entering');
+        entering = ` style="--age:${Math.round(-age)}ms"`;
+    }
+
+    return `<div class="${classes.join(' ')}" data-message="${message.id}"${entering}>
                 <span class="air-seq">#${message.id}</span>
                 <span class="air-who"><span class="from">${from}</span>
                     <span class="arrow">→</span><span class="to">${to}</span></span>
@@ -530,6 +733,8 @@ async function submit(participantId, { retryOf = null } = {}) {
             pane.retryOf = pane.triggerId;
         }
     } finally {
+        // Stopped at the gate, or the stream died there: open up. A no-op if it already ruled.
+        releaseDoors(participantId, 'stopped');
         pane.controller = null;
         pane.status = 'idle';
         pane.requestId = null;
@@ -561,15 +766,19 @@ function handleEvent(participantId, event, streamed) {
         case 'gating':
             pane.status = 'gating';
             paintPaneStatus(participantId);
+            holdDoors(participantId, messageById(event.messageId));
             return streamed;
 
+        // Queued or running after a gate means the gate released it.
         case 'queued':
+            releaseDoors(participantId, 'cleared');
             pane.status = 'queued';
             pane.queuePosition = event.position;
             paintPaneStatus(participantId);
             return streamed;
 
         case 'running':
+            releaseDoors(participantId, 'cleared');
             pane.status = 'running';
             paintPaneStatus(participantId);
             return streamed;
@@ -590,6 +799,7 @@ function handleEvent(participantId, event, streamed) {
 
         case 'blocked':
             upsert({ ...event.message, streaming: false });
+            releaseDoors(participantId, 'withheld');
             pane.retryOf = pane.triggerId;
             schedulePaint(participantId);
             flash('The local gate withheld that — nothing was sent.', 7000);
@@ -620,6 +830,7 @@ function handleEvent(participantId, event, streamed) {
 
         case 'error':
             if (event.message) upsert({ ...event.message, streaming: false });
+            releaseDoors(participantId, 'failed');
             pane.error = event.error;
             pane.retryOf = pane.triggerId;
             schedulePaint(participantId);
@@ -897,6 +1108,7 @@ function teardown() {
     }
     panes.clear();
     duetEl.grid.innerHTML = '';
+    resetDoors();
 }
 
 async function loadDuet(threadId) {

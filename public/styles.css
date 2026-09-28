@@ -35,6 +35,17 @@
 
     --danger: #ff5a5f;
     --radius: 6px;            /* tighter than the old 12px: machined, not pillowy */
+
+    /* Depth. Light falls from above onto machined steel: a hairline highlight on the top
+       edge of every raised surface and a soft shadow under it. Glows are only ever in the
+       two tier colours, so even the lighting stays on-message. */
+    --hi: inset 0 1px 0 rgba(255, 255, 255, .045);
+    --lift: 0 1px 2px rgba(0, 0, 0, .35), 0 8px 24px -12px rgba(0, 0, 0, .6);
+    --glow-local: 0 0 0 1px rgba(118, 185, 0, .35), 0 0 22px -4px rgba(118, 185, 0, .35);
+    --glow-cross: 0 0 0 1px rgba(255, 176, 32, .4), 0 0 22px -4px rgba(255, 176, 32, .35);
+    --glass: rgba(16, 19, 24, .72);
+    --ease: cubic-bezier(.2, .8, .2, 1);
+    --mono: "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, monospace;
 }
 
 * { box-sizing: border-box; }
@@ -52,10 +63,20 @@ html, body {
 }
 
 body {
-    background: var(--bg);
+    /* Two faint pools of tier light — green where the desk is, amber out past the
+       boundary — over graphite. Barely there; it is what stops the ground reading flat. */
+    background:
+        radial-gradient(1100px 620px at 8% -12%, rgba(118, 185, 0, .075), transparent 62%),
+        radial-gradient(900px 560px at 108% 112%, rgba(255, 176, 32, .055), transparent 60%),
+        var(--bg);
     color: var(--text);
-    font: 15px/1.6 "Segoe UI", system-ui, sans-serif;
+    font: 15px/1.6 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
 }
+
+::selection { background: rgba(118, 185, 0, .32); color: #fff; }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 select, input, textarea, button {
     font-family: inherit;
@@ -75,13 +96,15 @@ select, input, textarea, button {
     max-width: min(680px, calc(100% - 32px));
     padding: 9px 14px;
     border-radius: 10px;
-    background: #14181d;
+    background: var(--glass);
+    backdrop-filter: blur(14px) saturate(140%);
     border: 1px solid var(--accent-dim);
     color: var(--text);
     font-size: 12.5px;
     line-height: 1.5;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+    box-shadow: var(--hi), 0 12px 32px rgba(0, 0, 0, .5), 0 0 24px -8px rgba(118, 185, 0, .3);
     z-index: 40;
+    animation: toast-in .28s var(--ease);
     pointer-events: none;      /* never in the way of a drop */
     white-space: pre-wrap;
 }
@@ -107,9 +130,12 @@ select, input, textarea, button {
 }
 
 .sidebar {
-    background: linear-gradient(180deg, #0e1115, #101419);
+    background: linear-gradient(180deg, rgba(14, 17, 21, .92), rgba(16, 20, 25, .96));
     border-right: 1px solid var(--line);
-    box-shadow: inset -1px 0 0 rgba(45, 212, 191, .08);
+    /* The old inset was teal — Glimmer's — and the one stray colour in the rail. */
+    box-shadow: inset -1px 0 0 rgba(118, 185, 0, .06), 8px 0 32px -16px rgba(0, 0, 0, .7);
+    position: relative;
+    z-index: 1;
     padding: 16px 12px 12px;
     display: flex;
     flex-direction: column;
@@ -128,11 +154,26 @@ select, input, textarea, button {
 .brand h1 {
     margin: 0;
     font-size: 19px;
-    font-weight: 600;
-    letter-spacing: .3px;
+    font-weight: 650;
+    letter-spacing: .4px;
+    background: linear-gradient(180deg, #ffffff, #b9c2cc);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
 }
 
-.brand svg { filter: drop-shadow(0 0 6px rgba(118, 185, 0, .35)); }
+/* The seal breathes — slowly, in both tier colours — and turns a half-turn when you
+   reach for it, the way a hatch wheel would. */
+.brand-seal {
+    animation: seal-breathe 5s ease-in-out infinite;
+    transition: transform .6s var(--ease);
+}
+.brand:hover .brand-seal { transform: rotate(180deg); }
+
+@keyframes seal-breathe {
+    0%, 100% { filter: drop-shadow(0 0 4px rgba(118, 185, 0, .35)) drop-shadow(0 0 0 rgba(255, 176, 32, 0)); }
+    50%      { filter: drop-shadow(0 0 7px rgba(118, 185, 0, .5)) drop-shadow(0 0 5px rgba(255, 176, 32, .3)); }
+}
 
 .tagline {
     margin: 0;
@@ -187,7 +228,8 @@ select, input, textarea, button {
 .dot.bad  { background: var(--danger); box-shadow: 0 0 6px #ff5a5f99; }
 
 select {
-    background: var(--panel-2);
+    background: linear-gradient(180deg, #1a1f26, var(--panel-2));
+    box-shadow: var(--hi);
     border: 1px solid var(--line);
     border-radius: 8px;
     padding: 6px 8px;
@@ -195,15 +237,18 @@ select {
 }
 
 .icon-btn {
-    background: var(--panel-2);
+    background: linear-gradient(180deg, #1a1f26, var(--panel-2));
     border: 1px solid var(--line);
     border-radius: 8px;
     padding: 5px 10px;
     cursor: pointer;
     line-height: 1;
+    box-shadow: var(--hi);
+    transition: border-color .15s ease, color .15s ease, background .15s ease, transform .1s ease;
 }
 
 .icon-btn:hover { border-color: var(--accent-dim); color: var(--accent); }
+.icon-btn:active:not(:disabled) { transform: translateY(1px); }
 .icon-btn:disabled { opacity: .42; cursor: default; color: var(--muted); }
 .icon-btn.sm { padding: 3px 7px; font-size: 12px; }
 .icon-btn.wide { width: 100%; text-align: left; padding: 8px 10px; }
@@ -212,7 +257,8 @@ select {
 .icon-btn.toggle.on {
     color: var(--accent);
     border-color: var(--accent-dim);
-    background: #16210a;
+    background: linear-gradient(180deg, #1b290b, #141e09);
+    box-shadow: var(--hi), 0 0 14px -6px rgba(118, 185, 0, .6);
 }
 
 /* ── Tray rail ── */
@@ -354,8 +400,15 @@ body.dragging-thread .tray.drop-target .tray-tail {
 .thread.insert-above::before { top: -2px; }
 .thread.insert-below::after { bottom: -2px; }
 
-.thread:hover { background: var(--panel-2); }
-.thread.active { background: var(--user); border-color: var(--user-line); }
+.thread { transition: background .15s ease, border-color .15s ease, transform .15s var(--ease); }
+.thread:hover { background: var(--panel-2); transform: translateX(2px); }
+
+/* The open thread: steel card with a green rail on its inside edge. */
+.thread.active {
+    background: linear-gradient(90deg, rgba(118, 185, 0, .09), var(--user) 45%);
+    border-color: var(--user-line);
+    box-shadow: var(--hi), inset 2px 0 0 var(--accent);
+}
 .thread.dragging { opacity: .45; }
 
 /* a packet is hovering over this thread — it will land here */
@@ -444,8 +497,14 @@ body.dragging-thread .tray.drop-target .tray-tail {
     align-items: center;
     gap: 10px;
     padding: 9px 16px;
-    background: linear-gradient(90deg, #0e1216, #14181d);
+    /* Green fades to amber along the lane — the lane IS the route from the desk to the
+       boundary, so its light runs the same way. */
+    background:
+        linear-gradient(90deg, rgba(118, 185, 0, .06), transparent 30%, transparent 70%, rgba(255, 176, 32, .05)),
+        rgba(14, 18, 22, .82);
+    backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--line);
+    box-shadow: 0 6px 20px -14px rgba(0, 0, 0, .9);
     font-size: 12px;
     overflow-x: auto;
 }
@@ -461,14 +520,24 @@ body.dragging-thread .tray.drop-target .tray-tail {
 .chip-local {
     padding: 4px 10px;
     border-radius: 999px;
-    background: var(--user);
-    border: 1px solid var(--user-line);
+    background: linear-gradient(180deg, #19240c, #131a0b);
+    border: 1px solid var(--accent-dim);
+    box-shadow: var(--hi), 0 0 12px -6px rgba(118, 185, 0, .7);
     color: var(--ok);
     font-size: 11.5px;
     white-space: nowrap;
 }
 
-.lane-arrow { color: var(--cross); }
+.lane-arrow {
+    color: var(--cross);
+    text-shadow: 0 0 8px rgba(255, 176, 32, .6);
+    animation: lane-drift 2.6s ease-in-out infinite;
+}
+
+@keyframes lane-drift {
+    0%, 100% { transform: translate(0, 0); opacity: .75; }
+    50%      { transform: translate(2px, -2px); opacity: 1; }
+}
 
 .members { display: flex; gap: 6px; }
 
@@ -481,10 +550,15 @@ body.dragging-thread .tray.drop-target .tray-tail {
     font-size: 11.5px;
     cursor: pointer;
     white-space: nowrap;
-    transition: transform .12s, box-shadow .12s, color .12s;
+    transition: transform .15s var(--ease), box-shadow .15s, color .15s, border-color .15s;
 }
 
-.member:hover { color: var(--cross); border-color: var(--cross); }
+.member:hover {
+    color: var(--cross);
+    border-color: var(--cross);
+    transform: translateY(-1px);
+    box-shadow: 0 0 14px -4px rgba(255, 176, 32, .5);
+}
 
 /* A live seat crosses the boundary by itself. The dashed border on the others
    means "you carry this"; solid means "this one goes on its own", and the
@@ -493,6 +567,8 @@ body.dragging-thread .tray.drop-target .tray-tail {
     border-style: solid;
     border-color: var(--cross);
     color: var(--text);
+    background: linear-gradient(180deg, #2a2010, #1d170c);
+    box-shadow: var(--hi);
 }
 .member.live::before {
     content: '↗';
@@ -757,17 +833,28 @@ main {
    exactly like one from the model on your own GPU, which is the single distinction
    this whole app exists to make. */
 .msg.assistant.remote .who { color: var(--cross); }
-.msg.assistant.remote .bubble { border-left: 2px solid var(--cross-dim); }
-
-.bubble {
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    padding: 12px 14px;
-    overflow-wrap: anywhere;
+.msg.assistant.remote .bubble {
+    border-left: 2px solid var(--cross);
+    background: linear-gradient(180deg, #1a1710, var(--panel) 60%);
 }
 
-.msg.user .bubble { background: var(--user); border-color: var(--user-line); }
+.bubble {
+    background: linear-gradient(180deg, #151920, var(--panel));
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 16px;
+    overflow-wrap: anywhere;
+    box-shadow: var(--hi), var(--lift);
+}
+
+.msg.user .bubble {
+    background: linear-gradient(180deg, #1f252d, var(--user));
+    border-color: var(--user-line);
+}
+
+/* A local answer carries a green edge the way a crossed one carries amber: every reply
+   now says which side it came from, not only the ones that left. */
+.msg.assistant .bubble { border-left: 2px solid var(--accent-dim); }
 
 .bubble > *:first-child { margin-top: 0; }
 .bubble > *:last-child { margin-bottom: 0; }
@@ -792,13 +879,17 @@ main {
 .code {
     position: relative;
     margin: 0 0 .7em;
-    background: #0a0d11;
+    background: #090b0e;
     border: 1px solid var(--line);
     border-radius: 8px;
+    box-shadow: inset 0 2px 8px rgba(0, 0, 0, .4);
+    overflow: hidden;
 }
 
 .code .lang {
     padding: 5px 10px;
+    background: #0e1115;
+    font-family: var(--mono);
     font-size: 11px;
     color: var(--muted);
     border-bottom: 1px solid var(--line);
@@ -931,9 +1022,41 @@ main {
     text-align: center;
     color: var(--muted);
     padding: 48px 12px;
+    animation: fade-up .5s var(--ease);
 }
 
-.empty h2 { color: var(--text); font-weight: 600; margin: 0 0 6px; }
+.empty h2 { color: var(--text); font-weight: 600; font-size: 22px; letter-spacing: .2px; margin: 0 0 8px; }
+
+@keyframes fade-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: none; }
+}
+
+@keyframes toast-in {
+    from { opacity: 0; transform: translate(-50%, 8px); }
+    to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* The idle emblem: the hatch seal, large, with a ring of ticks turning slowly round it. */
+.emblem {
+    width: 112px;
+    height: 112px;
+    margin: 0 auto 20px;
+    filter: drop-shadow(0 0 18px rgba(118, 185, 0, .22)) drop-shadow(0 0 26px rgba(255, 176, 32, .12));
+}
+.emblem svg { width: 100%; height: 100%; overflow: visible; }
+.emblem-orbit { stroke: var(--line); }
+.emblem-ticks {
+    stroke: #2c333c;
+    stroke-dasharray: 2 8.05;
+    transform-origin: 60px 60px;
+    animation: emblem-turn 40s linear infinite;
+}
+.emblem path { animation: seam-breathe 4.5s ease-in-out infinite; }
+.emblem path + path { animation-delay: -2.25s; }
+
+@keyframes emblem-turn { to { transform: rotate(360deg); } }
+@keyframes seam-breathe { 0%, 100% { opacity: .8; } 50% { opacity: 1; } }
 .empty code { color: var(--accent); }
 
 /* provenance badges on a packet */
@@ -948,8 +1071,8 @@ main {
     color: var(--muted);
 }
 
-.badge.travel { border-color: var(--cross-dim); color: var(--cross); }
-.badge.review { border-color: var(--accent-dim); color: var(--accent); }
+.badge.travel { border-color: var(--cross-dim); color: var(--cross); background: rgba(255, 176, 32, .07); }
+.badge.review { border-color: var(--accent-dim); color: var(--accent); background: rgba(118, 185, 0, .07); }
 
 /* ── Composer ── */
 footer {
@@ -961,14 +1084,20 @@ footer {
 .composer {
     max-width: 820px;
     margin: 0 auto;
-    background: var(--panel);
+    background: var(--glass);
+    backdrop-filter: blur(14px) saturate(140%);
     border: 1px solid var(--line);
-    border-radius: var(--radius);
+    border-radius: 12px;
     padding: 8px;
-    transition: border-color .15s;
+    box-shadow: var(--hi), 0 16px 40px -18px rgba(0, 0, 0, .9);
+    transition: border-color .2s ease, box-shadow .25s ease;
 }
 
-.composer:focus-within { border-color: var(--accent-dim); }
+.composer:focus-within {
+    border-color: var(--accent-dim);
+    box-shadow: var(--hi), 0 16px 40px -18px rgba(0, 0, 0, .9),
+                0 0 0 3px rgba(118, 185, 0, .08), 0 0 28px -10px rgba(118, 185, 0, .45);
+}
 .composer.drag { border-color: var(--accent); }
 
 .composer textarea {
@@ -1005,14 +1134,43 @@ footer {
     font-weight: 700;
     letter-spacing: .2px;
     cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25), 0 4px 14px -6px rgba(118, 185, 0, .7);
+    transition: box-shadow .2s ease, transform .1s ease;
 }
 
-.send:hover { background: linear-gradient(135deg, var(--accent), #8ed100); }
+.send:hover {
+    background: linear-gradient(135deg, var(--accent), #8ed100);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .3), 0 6px 20px -6px rgba(118, 185, 0, .9);
+}
+.send:active:not(:disabled) { transform: translateY(1px); }
+
+/* A sheen crosses the button on hover — light off brushed metal. */
+.send::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, .35) 50%, transparent 65%);
+    transform: translateX(-120%);
+    pointer-events: none;
+}
+.send:hover:not(:disabled)::after { transform: translateX(120%); transition: transform .6s ease; }
 .send:disabled { opacity: .35; cursor: default; }
 
 /* Stop is red and stays white-on-red by convention, so the red is deepened until that
    convention is actually legible: white on #ff5a5f is 3.05:1, on #c62b2e it is 5.55:1. */
-.send.stop { background: #c62b2e; color: #fff; }
+.send.stop {
+    background: #c62b2e;
+    color: #fff;
+    animation: stop-pulse 1.6s ease-out infinite;
+}
+
+/* Something is running and costs time (or credit) until stopped — the ring says so. */
+@keyframes stop-pulse {
+    0%   { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .2), 0 0 0 0 rgba(255, 90, 95, .45); }
+    100% { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .2), 0 0 0 9px rgba(255, 90, 95, 0); }
+}
 .send.stop:hover { background: #d93538; }
 
 .hint { font-size: 11px; color: var(--muted); }
@@ -1037,17 +1195,25 @@ footer {
 
 /* ── Dialogs ── */
 dialog {
-    background: var(--panel);
+    background: linear-gradient(180deg, #161a20, var(--panel));
     color: var(--text);
     border: 1px solid var(--line);
-    border-radius: var(--radius);
+    border-radius: 12px;
     padding: 0;
     width: min(460px, 92vw);
+    box-shadow: var(--hi), 0 30px 80px -20px rgba(0, 0, 0, .9);
+}
+
+dialog[open] { animation: dialog-in .26s var(--ease); }
+
+@keyframes dialog-in {
+    from { opacity: 0; transform: translateY(10px) scale(.98); }
+    to   { opacity: 1; transform: none; }
 }
 
 dialog#handoff { width: min(760px, 94vw); }
 
-dialog::backdrop { background: #000a; }
+dialog::backdrop { background: rgba(0, 0, 0, .55); backdrop-filter: blur(4px); }
 
 .dlg-head {
     padding: 12px 16px;
@@ -1443,7 +1609,9 @@ main::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
     align-items: center;
     gap: 8px;
     padding: 6px 14px;
-    background: linear-gradient(180deg, #14181d, var(--panel));
+    background:
+        linear-gradient(90deg, rgba(118, 185, 0, .07), transparent 22%, transparent 78%, rgba(255, 176, 32, .06)),
+        linear-gradient(180deg, #161b21, var(--panel));
     border-bottom: 1px solid var(--line);
     cursor: pointer;
     user-select: none;
@@ -1501,8 +1669,354 @@ main::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
     font-size: 12px;
 }
 
-.airlock.collapsed .airlock-log { display: none; }
+.airlock.collapsed .airlock-bay { display: none; }
 .airlock.collapsed #airlockToggle { transform: rotate(180deg); }
+#airlockToggle { transition: transform .3s var(--ease); }
+
+/* ── The doors ──
+   The bay is the log plus a pair of pressure doors over it. When a message enters the
+   chamber they slam shut from either side, the seal turns while the chamber cycles, and
+   they open on the new row. Green leaf on the desk side, amber on the boundary side; the
+   seal and the sweep take the colour of what just came in, so a crossing looks like one.
+   duet.js adds .cycling to the chamber and sets data-cycle to 'local' or 'crossed'. */
+
+.airlock-bay {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background:
+        linear-gradient(180deg, rgba(0, 0, 0, .22), transparent 26px),
+        var(--panel);
+}
+
+.airlock-doors {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    overflow: hidden;
+    pointer-events: none;
+    visibility: hidden;
+}
+
+.airlock { --cycle: var(--accent); --cycle-glow: rgba(118, 185, 0, .5); }
+.airlock[data-cycle="crossed"],
+.airlock[data-cycle="gating"]   { --cycle: var(--cross); --cycle-glow: rgba(255, 176, 32, .55); }
+.airlock[data-cycle="withheld"] { --cycle: var(--danger); --cycle-glow: rgba(255, 90, 95, .5); }
+.airlock[data-cycle="stopped"]  { --cycle: var(--muted); --cycle-glow: rgba(139, 148, 158, .35); }
+
+.airlock.holding .airlock-doors,
+.airlock.releasing .airlock-doors { visibility: visible; }
+
+.airlock.cycling .airlock-doors { visibility: visible; }
+
+.door {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 50.4%;
+    /* Plate steel: panel seams every 14px over a brushed gradient that brightens toward
+       the leading edge, where the light catches it. */
+    background:
+        repeating-linear-gradient(180deg, rgba(255, 255, 255, .028) 0 1px, transparent 1px 14px),
+        var(--plate);
+}
+
+.door::after {                      /* hazard stripes along the leading edge */
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 9px;
+    background: repeating-linear-gradient(135deg, var(--edge) 0 5px, #0b0d10 5px 10px);
+    opacity: .85;
+}
+
+.door.left {
+    left: 0;
+    --edge: var(--accent);
+    --plate: linear-gradient(90deg, #0d1013, #171b21 70%, #232a33);
+    border-right: 2px solid var(--accent);
+    box-shadow: 6px 0 22px -4px rgba(118, 185, 0, .45);
+    transform: translateX(-104%);
+}
+.door.left::after { right: 3px; }
+
+.door.right {
+    right: 0;
+    --edge: var(--cross);
+    --plate: linear-gradient(270deg, #0d1013, #171b21 70%, #232a33);
+    border-left: 2px solid var(--cross);
+    box-shadow: -6px 0 22px -4px rgba(255, 176, 32, .45);
+    transform: translateX(104%);
+}
+.door.right::after { left: 3px; }
+
+.airlock.cycling .door.left  { animation: door-left 1.25s both; }
+.airlock.cycling .door.right { animation: door-right 1.25s both; }
+
+@keyframes door-left {
+    0%   { transform: translateX(-104%); animation-timing-function: cubic-bezier(.55, 0, .9, .4); }
+    22%  { transform: translateX(0); animation-timing-function: ease-out; }
+    26%  { transform: translateX(-1.6%); animation-timing-function: ease-in; }
+    30%  { transform: translateX(0); }
+    64%  { transform: translateX(0); animation-timing-function: cubic-bezier(.5, 0, .2, 1); }
+    100% { transform: translateX(-104%); }
+}
+
+@keyframes door-right {
+    0%   { transform: translateX(104%); animation-timing-function: cubic-bezier(.55, 0, .9, .4); }
+    22%  { transform: translateX(0); animation-timing-function: ease-out; }
+    26%  { transform: translateX(1.6%); animation-timing-function: ease-in; }
+    30%  { transform: translateX(0); }
+    64%  { transform: translateX(0); animation-timing-function: cubic-bezier(.5, 0, .2, 1); }
+    100% { transform: translateX(104%); }
+}
+
+/* The pressure sweep: a band of light running down the closed doors while it cycles. */
+.airlock-doors::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 38%;
+    top: -40%;
+    z-index: 1;
+    background: linear-gradient(180deg, transparent, var(--cycle-glow) 50%, transparent);
+    mix-blend-mode: screen;
+    opacity: 0;
+}
+.airlock.cycling .airlock-doors::before { animation: sweep 1.25s linear both; }
+
+@keyframes sweep {
+    0%, 28% { top: -40%; opacity: 0; }
+    32%     { opacity: .55; }
+    58%     { opacity: .55; }
+    62%     { top: 100%; opacity: 0; }
+    100%    { top: 100%; opacity: 0; }
+}
+
+/* The seal on the seam: the hatch mark and what is passing through. */
+.door-seal {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 14px 6px 8px;
+    border-radius: 999px;
+    background: rgba(11, 13, 16, .88);
+    border: 1px solid var(--cycle);
+    box-shadow: 0 0 0 4px rgba(11, 13, 16, .6), 0 0 24px -2px var(--cycle-glow);
+    white-space: nowrap;
+    transform: translate(-50%, -50%) scale(.6);
+    opacity: 0;
+}
+.airlock.cycling .door-seal { animation: seal-show 1.25s both; }
+.airlock.cycling .door-seal svg { animation: seal-turn 1.25s both; }
+
+@keyframes seal-show {
+    0%, 22% { opacity: 0; transform: translate(-50%, -50%) scale(.6); }
+    30%     { opacity: 1; transform: translate(-50%, -50%) scale(1.04); }
+    36%     { transform: translate(-50%, -50%) scale(1); }
+    58%     { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    66%     { opacity: 0; transform: translate(-50%, -50%) scale(.9); }
+    100%    { opacity: 0; }
+}
+
+@keyframes seal-turn {
+    0%, 28% { transform: rotate(0); }
+    60%     { transform: rotate(180deg); animation-timing-function: cubic-bezier(.3, 0, .2, 1); }
+    100%    { transform: rotate(180deg); }
+}
+
+.door-label { display: flex; flex-direction: column; line-height: 1.25; }
+.door-label b {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.4px;
+    color: var(--cycle);
+}
+.door-label span {
+    font-size: 11px;
+    color: var(--muted);
+    max-width: 34ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ── Holding: a turn is at the gate ──
+   The doors shut and stay shut. The seal keeps turning and the sweep keeps running for as
+   long as the local gate takes, because for that whole time the chamber genuinely is sealed:
+   nothing has crossed, and nothing may until it rules. --hold-into lets the shut pick up
+   from a cycle that was already closing the doors. */
+.airlock.holding .door.left  { animation: shut-left .33s var(--hold-into, 0ms) both; }
+.airlock.holding .door.right { animation: shut-right .33s var(--hold-into, 0ms) both; }
+
+@keyframes shut-left {
+    0%   { transform: translateX(-104%); animation-timing-function: cubic-bezier(.55, 0, .9, .4); }
+    75%  { transform: translateX(0); animation-timing-function: ease-out; }
+    88%  { transform: translateX(-1.6%); animation-timing-function: ease-in; }
+    100% { transform: translateX(0); }
+}
+
+@keyframes shut-right {
+    0%   { transform: translateX(104%); animation-timing-function: cubic-bezier(.55, 0, .9, .4); }
+    75%  { transform: translateX(0); animation-timing-function: ease-out; }
+    88%  { transform: translateX(1.6%); animation-timing-function: ease-in; }
+    100% { transform: translateX(0); }
+}
+
+.airlock.holding .door-seal {
+    animation: seal-in .35s .22s both, seal-wait 1.8s .6s ease-in-out infinite;
+}
+.airlock.holding .door-seal svg { animation: seal-spin 2.4s linear infinite; }
+.airlock.holding .airlock-doors::before { animation: sweep-loop 1.8s .3s linear infinite; }
+.airlock.holding .door-label b::after {          /* a patient cursor on the verdict line */
+    content: "▍";
+    margin-left: 2px;
+    animation: blink 1s steps(2) infinite;
+}
+
+@keyframes seal-in {
+    from { opacity: 0; transform: translate(-50%, -50%) scale(.6); }
+    to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+@keyframes seal-wait {
+    0%, 100% { box-shadow: 0 0 0 4px rgba(11, 13, 16, .6), 0 0 18px -4px var(--cycle-glow); }
+    50%      { box-shadow: 0 0 0 4px rgba(11, 13, 16, .6), 0 0 30px 0 var(--cycle-glow); }
+}
+
+@keyframes seal-spin { to { transform: rotate(360deg); } }
+
+@keyframes sweep-loop {
+    0%   { top: -40%; opacity: 0; }
+    12%  { opacity: .45; }
+    88%  { opacity: .45; }
+    100% { top: 100%; opacity: 0; }
+}
+
+/* ── Releasing: the gate ruled ──
+   The verdict lands on the seal with a knock, the doors unlatch, and part. A withheld turn
+   rattles the seal first — the gate said no, and the chamber opens on a row with nothing
+   in it but the reason. */
+.airlock.releasing .door.left  { animation: release-left .9s both; }
+.airlock.releasing .door.right { animation: release-right .9s both; }
+.airlock.releasing .door-seal  { animation: seal-verdict .9s both; }
+.airlock.releasing[data-cycle="withheld"] .door-seal { animation: seal-verdict .9s both, seal-rattle .3s .05s 1; }
+
+@keyframes release-left {
+    0%, 34% { transform: translateX(0); }
+    38%     { transform: translateX(1.4%); }             /* the latch lets go */
+    42%     { transform: translateX(0); animation-timing-function: cubic-bezier(.5, 0, .2, 1); }
+    100%    { transform: translateX(-104%); }
+}
+
+@keyframes release-right {
+    0%, 34% { transform: translateX(0); }
+    38%     { transform: translateX(-1.4%); }
+    42%     { transform: translateX(0); animation-timing-function: cubic-bezier(.5, 0, .2, 1); }
+    100%    { transform: translateX(104%); }
+}
+
+@keyframes seal-verdict {
+    0%   { opacity: 1; transform: translate(-50%, -50%) scale(1.12); }
+    12%  { transform: translate(-50%, -50%) scale(1); }
+    36%  { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    48%  { opacity: 0; transform: translate(-50%, -50%) scale(.85); }
+    100% { opacity: 0; transform: translate(-50%, -50%) scale(.85); }
+}
+
+@keyframes seal-rattle {
+    0%, 100% { translate: 0; }
+    20%      { translate: -4px; }
+    40%      { translate: 4px; }
+    60%      { translate: -3px; }
+    80%      { translate: 2px; }
+}
+
+/* The mark in the chamber header turns with the seal, so a cycle is visible even with
+   the chamber collapsed to its header. */
+.airlock.holding .airlock-mark {
+    animation: seal-spin 2.4s linear infinite;
+    filter: drop-shadow(0 0 5px var(--cycle-glow));
+}
+.airlock-mark { transition: filter .3s ease; }
+.airlock.cycling .airlock-mark {
+    animation: seal-turn 1.25s both;
+    filter: drop-shadow(0 0 5px var(--cycle-glow));
+}
+
+/* ── A row entering ──
+   It waits behind the closed doors, then slides in from its own side as they open — from
+   the left for anything that stayed on the desk, from the right (the boundary side) for
+   anything that crossed — and glows briefly before settling into the log. */
+.air-row.entering {
+    --from: -36px;
+    --flash: rgba(118, 185, 0, .16);
+    animation: row-enter 1.25s both, row-flash 2.4s ease-out both;
+    animation-delay: var(--age, 0ms);   /* resumes an entrance across repaints; see airRow() */
+}
+.air-row.crossed.entering { --from: 36px; --flash: rgba(255, 176, 32, .2); }
+
+@keyframes row-enter {
+    0%, 56% { opacity: 0; transform: translateX(var(--from)); animation-timing-function: var(--ease); }
+    100%    { opacity: 1; transform: none; }
+}
+
+@keyframes row-flash {
+    0%, 50% { box-shadow: inset 0 0 0 999px var(--flash), 0 0 0 transparent; }
+    100%    { box-shadow: inset 0 0 0 999px transparent; }
+}
+
+/* ── The seal on a settled row ──
+   A crossed reply is pressed with the amber seal, a withheld one with red. It lands like a
+   rubber stamp — big, tilted, then down hard with a ring of ink spreading from it — the
+   first time the row is seen settled. After that it is just part of the record. */
+.stamp {
+    position: relative;
+    display: inline-flex;
+    vertical-align: -2px;
+    margin-right: 5px;
+    transform: rotate(-12deg);
+}
+.stamp.crossed  { color: var(--cross); filter: drop-shadow(0 0 3px rgba(255, 176, 32, .45)); }
+.stamp.withheld { color: var(--danger); filter: drop-shadow(0 0 3px rgba(255, 90, 95, .45)); }
+
+.stamp.pressing { animation: stamp-press .9s var(--stamp-delay, 0ms) both; }
+.stamp.pressing::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    border: 1.5px solid currentColor;
+    opacity: 0;
+    animation: stamp-ink .9s var(--stamp-delay, 0ms) both;
+}
+
+@keyframes stamp-press {
+    0%   { opacity: 0; transform: scale(2.6) rotate(-40deg); animation-timing-function: cubic-bezier(.6, 0, 1, .6); }
+    38%  { opacity: 1; transform: scale(.82) rotate(-8deg); animation-timing-function: ease-out; }
+    56%  { transform: scale(1.12) rotate(-13deg); }
+    100% { opacity: 1; transform: scale(1) rotate(-12deg); }
+}
+
+@keyframes stamp-ink {
+    0%, 36% { opacity: 0; transform: scale(.6); }
+    40%     { opacity: .9; transform: scale(.9); }
+    100%    { opacity: 0; transform: scale(2.4); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .airlock-doors { display: none; }
+    .air-row.entering, .stamp.pressing, .stamp.pressing::after { animation: none; }
+    .brand-seal, .lane-arrow, .emblem-ticks, .emblem path, .send.stop { animation: none; }
+}
 
 .airlock-log::-webkit-scrollbar { width: 9px; }
 .airlock-log::-webkit-scrollbar-thumb { background: var(--line); border-radius: 6px; }
