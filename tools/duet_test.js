@@ -205,6 +205,12 @@ async function scrub() {
                     'nothing is recorded as having crossed when the gate withholds',
                     JSON.stringify(exposure));
                 ok(!blocked.message.content, 'a withheld generation produces no answer text');
+                // The page marks a reply "↗ crossed" from this flag (didCross in duet.js).
+                // Its tier still says remote — that is where it was bound — so the flag is
+                // the only thing standing between a withheld turn and an amber badge.
+                ok(blocked.message.requestMeta?.crossed !== true,
+                    'a withheld reply is not flagged as crossed',
+                    JSON.stringify(blocked.message.requestMeta));
             } else {
                 // It released and crossed. Then the whole assembled context must be on
                 // the record — including the OTHER participant's words, which is the
@@ -212,6 +218,9 @@ async function scrub() {
                 // full context rather than only the newest message.
                 const crossed = new Set(exposure.packets.map(p => p.packetId));
                 ok(exposure.crossingCount > 0, 'a real crossing is recorded');
+                ok(done.message.requestMeta?.crossed === true,
+                    'and the reply is flagged as crossed, matching the record',
+                    JSON.stringify(done.message.requestMeta));
                 ok(sourcesOf(done.message).every(id => crossed.has(id)),
                     'every packet in the context is recorded as having crossed',
                     `context ${JSON.stringify(sourcesOf(done.message))} vs crossed ${JSON.stringify([...crossed])}`);

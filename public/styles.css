@@ -1546,11 +1546,18 @@ main::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
 .msg.duet-failed .bubble { border-color: #4a1d1f; }
 .msg.duet-failed .duet-status-note { color: var(--danger); }
 .msg.duet-stopped .bubble { opacity: .72; border-style: dashed; }
-.msg.duet-blocked .bubble { border-color: var(--cross-dim); background: #1c1406; }
-.msg.duet-blocked .duet-status-note { color: var(--cross); }
+/* Withheld is RED, per the palette at the top of this file: refused, not crossed. It was
+   amber, which is the crossing colour, on the one reply that provably did not cross. */
+.msg.duet-blocked .bubble { border-color: #4a1d1f; border-left-color: var(--danger); background: #1a1113; }
+.msg.duet-blocked .duet-status-note { color: var(--danger); }
+
+/* Bound for a remote model but never crossed — at the gate, withheld, refused. Neither
+   amber (it did not cross) nor green (it was never going to run here): steel. */
+.msg.assistant.held .who { color: var(--muted); }
+.msg.assistant.held .bubble { border-left-color: var(--line); }
 
 /* The gate's ruling, rendered where the answer would have been. It is the message. */
-.duet-gate b { color: var(--cross); }
+.duet-gate b { color: var(--danger); }
 .duet-gate p { margin: .5em 0; }
 .duet-gate ul { margin: .4em 0 .6em; padding-left: 1.3em; }
 .duet-gate li { margin-bottom: .25em; }
@@ -2082,7 +2089,12 @@ main::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
 .air-row.crossed .air-tag { color: var(--cross); }
 
 .air-row.streaming .air-text { color: var(--muted); font-style: italic; }
-.air-row.blocked .air-tag { color: var(--cross); }
+.air-row.blocked .air-tag { color: var(--danger); }
+
+/* Bound out, never crossed: no amber edge, no amber name. A withheld row additionally
+   takes a red edge, so it is findable at a glance the way a crossing is. */
+.air-row.held .air-who .from { color: var(--muted); }
+.air-row.held.blocked { border-left-color: var(--danger); background: rgba(255, 90, 95, .04); }
 .air-row.failed  .air-tag { color: var(--danger); }
 .air-row.cancelled .air-text { opacity: .6; }
 

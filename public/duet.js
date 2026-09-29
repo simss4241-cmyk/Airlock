@@ -101,6 +101,38 @@ const tierOfModel = name => state.models.find(m => m.name === name)?.tier || 'un
 
 // crossedTier() lives in app.js, shared with the classic view.
 
+/**
+ * Did this message actually come from across the boundary — not "was it headed there"?
+ *
+ * ⚠ The duet view used to answer this with crossedTier(message.tier) alone, and tier is
+ * where a reply was BOUND, fixed when it is created and before the gate has ruled. So a
+ * turn the local gate withheld — nothing sent, nothing recorded as crossed in the audit
+ * log — wore the "↗ crossed" badge, an amber row, and a place in the chamber's crossed
+ * count. The screen claimed a crossing the record correctly said never happened.
+ *
+ * The server knows the answer and says so: duet-runner.js sets requestMeta.crossed on a
+ * reply only once the first chunk comes back from the far side, which is the moment the
+ * content is provably across — the same moment it writes the `crossed` provenance event
+ * that /api/exposure reads. This mirrors that rule, and nothing weaker:
+ *
+ *   requestMeta.crossed           the server recorded it
+ *   streaming, with any output    a chunk came back from a remote model; not settled yet,
+ *                                 so the flag is not written yet, but it is across
+ *   complete                      a finished remote reply was produced over there; covers
+ *                                 packets written before the flag existed
+ *
+ * Withheld, refused at the spend cap, or stopped while still queued: never crossed.
+ */
+const didCross = message =>
+    crossedTier(message.tier) && message.role !== 'user' && (
+        message.requestMeta?.crossed === true
+        || (message.streaming && Boolean(message.content || message.thinking))
+        || message.status === 'complete'
+    );
+
+/** Bound for the far side but has not crossed: at the gate, withheld, or refused. */
+const heldBack = message => crossedTier(message.tier) && message.role !== 'user' && !didCross(message);
+
 // ─────────────────────────── message state ───────────────────────────
 
 /** Merge a server message into the shared log, keeping server order. */
@@ -137,7 +169,8 @@ function messageHtml(message, { showAddressing = false } = {}) {
         : '';
 
     // A reply that came from across the boundary says so on every render, not just once.
-    const crossed = crossedTier(message.tier)
+    // Only one that DID — see didCross().
+    const crossed = didCross(message)
         ? ' <span class="badge travel">↗ crossed</span>' : '';
 
     const think = message.thinking
@@ -164,7 +197,8 @@ function messageHtml(message, { showAddressing = false } = {}) {
     const classes = ['msg', mine ? 'user' : 'assistant'];
     // Same tier marking the classic view uses, so a reply produced across the boundary
     // reads amber in a pane as well as in the chamber.
-    if (!mine && crossedTier(message.tier)) classes.push('remote');
+    if (!mine && didCross(message)) classes.push('remote');
+    else if (!mine && heldBack(message)) classes.push('held');
     if (message.status === 'failed') classes.push('duet-failed');
     if (message.status === 'blocked') classes.push('duet-blocked');
     if (message.status === 'cancelled' || message.status === 'interrupted') classes.push('duet-stopped');
@@ -245,7 +279,7 @@ function paintAirlock() {
     if (!duetEl.rail) return;
 
     const messages = state.messages;
-    const crossed = messages.filter(m => crossedTier(m.tier)).length;
+    const crossed = messages.filter(didCross).length;
     const fresh = noteArrivals(messages);
 
     duetEl.railSub.textContent = messages.length
@@ -349,8 +383,11 @@ function cycleDoors(message) {
     const rail = duetEl.rail;
     if (reducedMotion() || doorsBusy()) return;
 
-    const remote = crossedTier(message.tier);
-    setSeal(remote ? 'crossed' : 'local', remote ? '↗ crossing' : 'sealed · local',
+    // Normally a turn bound outward is shown by the hold, not a cycle; this covers one that
+    // arrives when the doors are free, without claiming a crossing that has not happened.
+    const remote = didCross(message);
+    setSeal(remote ? 'crossed' : 'local',
+        remote ? '↗ crossing' : heldBack(message) ? 'sealed · at the gate' : 'sealed · local',
         `${nameOf(message)} → ${addresseeOf(message)}`);
 
     doors.cycleAt = performance.now();
@@ -459,8 +496,8 @@ const AIR_TAG = {
 };
 
 function airRow(message) {
-    const remote = crossedTier(message.tier);
-    const classes = ['air-row', remote ? 'crossed' : 'local'];
+    const remote = didCross(message);
+    const classes = ['air-row', remote ? 'crossed' : heldBack(message) ? 'held' : 'local'];
     if (message.status !== 'complete') classes.push(message.status);
     if (message.streaming) classes.push('streaming');
 
