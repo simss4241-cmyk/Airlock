@@ -44,6 +44,7 @@ what leaves it. This table is the honest version — clone it and check.
 | One streaming contract across both tiers | working |
 | Model dropdown grouped by tier, capability-badged | working |
 | Local gate rules before anything crosses, and fails closed | working, 73 assertions (28 spend credits, opt-in) |
+| Known credential formats withheld by a scanner before the gate model reads anything | working, 54 assertions |
 | Tier recorded per packet; "what crossed?" as a query | working |
 | Escalation by router **and** by hand, both recorded as crossings | working |
 | Access token + remote spend cap for hosting | working, 26 assertions |
@@ -58,7 +59,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Per-visitor settings, remote budgets, gate memory and generation slots; a daily cap that survives restarts | working |
 | Hosted deployment on Nebius AI Cloud, with the gate beside the app | not built |
 
-**511 assertions across fourteen suites.** Run them:
+**565 assertions across fifteen suites.** Run them:
 
 ```
 npm start                          # in one terminal
@@ -71,6 +72,7 @@ node tools/workspace_test.js       # migrations
 node tools/duet_context_test.js    # what each participant is shown
 node tools/duet_test.js            # two panes, one conversation
 node tools/clearance_test.js       # retired per-thread consent is removed from old databases
+node tools/secrets_test.js         # the credential scanner in front of the gate (offline)
 node tools/kernel_test.js          # the kernel, both locks, one door
 node tools/kernel_http_test.js     # tool results crossing, end to end (fake remote)
 node tools/hosting_test.js         # what a hosted instance lets a visitor reach

@@ -233,7 +233,8 @@ function gateHtml(gate) {
                 <p>${escapeHtml(gate.reason || 'No reason given.')}</p>
                 ${concerns}
                 <p class="stats">Nothing was sent.${
-                    gate.model ? ` Ruled by ${escapeHtml(gate.model)}.` : ''}</p>
+                    gate.model || gate.ruledBy
+                        ? ` Ruled by ${escapeHtml(gate.model || gate.ruledBy)}.` : ''}</p>
             </div>`;
 }
 

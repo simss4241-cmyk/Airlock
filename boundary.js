@@ -1,6 +1,7 @@
 'use strict';
 
 const providers = require('./providers');
+const secrets = require('./secrets');
 
 // ─────────────────────── The boundary ───────────────────────
 //
@@ -158,6 +159,13 @@ function readDecision(text) {
  * so the guarantee belongs where it cannot be forgotten.
  */
 async function runGate(markdown, { model, config } = {}) {
+    // Known credential formats first, and without a model. See secrets.js: the scanner can
+    // only withhold, so running it ahead of everything else can never let something
+    // through that the model would have stopped — it only stops, for certain and in
+    // microseconds, the things a small gate model was measured letting past.
+    const scanned = secrets.rule(markdown);
+    if (scanned) return scanned;
+
     // Resolve before ruling. A cold registry answers 'unknown' to everything, which the
     // check below would read as "not local" and refuse — fail-closed, but it would
     // refuse every crossing on a freshly started process rather than only the wrong ones.

@@ -110,6 +110,39 @@ for this set, so the failing cases stay unseen while tuning. Baseline, before an
 This is why the set exists. On the tuning set alone qwen2.5:7b looked like the fix. On
 cases it was never fitted to, it leaks more than the gate it would have replaced.
 
+## Verified 2026-09-29 — a secret scanner ahead of the gate
+
+This desk's gate is now `qwen2.5:14b` (`AIRLOCK_GATE_MODEL` in `.env`). Alongside the 4B
+chat participant it fits the 16 GB card at 13.6 GB, all of it on the GPU. It is a desk
+setting, not the default. Unconfigured, the gate is still the smallest installed model,
+which is what most machines can afford.
+
+`secrets.js` recognises known credential formats (private keys, AWS, GitHub, GitLab, Slack,
+Stripe, Google, Anthropic and OpenAI-style keys, JWTs, passwords inside URLs, secrets
+assigned in env files or as string literals, Luhn-valid card numbers, US SSNs) and runs
+first inside `runGate`, before any model is called. It can only withhold; anything it
+passes still goes to the gate model. The patterns come from published formats, not from
+the bench's cases. `tools/secrets_test.js`: **54/54**, offline. That covers every rule,
+21 look-alikes that must pass (hashes, UUIDs, public keys, AWS's own documentation
+examples, placeholders, code that names a secret without holding one), and the wiring: a
+hit returns without calling the model, and a clean scan still reaches it. `boundary_test`
+45/45 with 3 skipped (remote, opt-in).
+
+| gate | tuning leaks, before → after | held-out leaks, before → after | held-out friction |
+|---|---|---|---|
+| nemotron-3-nano:4b (the default install) | 4/13 → **2/13** | 5/10 → **3/10** | 0/10 → 0/10 |
+| qwen2.5:14b (this desk) | 0/13 → 0/13 | 0/10 → 0/10 | 3/10 → 3/10 |
+
+What the small gate still releases on the tuning set is the medical note and the memo
+marked confidential. Those need reading, not matching, and stay the model's job.
+
+**Caveat on the held-out number.** The same author wrote the held-out cases and the
+scanner, and knew which credential formats the set contained. The patterns follow the
+providers' published formats, but the held-out improvement is an upper bound, not an
+independent result. That set has now been used for two decisions (the gate model and the
+scanner) and is spent by its own rule. The next round needs fresh cases, ideally written by
+someone who has not seen the scanner.
+
 ---
 
 [← back to the README](../README.md)
