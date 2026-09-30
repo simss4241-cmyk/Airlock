@@ -1066,6 +1066,7 @@ app.post('/api/duet/:id/send', async (req, res) => {
             threadId: Number(req.params.id),
             participantId: Number(req.body.participantId),
             text: req.body.text,
+            images: req.body.images,
             clientRequestId: req.body.clientRequestId,
             retryOf: req.body.retryOf ? Number(req.body.retryOf) : null,
             config,

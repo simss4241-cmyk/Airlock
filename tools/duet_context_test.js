@@ -242,5 +242,41 @@ ok(buildContext({
 }).messages.length === 2,
     'a brand new conversation is system + the one request');
 
+// ── 9. images ──
+//
+// An image goes to the participant it was sent to, on the turn it was sent — and only
+// there. Everywhere else the transcript says one was there, because a reply that refers
+// to a picture is unreadable without that, and a model told nothing invents the picture.
+
+const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
+const withPicture = { ...userTo(LEFT, 'Which of these two robots is tealer?'), images: [PNG, PNG] };
+const leftLooked = replyFrom(LEFT, 'The one on the right.');
+const askRightAboutIt = userTo(RIGHT, 'Do you agree with Left?');
+
+const seen = buildContext({
+    participant: LEFT, others: [RIGHT], messages: [withPicture], trigger: withPicture,
+    numCtx: 8192, userName: 'User'
+});
+const seenLast = seen.messages[seen.messages.length - 1];
+ok(seenLast.images?.length === 2 && seenLast.images.every(b64 => b64 === 'iVBORw0KGgoAAAANSUhEUg=='),
+    'the images ride on the request they were sent with, as bare base64', JSON.stringify(seenLast.images));
+ok(!seenLast.content.includes('not included'),
+    'and that request is not also told its images are missing');
+
+const later = buildContext({
+    participant: RIGHT, others: [LEFT],
+    messages: [withPicture, leftLooked, askRightAboutIt], trigger: askRightAboutIt,
+    numCtx: 8192, userName: 'User'
+});
+ok(later.messages.every(m => !m.images),
+    'the other participant is never sent an image that was not sent to it',
+    JSON.stringify(later.messages.map(m => Boolean(m.images))));
+ok(later.messages.some(m => m.content.includes('[2 images attached here — not included in this context]')),
+    'but its transcript says there were two, so "the one on the right" can be read');
+ok(buildContext({
+    participant: LEFT, others: [RIGHT], messages: [first], trigger: first, numCtx: 8192, userName: 'User'
+}).messages.every(m => !('images' in m)),
+    'a request without images carries no images field at all');
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

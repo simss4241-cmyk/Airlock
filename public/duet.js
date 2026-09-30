@@ -190,8 +190,12 @@ function messageHtml(message, { showAddressing = false } = {}) {
         : '';
 
     const empty = message.streaming ? '<p class="stats">thinking…</p>' : '';
+    const thumbs = message.images?.length
+        ? `<div class="thumbs">${message.images.map(src =>
+              `<img src="${escapeHtml(src)}" alt="attached image">`).join('')}</div>`
+        : '';
     const body = mine
-        ? renderProse(message.content)
+        ? thumbs + (message.content ? renderProse(message.content) : '')
         : (message.content ? renderMarkdown(message.content) : (gate || empty));
 
     const classes = ['msg', mine ? 'user' : 'assistant'];
@@ -506,7 +510,9 @@ function airRow(message) {
     const to = escapeHtml(addresseeOf(message));
 
     // One line. Newlines in a log row turn the chamber into a wall.
-    const text = escapeHtml((message.content || '').replace(/\s+/g, ' ').trim())
+    const pictures = message.images?.length
+        ? `🖼 ${message.images.length > 1 ? `${message.images.length} images ` : ''}` : '';
+    const text = (pictures + escapeHtml((message.content || '').replace(/\s+/g, ' ').trim())).trim()
         || (message.streaming ? 'generating…' : '—');
 
     let tag = AIR_TAG[message.streaming ? 'streaming' : message.status]
@@ -700,7 +706,8 @@ async function submit(participantId, { retryOf = null } = {}) {
 
     const box = pane.nodes.input;
     const text = box.value.trim();
-    if (!retryOf && !text) return;
+    const staged = retryOf ? [] : pane.pending;
+    if (!retryOf && !text && !staged.length) return;
 
     pane.error = null;
     pane.retryOf = null;
@@ -711,7 +718,12 @@ async function submit(participantId, { retryOf = null } = {}) {
 
     // Cleared optimistically so the composer is usable again immediately; put back if the
     // request never reached the server, so a mis-send is not a lost message.
-    if (!retryOf) { box.value = ''; box.style.height = 'auto'; }
+    if (!retryOf) {
+        box.value = '';
+        box.style.height = 'auto';
+        pane.pending = [];
+        paintAttachments(participantId);
+    }
 
     const requestId = pane.requestId ||= newRequestId();
     let streamed = null;   // the reply message id, once the server names it
@@ -723,6 +735,7 @@ async function submit(participantId, { retryOf = null } = {}) {
             body: JSON.stringify({
                 participantId,
                 text: retryOf ? undefined : text,
+                images: staged.length ? staged.map(p => p.dataUrl) : undefined,
                 clientRequestId: retryOf ? undefined : requestId,
                 retryOf
             }),
@@ -766,8 +779,12 @@ async function submit(participantId, { retryOf = null } = {}) {
             pane.error = err.message;
             const message = streamed && messageById(streamed);
             if (message) { message.streaming = false; message.status = 'failed'; }
-            // Nothing was sent at all — hand the text back rather than swallowing it.
+            // Nothing was sent at all — hand the text and images back rather than swallowing them.
             if (!streamed && !retryOf && !box.value.trim()) box.value = text;
+            if (!streamed && !retryOf && !pane.pending.length && staged.length) {
+                pane.pending = staged;
+                paintAttachments(participantId);
+            }
             pane.retryOf = pane.triggerId;
         }
     } finally {
@@ -920,9 +937,13 @@ function buildPane(who) {
         <div class="duet-list"></div>
 
         <div class="duet-composer">
+            <div class="attached duet-attached" hidden></div>
             <textarea class="duet-input" rows="1"
                       placeholder="Ask ${who.slot === 'a' ? 'left' : 'right'}…  (Enter to send)"></textarea>
             <div class="row">
+                <button class="icon-btn sm duet-attach" title="Attach an image (needs a 👁 model) or a text file">📎</button>
+                <input type="file" class="duet-file" multiple hidden
+                       accept="image/*,.md,.markdown,.txt,.text,.json,.csv,.log,.yml,.yaml,.js,.ts,.py,.ps1,.scad,.html,.css">
                 <button class="icon-btn sm duet-retry" hidden title="Ask again — the original request is reused, not repeated">↻ retry</button>
                 <span class="spacer"></span>
                 <button class="send duet-send">Send</button>
@@ -941,12 +962,38 @@ function buildPane(who) {
         roleBtn: node.querySelector('.duet-role-btn'),
         role: node.querySelector('.duet-role'),
         roleText: node.querySelector('.duet-role-text'),
-        roleSave: node.querySelector('.duet-role-save')
+        roleSave: node.querySelector('.duet-role-save'),
+        composer: node.querySelector('.duet-composer'),
+        attached: node.querySelector('.duet-attached'),
+        attach: node.querySelector('.duet-attach'),
+        file: node.querySelector('.duet-file')
     };
 
     panes.set(who.id, {
         nodes, controller: null, status: 'idle', error: null,
-        queuePosition: 0, retryOf: null, triggerId: null, requestId: null, frame: null
+        queuePosition: 0, retryOf: null, triggerId: null, requestId: null, frame: null,
+        pending: []             // images staged for this pane's next message
+    });
+
+    nodes.attach.onclick = () => nodes.file.click();
+    nodes.file.onchange = () => { addAttachments(who.id, nodes.file.files); nodes.file.value = ''; };
+    nodes.input.addEventListener('paste', e => {
+        const pics = [...e.clipboardData.files].filter(f => f.type.startsWith('image/'));
+        if (pics.length) { e.preventDefault(); addAttachments(who.id, pics); }
+    });
+    // Files only — a packet or a thread dragged over the composer is not an attachment.
+    const carriesFiles = e => e.dataTransfer?.types.includes('Files');
+    ['dragenter', 'dragover'].forEach(ev => nodes.composer.addEventListener(ev, e => {
+        if (!carriesFiles(e)) return;
+        e.preventDefault();
+        nodes.composer.classList.add('drag');
+    }));
+    nodes.composer.addEventListener('dragleave', () => nodes.composer.classList.remove('drag'));
+    nodes.composer.addEventListener('drop', e => {
+        nodes.composer.classList.remove('drag');
+        if (!carriesFiles(e)) return;
+        e.preventDefault();
+        addAttachments(who.id, e.dataTransfer.files);
     });
 
     nodes.send.onclick = () => submit(who.id);
@@ -992,6 +1039,80 @@ function buildPane(who) {
     nodes.roleBtn.classList.toggle('has-role', Boolean(who.instructions));
 
     return node;
+}
+
+// ─────────────────────────── attachments ───────────────────────────
+
+const MAX_IMAGES = 4;       // matches duet-runner.js checkImages
+
+const canSee = participantId => {
+    const model = participant(participantId)?.model;
+    return Boolean(state.models.find(m => m.name === model)?.caps?.includes('vision'));
+};
+
+/**
+ * Images are staged on the pane and sent with its next message; text files fold into the
+ * message itself, as they always did in the single view — no tool round, and it works for
+ * files outside any workspace because you handed them over explicitly.
+ */
+function addAttachments(participantId, files) {
+    const pane = panes.get(participantId);
+    if (!pane) return;
+
+    for (const f of files) {
+        if (f.type.startsWith('image/')) {
+            if (pane.pending.length >= MAX_IMAGES) {
+                flash(`At most ${MAX_IMAGES} images per message.`, 5000);
+                continue;
+            }
+            const fr = new FileReader();
+            fr.onload = () => {
+                pane.pending.push({ name: f.name || 'pasted.png', dataUrl: fr.result });
+                paintAttachments(participantId);
+            };
+            fr.readAsDataURL(f);
+
+            // Said now, not after Send: the server refuses an image a model cannot see, and
+            // finding that out with the message already typed is the worse moment.
+            if (!canSee(participantId)) {
+                flash(`${participant(participantId)?.model || 'This model'} can't see images — `
+                    + 'pick a 👁 model for this side before sending.', 7000);
+            }
+            continue;
+        }
+
+        if (TEXT_ATTACH.test(f.name)) {
+            const fr = new FileReader();
+            fr.onload = () => {
+                const text = String(fr.result).slice(0, 60000);
+                const fence = '```';
+                const box = pane.nodes.input;
+                box.value += `${box.value ? '\n\n' : ''}${f.name}:\n${fence}\n${text}\n${fence}\n`;
+                box.dispatchEvent(new Event('input'));
+                box.focus();
+                flash(`Pasted ${f.name} into the message (${text.length.toLocaleString()} chars)`, 5000);
+            };
+            fr.readAsText(f);
+            continue;
+        }
+
+        flash(`Skipped ${f.name} — not an image or a text file`, 5000);
+    }
+}
+
+function paintAttachments(participantId) {
+    const pane = panes.get(participantId);
+    if (!pane) return;
+    const box = pane.nodes.attached;
+
+    box.hidden = !pane.pending.length;
+    box.innerHTML = pane.pending.map((p, i) =>
+        `<span class="chip"><img src="${p.dataUrl}" alt=""><span>${escapeHtml(p.name)}</span>
+         <button type="button" data-i="${i}" title="Remove">✕</button></span>`).join('');
+
+    box.querySelectorAll('button').forEach(b => {
+        b.onclick = () => { pane.pending.splice(+b.dataset.i, 1); paintAttachments(participantId); };
+    });
 }
 
 async function patchParticipant(id, patch) {

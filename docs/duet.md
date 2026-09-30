@@ -91,6 +91,19 @@ version of this page noted that `/api/chat` and `/escalate` passed `config.model
 gate and so gated remotely on a keyed machine. That was fixed centrally in `runGate`, and
 the kernel has since made the question moot: no route chooses its own gate.)
 
+## Images
+
+A request can carry up to four images (📎, paste, or drop them on a pane's composer). They
+go to the participant they were sent to, on that turn, and nowhere else. Every other
+transcript line that had images says so instead: `[2 images attached here — not included in
+this context]`. A reply like "the one on the right" is unreadable without that note, and a
+model told nothing tends to invent what the picture showed.
+
+A participant whose model cannot see (no 👁 in its picker) is refused before anything is
+written, and the composer keeps the message. A remote participant is also refused, by the
+kernel rather than here: the local gate reads text only and cannot rule on what an image
+shows, so an image never crosses.
+
 ## Concurrency
 
 A context snapshot is taken at **submit** time, not when the model starts. So a reply
@@ -165,4 +178,3 @@ by both panes, owned by neither.
 - **Autonomous back-and-forth.** Models answer when asked and never on their own.
 - **More than two participants.** The schema has a `slot` and would take a third; the
   layout and the context labels are what would need thought, not the store.
-- **Images in the duet composer.** The classic composer still has them.

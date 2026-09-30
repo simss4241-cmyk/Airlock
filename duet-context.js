@@ -121,9 +121,20 @@ function buildSystemPrompt({ participant, others, appSystemPrompt, userName }) {
  * Render one shared-log message as a labelled transcript line.
  * Only ever called for messages that are NOT the target participant's own output.
  */
-function transcriptLine(message, opts) {
-    return `${label(message, opts)} ${message.content}`;
+function transcriptLine(message, opts, { attached = false } = {}) {
+    // An image travels only with the turn it was sent on, to the participant it was sent to
+    // — the same rule the classic view used. Everywhere else the transcript SAYS there was
+    // one, because a reply like "the red one is better" is unreadable otherwise, and a model
+    // told nothing will invent what the picture showed.
+    const count = message.images?.length || 0;
+    const note = count && !attached
+        ? ` [${count} image${count > 1 ? 's' : ''} attached here — not included in this context]`
+        : '';
+    return `${label(message, opts)} ${message.content}${note}`;
 }
+
+/** Ollama and the remote tier both take bare base64; the store keeps data URLs. */
+const wireImages = images => (images || []).map(src => String(src).replace(/^data:[^,]*,/, ''));
 
 /**
  * Collapse runs of transcript lines into single `user` turns.
@@ -141,6 +152,7 @@ function mergeRuns(entries) {
         if (previous && previous.role === 'user' && entry.role === 'user') {
             previous.content += '\n\n' + entry.content;
             previous.sourceIds.push(...entry.sourceIds);
+            if (entry.images?.length) previous.images = [...(previous.images || []), ...entry.images];
         } else {
             out.push({ ...entry, sourceIds: [...entry.sourceIds] });
         }
@@ -187,7 +199,7 @@ function buildContext({
     let truncatedTrigger = false;
 
     if (trigger) {
-        let line = transcriptLine(trigger, opts);
+        let line = transcriptLine(trigger, opts, { attached: true });
 
         // Rule 3. A request too large for its own window is truncated and flagged; it is
         // never the message that disappears, because then the model answers the wrong turn.
@@ -197,7 +209,11 @@ function buildContext({
             truncatedTrigger = true;
         }
 
-        entries.push({ role: 'user', content: line, sourceIds: [trigger.id] });
+        const images = wireImages(trigger.images);
+        entries.push({
+            role: 'user', content: line, sourceIds: [trigger.id],
+            ...(images.length ? { images } : {})
+        });
         usedChars += line.length;
     }
 
@@ -233,7 +249,8 @@ function buildContext({
     return {
         messages: [
             { role: 'system', content: system },
-            ...merged.map(({ role, content }) => ({ role, content }))
+            ...merged.map(({ role, content, images }) =>
+                (images?.length ? { role, content, images } : { role, content }))
         ],
         meta: {
             budgetChars,

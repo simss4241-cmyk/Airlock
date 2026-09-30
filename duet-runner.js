@@ -149,7 +149,30 @@ const nextGenerationId = () => `duet-${Date.now().toString(36)}-${(++generationC
  *     id and handed back the existing packet rather than appended again
  *   - a retry of an earlier turn — names the packet outright and appends nothing
  */
-function resolveTrigger({ threadId, participant, text, clientRequestId, retryOf }) {
+/**
+ * Images on a request: data URLs, as the composer reads them and as the classic view always
+ * stored them, so the packet renders its own thumbnails. The wire form (bare base64) is
+ * derived in duet-context.js, never stored.
+ *
+ * Checked rather than trusted — this is the one field on the send route that can be large
+ * and that a model reads as something other than text.
+ */
+const MAX_IMAGES = 4;
+const IMAGE_DATA_URL = /^data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/]+=*$/;
+
+function checkImages(images) {
+    if (images == null) return [];
+    if (!Array.isArray(images)) throw new Error('images must be a list.');
+    if (images.length > MAX_IMAGES) throw new Error(`At most ${MAX_IMAGES} images per message.`);
+    for (const image of images) {
+        if (typeof image !== 'string' || !IMAGE_DATA_URL.test(image)) {
+            throw new Error('Each image must be a PNG, JPEG, GIF or WebP data URL.');
+        }
+    }
+    return images;
+}
+
+function resolveTrigger({ threadId, participant, text, images = [], clientRequestId, retryOf }) {
     if (retryOf) {
         const existing = duet.getMessage(retryOf);
         if (!existing) throw new Error(`No message ${retryOf} to retry.`);
@@ -161,12 +184,13 @@ function resolveTrigger({ threadId, participant, text, clientRequestId, retryOf 
     const duplicate = duet.findByClientRequest(threadId, clientRequestId);
     if (duplicate) return { trigger: duplicate, created: false };
 
-    if (!text || !text.trim()) throw new Error('Nothing to send.');
+    if ((!text || !text.trim()) && !images.length) throw new Error('Nothing to send.');
 
     const trigger = duet.appendMessage({
         threadId,
         role: 'user',
-        content: text.trim(),
+        content: (text || '').trim(),
+        images: images.length ? images : null,
         recipientId: participant.id,
         clientRequestId: clientRequestId || null,
         status: STATUS.COMPLETE,
@@ -191,7 +215,7 @@ function resolveTrigger({ threadId, participant, text, clientRequestId, retryOf 
  * @param {AbortSignal} args.signal       the client hung up, or hit Stop
  * @param {(event: object) => void} args.emit
  */
-async function generate({ threadId, participantId, text, clientRequestId, retryOf, config, signal, emit }) {
+async function generate({ threadId, participantId, text, images, clientRequestId, retryOf, config, signal, emit }) {
     const participant = duet.getParticipant(participantId);
     if (!participant) throw new Error(`No participant ${participantId}`);
     if (participant.thread_id !== Number(threadId)) {
@@ -204,8 +228,23 @@ async function generate({ threadId, participantId, text, clientRequestId, retryO
     const tier = providers.tierOf(model);
     const others = duet.getParticipants(threadId).filter(p => p.id !== participant.id);
 
+    // A model that cannot see is refused BEFORE the request is written, so the composer gets
+    // a plain error and keeps the message — rather than a packet in the log holding an image
+    // nobody could read, and a reply that answers the text as though the picture were not
+    // there. Retries re-check against the model the participant has now.
+    const attached = retryOf ? (duet.getMessage(retryOf)?.images || []) : checkImages(images);
+    if (attached.length) {
+        const caps = await providers.capabilities(model).catch(() => []);
+        if (!caps.includes('vision')) {
+            throw new Error(`${model} can't see images. Point ${participant.name} at a model `
+                + 'marked 👁 in its picker, or send the text on its own.');
+        }
+    }
+
     // ── 1. the request lands in the shared log ──
-    const { trigger, created } = resolveTrigger({ threadId, participant, text, clientRequestId, retryOf });
+    const { trigger, created } = resolveTrigger({
+        threadId, participant, text, images: attached, clientRequestId, retryOf
+    });
     emit({ type: 'user', message: trigger, created });
 
     // ── 2. snapshot, fixed at submit time ──
