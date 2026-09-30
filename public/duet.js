@@ -828,6 +828,11 @@ function handleEvent(participantId, event, streamed) {
             upsert({ ...event.message });
             pane.triggerId = event.message.id;
             schedulePaint(participantId);
+            // The first thing said in an Untitled thread names it (app.js decides whether
+            // it is still Untitled — a name given by hand is never overwritten).
+            if (event.created && state.messages.filter(m => m.role === 'user').length === 1) {
+                nameUntitled(state.threadId, event.message.content).catch(() => {});
+            }
             return streamed;
 
         case 'start':

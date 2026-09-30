@@ -1086,6 +1086,47 @@ function leaveThread() {
     window.duetUI?.onThread(null);
 }
 
+// ── new threads, named later ──
+//
+// The scratch chat was a conversation outside every thread: kept in localStorage, never a
+// packet, never in the audit trail — so anything it sent across the boundary crossed with
+// no record to show for it. A thread you have not named yet does the same job and is on
+// the record from its first word. It names itself from that first word, unless you got
+// there first.
+
+const UNTITLED = 'Untitled';
+
+async function newThread() {
+    const trayOf = id => tree.find(f => f.threads.some(t => t.id === id));
+    let folder = (activeThread && trayOf(activeThread.id)) || tree[0];
+    if (!folder) {
+        folder = await json('/api/folders', { name: 'Threads' });
+        if (folder.error) return flash(folder.error, 6000);
+    }
+
+    const thread = await json('/api/threads', { folderId: folder.id, title: UNTITLED });
+    if (thread.error) return flash(thread.error, 6000);
+
+    await selectThread(thread.id, thread.title);
+    settle(thread.id);
+    document.querySelector('.duet-pane .duet-input')?.focus();
+}
+
+/** Called by duet.js when a thread's first request lands. */
+async function nameUntitled(threadId, text) {
+    if (activeThread?.id !== threadId || activeThread.title !== UNTITLED) return;
+
+    const words = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!words) return;                 // an image on its own: stays Untitled, rename by hand
+    const title = words.length <= 48 ? words : `${words.slice(0, 48).replace(/\s+\S*$/, '')}…`;
+
+    const res = await json(`/api/threads/${threadId}`, { title }, 'PATCH');
+    if (res.error) return;
+    activeThread.title = title;
+    el.threadName.textContent = title;
+    await loadTree();
+}
+
 /** Persist one turn as a packet. No-op when no thread is selected. */
 async function persist(role, content, images = []) {
     if (!activeThread || !content) return null;
@@ -2243,13 +2284,7 @@ el.file.onchange = () => { addFiles(el.file.files); el.file.value = ''; };
     el.composer.addEventListener(ev, e => { e.preventDefault(); el.composer.classList.remove('drag'); }));
 el.composer.addEventListener('drop', e => addFiles(e.dataTransfer.files));
 
-el.newChat.onclick = () => {
-    if (controller) controller.abort();
-    leaveThread();          // back to the scratch chat; packets already stored stay put
-    messages = [];
-    save();
-    render();
-};
+el.newChat.onclick = () => newThread();
 
 el.newFolder.onclick = async () => {
     const name = prompt('New tray name:');
