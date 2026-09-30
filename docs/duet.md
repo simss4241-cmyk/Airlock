@@ -148,8 +148,25 @@ No new log. `duet-store.js` adds a `participants` table and additive columns on
 chat, by fork and by move all get one and there is a single place to get it wrong.
 `position` could not do this job: it is a nesting slot and restarts under each parent.
 
-Duet turns are ordinary packets. They drag, fork, nest, search, appear in the oversight
-brief and count in the exposure query like anything else.
+Duet turns are ordinary packets. They search, appear in the brief and count in the
+exposure query like anything else.
+
+## Leaving a conversation
+
+Drag a finished message onto a thread in the rail to move it there; hold Alt to fork it.
+When it lands, the server detaches it (`rehome` in `duet-store.js`). Its author and
+addressee were participants of the thread it left, so both are cleared, and it becomes
+shared history in both panes, attributed to the model that wrote it. It is re-sequenced at
+the end of its new thread. Tier, status and `request_meta` travel with it, because they
+record how it was produced, not where it is filed. Its crossings stay on the record too:
+provenance belongs to the packet.
+
+Only a `complete` message may leave. A fork copies text, not the duet's status column, so
+forking a stopped, failed or withheld reply would turn it into conversation somewhere else.
+The server refuses; the pane only offers the move when the server will take it.
+
+Nesting one message inside another is not offered in a duet. A duet is one conversation
+in server order, and a nested message has no place in that order.
 
 ## Pre-duet threads
 

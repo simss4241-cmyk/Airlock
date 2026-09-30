@@ -416,6 +416,56 @@ async function scrub() {
     ok((await get('/api/search?q=' + encodeURIComponent('Only once, please.'))).length >= 1,
         'duet messages are searchable like any other packet');
 
+    // ── leaving a conversation: move and fork out of a duet ──
+    //
+    // A message dragged to another thread must stop claiming a participant of the thread it
+    // left — otherwise it is attributed to a side that does not exist where it now lives,
+    // and the context builder hands it to whichever participant shares the id.
+    const elsewhere = (await post('/api/threads', { folderId: tray.id, title: 'ZZ DUET TEST elsewhere' })).json;
+    const reply = finalState.messages.find(m => m.role === 'assistant' && m.status === 'complete' && m.authorId);
+
+    if (!reply) {
+        skipped('a message forked out of a duet claims no participant where it lands (nothing generated)');
+        skipped('a moved message is detached and ordered after what was already there');
+    } else {
+        const forked = (await post(`/api/packets/${reply.id}/fork`, { toThreadId: elsewhere.id })).json;
+        const there = await get(`/api/duet/${elsewhere.id}`);
+        const copy = there.messages.find(m => m.id === forked.id);
+        ok(copy && copy.authorId == null && copy.recipientId == null,
+            'a message forked out of a duet claims no participant where it lands', JSON.stringify(copy));
+        ok(copy && copy.model === reply.model && copy.tier === reply.tier,
+            'but keeps the model that wrote it, and its tier');
+
+        await post(`/api/packets/${reply.id}/move`, { toThreadId: elsewhere.id });
+        const moved = (await get(`/api/duet/${elsewhere.id}`)).messages.find(m => m.id === reply.id);
+        ok(moved && moved.authorId == null && moved.seq > copy.seq,
+            'a moved message is detached and ordered after what was already there', JSON.stringify(moved));
+        ok(!(await get(`/api/duet/${thread.id}`)).messages.some(m => m.id === reply.id),
+            'and is gone from the conversation it left');
+    }
+
+    const unfinished = finalState.messages.find(m => m.status !== 'complete');
+    if (unfinished) {
+        const refused = await post(`/api/packets/${unfinished.id}/fork`, { toThreadId: elsewhere.id });
+        ok(refused.status === 400 && /finished/.test(refused.json?.error || ''),
+            `an unfinished (${unfinished.status}) message cannot be forked into conversation elsewhere`,
+            JSON.stringify(refused.json));
+    } else {
+        skipped('an unfinished message cannot be forked (none in this run)');
+    }
+
+    // The fork tier bug predates the duet: a fork of a REMOTE model's reply came out 'local'.
+    if (REMOTE) {
+        const farReply = (await post('/api/packets', {
+            threadId: thread.id, role: 'assistant', content: 'Written across the boundary.', model: REMOTE
+        })).json;
+        const farFork = (await post(`/api/packets/${farReply.id}/fork`, { toThreadId: elsewhere.id })).json;
+        ok(farReply.tier === 'remote' && farFork.tier === 'remote',
+            'a fork of a remote reply is still recorded as remote', `${farReply.tier} -> ${farFork.tier}`);
+    } else {
+        skipped('a fork of a remote reply is still recorded as remote (no remote model)');
+    }
+
     // ── teardown ──
     await del(`/api/folders/${tray.id}`);
 

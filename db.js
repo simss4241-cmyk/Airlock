@@ -488,12 +488,16 @@ function createCore(db, file) {
 
         const copy = (srcId, newParentId, isRoot) => {
             const p = db.prepare('SELECT * FROM packets WHERE id = ?').get(srcId);
+            // ⚠ tier is copied. It used to be left to the column default, so a fork of a reply
+            // a REMOTE model wrote came out as tier 'local' — rewriting where that text was
+            // produced, which is the one thing the tier column exists to record truthfully.
             const newId = db.prepare(`
                 INSERT INTO packets
-                    (thread_id, parent_id, forked_from, origin_thread_id, role, content, model, images, position, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (thread_id, parent_id, forked_from, origin_thread_id, role, content, model, images, tier, position, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
                 target, newParentId, srcId, p.origin_thread_id, p.role, p.content, p.model, p.images,
+                p.tier || 'local',
                 nextPosition(target, newParentId), now()
             ).lastInsertRowid;
 

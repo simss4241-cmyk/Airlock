@@ -563,11 +563,15 @@ function wireCopyButtons(scope) {
  * packet says about itself, so the two views cannot drift into telling different stories
  * about the same message.
  *
- * What this does NOT set is DT_PACKET, the in-app move/fork/nest format. movePacket() in
- * db.js reassigns thread_id and nothing else, so a duet message dropped into another thread
- * would keep author_participant_id pointing at a participant of the thread it left — a
- * message attributed to a side that does not exist where it now lives. Until that path
- * clears the duet columns, these drags go outward only.
+ * A FINISHED message also carries DT_PACKET, the in-app format, so dropping it on a thread
+ * in the rail moves it there (Alt forks). This used to be withheld: movePacket() reassigned
+ * thread_id and nothing else, leaving the message attributed to a participant of the thread
+ * it left. The server now detaches it on landing (rehome in duet-store.js) and refuses an
+ * unfinished one outright, so the drag offers the move only when the server will take it.
+ *
+ * Nesting a message inside another is not offered here. A duet is one conversation in
+ * server order; a message tucked under another has no place in that order, and the panes
+ * would show it exactly where they showed it before.
  */
 function wireHandoff(scope) {
     scope.querySelectorAll('[data-message]').forEach(node => {
@@ -582,9 +586,15 @@ function wireHandoff(scope) {
 
         const handle = node.querySelector('.who[draggable]');
 
+        const movable = message.status === 'complete';
+
         handle?.addEventListener('dragstart', e => {
             const dt = e.dataTransfer;
             offerAsText(dt, exportText(message, packetId), exportHtml(message, packetId));
+            if (movable) {
+                dt.setData(DT_PACKET, String(packetId));
+                draggingPacket = packetId;
+            }
 
             // Shift turns the whole gesture into a FILE drag as far as the OS is concerned,
             // which is why it cannot be on by default: a chat composer then shows a drop
@@ -595,23 +605,31 @@ function wireHandoff(scope) {
                     + `${location.origin}/api/packets/${packetId}/packet.md`);
             }
 
-            // 'copy', not 'copyMove': nothing in this app accepts the drag, so there is no
-            // move to permit, and the cursor should say so.
-            dt.effectAllowed = 'copy';
+            // copyMove only when a thread in the rail may take it: a drop there sets
+            // dropEffect 'move', which 'copy' alone forbids — silently, with a no-entry cursor.
+            dt.effectAllowed = movable ? 'copyMove' : 'copy';
             node.classList.add('dragging');
 
+            const mode = dragMode(e, movable);
+            const tag = mode === 'export' ? ' <b>[.md]</b>' : mode === 'fork' ? ' <b>[fork]</b>' : '';
             const preview = node.querySelector('.bubble')?.textContent.trim().slice(0, 46) || '';
-            dt.setDragImage(makeDragChip(`<b>#${packetId}</b> ${escapeHtml(preview)}…${
-                e.shiftKey ? ' <b>[.md]</b>' : ''}`), 16, 14);
+            dt.setDragImage(makeDragChip(`<b>#${packetId}</b> ${escapeHtml(preview)}…${tag}`), 16, 14);
 
-            flash('drop into any text box — the model and the tier travel with it · '
-                + 'Shift for .md · ⧉ copy if the target refuses drops', 30000);
+            flash(movable
+                ? 'drop on a thread to move · Alt to fork · any text box takes it with its provenance · Shift for .md'
+                : 'drop into any text box — the model and the tier travel with it · '
+                  + 'Shift for .md · ⧉ copy if the target refuses drops', 30000);
         });
 
-        handle?.addEventListener('drag', e => trail(e, e.shiftKey ? 'export' : 'move'));
+        handle?.addEventListener('drag', e => {
+            const mode = dragMode(e, movable);
+            if (mode === 'fork') announceSplit(node);
+            trail(e, mode);
+        });
 
         handle?.addEventListener('dragend', () => {
             node.classList.remove('dragging');
+            draggingPacket = null;
             clearDragChip();
             clearTrails();
             clearFlash();

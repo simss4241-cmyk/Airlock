@@ -383,10 +383,74 @@ function createDuet(db, store) {
         return getMessage(id);
     }
 
+    // ─────────────────────────── leaving a conversation ───────────────────────────
+
+    /**
+     * May this packet be moved or forked out of its thread?
+     *
+     * Only a finished one. A generation still streaming has no final text to carry, and a
+     * stopped, failed, withheld or interrupted one is kept out of every context snapshot
+     * by its status — a fork would copy the text and not the status (the column is ours,
+     * not db.js's), turning a refusal or a half-answer into conversation somewhere else.
+     * Returns the reason it may not, or null.
+     */
+    function refuseToLeave(packetId) {
+        const row = db.prepare('SELECT status FROM packets WHERE id = ?').get(Number(packetId));
+        if (!row) return null;                   // db.js reports "No packet" itself
+        if (row.status && row.status !== STATUS.COMPLETE) {
+            return `Only a finished message can move or fork — this one is ${row.status}.`;
+        }
+        return null;
+    }
+
+    /**
+     * A packet (and anything nested under it) has just landed in another thread. Make it
+     * belong there.
+     *
+     * ⚠ Its author and addressee were participants of the thread it LEFT. Kept, the
+     * message would claim a side that does not exist where it now lives — and the context
+     * builder would feed it to whichever participant happened to have the same id. So both
+     * are cleared, and the message becomes what every pre-duet packet already is: shared
+     * history, shown in both panes, attributed to the model that wrote it (`packets.model`
+     * is untouched — that is true provenance and it travels).
+     *
+     * `seq` is reassigned at the end of the new thread: the old number ordered it in a
+     * conversation it is no longer part of. Tier, status and request_meta stay — they are
+     * facts about how it was produced, not about where it is filed.
+     */
+    function rehome(rootId) {
+        const ids = db.prepare(`
+            WITH RECURSIVE sub(id) AS (
+                SELECT ?
+                UNION ALL
+                SELECT p.id FROM packets p JOIN sub ON p.parent_id = sub.id
+            )
+            SELECT p.id, p.thread_id FROM packets p JOIN sub ON sub.id = p.id
+            ORDER BY COALESCE(p.seq, p.id), p.id
+        `).all(Number(rootId));
+        if (!ids.length) return;
+
+        const next = db.prepare(`
+            SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM packets WHERE thread_id = ? AND id NOT IN (${
+                ids.map(() => '?').join(',')})
+        `);
+        const update = db.prepare(`
+            UPDATE packets
+               SET author_participant_id = NULL, recipient_participant_id = NULL,
+                   reply_to_packet_id = NULL, client_request_id = NULL, generation_id = NULL,
+                   seq = ?
+             WHERE id = ?
+        `);
+
+        let seq = next.get(ids[0].thread_id, ...ids.map(r => r.id)).n;
+        for (const { id } of ids) update.run(seq++, id);
+    }
+
     return {
         resetStaleGenerations,
         getParticipants, getParticipant, ensureDuet, updateParticipant, isDuet,
-        getConversation, getMessage, findByClientRequest, appendMessage, finishMessage
+        getConversation, getMessage, findByClientRequest, appendMessage, finishMessage,
+        refuseToLeave, rehome
     };
 }
 

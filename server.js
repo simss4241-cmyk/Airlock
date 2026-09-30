@@ -1373,8 +1373,21 @@ app.get('/api/packets/:id/packet.md', (req, res) => {
     }
 });
 app.get('/api/packets/:id/provenance', ok(req => store.getProvenance(id(req))));
-app.post('/api/packets/:id/move', ok(req => store.movePacket(id(req), req.body)));
-app.post('/api/packets/:id/fork', ok(req => store.forkPacket(id(req), req.body)));
+// Moving or forking a packet out of a duet takes it out of a conversation, so the duet
+// store has a say on both sides of the store call: whether it may leave at all, and making
+// it belong where it lands. See refuseToLeave and rehome in duet-store.js.
+const leaving = (req, operation) => {
+    const refusal = duet.refuseToLeave(id(req));
+    if (refusal) throw new Error(refusal);
+
+    const before = store.getPacket(id(req));
+    const landed = operation();
+    if (landed && before && landed.thread_id !== before.thread_id) duet.rehome(landed.id);
+    return landed ? store.getPacket(landed.id) : landed;
+};
+
+app.post('/api/packets/:id/move', ok(req => leaving(req, () => store.movePacket(id(req), req.body))));
+app.post('/api/packets/:id/fork', ok(req => leaving(req, () => store.forkPacket(id(req), req.body))));
 app.post('/api/packets/:id/review', ok(req => store.reviewPacket(id(req), req.body)));
 
 /**
