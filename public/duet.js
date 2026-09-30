@@ -46,7 +46,8 @@ const state = {
     messages: [],
     userName: 'User',
     models: [],             // from /api/health, carrying tier
-    mobileSlot: 'a'
+    mobileSlot: 'a',
+    focus: null             // 'a' | 'b' — that side wide, the other folded; null = both
 };
 
 /** Per-pane live wiring. Never conversation data — that lives in state.messages. */
@@ -189,7 +190,13 @@ function messageHtml(message, { showAddressing = false } = {}) {
         ? gateHtml(message.requestMeta.gate)
         : '';
 
-    const empty = message.streaming ? '<p class="stats">thinking…</p>' : '';
+    // A failure with nothing written says why, from the record — an empty red box reads as
+    // a rendering bug, and the reason (a provider refusal, a model that would not load) is
+    // usually the thing to act on.
+    const why = message.status === 'failed' && message.requestMeta?.error
+        ? `<p class="stats">Failed: ${escapeHtml(String(message.requestMeta.error).slice(0, 240))}</p>`
+        : '';
+    const empty = message.streaming ? '<p class="stats">thinking…</p>' : why;
     const thumbs = message.images?.length
         ? `<div class="thumbs">${message.images.map(src =>
               `<img src="${escapeHtml(src)}" alt="attached image">`).join('')}</div>`
@@ -663,6 +670,7 @@ function paintPaneStatus(participantId) {
     const node = pane.nodes.state;
 
     node.className = 'duet-state' + (error ? ' bad' : busy ? ' busy' : '');
+    pane.nodes.node.classList.toggle('busy', Boolean(busy));   // the folded strip reads this
     node.textContent = error ? error
         : status === 'queued' ? `queued · ${pane.queuePosition} ahead`
             : status === 'gating' ? 'gate ruling…'
@@ -945,7 +953,16 @@ function buildPane(who) {
             </select>
             <button class="icon-btn sm duet-role-btn" title="Standing instructions for this participant">✎ role</button>
             <span class="duet-state"></span>
+            <button class="icon-btn sm duet-focus" title="Focus this side — fold the other one away">⤢</button>
         </header>
+
+        <!-- Shown only while the OTHER side is focused: this pane, folded to a strip that
+             still says which side it is, which side of the boundary it runs on, and whether
+             it is busy. Click to unfold. -->
+        <button class="duet-fold" hidden title="Unfold ${who.slot === 'a' ? 'the left' : 'the right'} side">
+            <span class="duet-fold-dot"></span>
+            <span class="duet-fold-label">${who.slot === 'a' ? 'Left' : 'Right'}</span>
+        </button>
 
         <div class="duet-role" hidden>
             <textarea class="duet-role-text" rows="2"
@@ -989,8 +1006,13 @@ function buildPane(who) {
         composer: node.querySelector('.duet-composer'),
         attached: node.querySelector('.duet-attached'),
         attach: node.querySelector('.duet-attach'),
-        file: node.querySelector('.duet-file')
+        file: node.querySelector('.duet-file'),
+        focus: node.querySelector('.duet-focus'),
+        fold: node.querySelector('.duet-fold')
     };
+
+    nodes.focus.onclick = () => setFocus(state.focus === who.slot ? null : who.slot);
+    nodes.fold.onclick = () => setFocus(null);
 
     panes.set(who.id, {
         nodes, controller: null, status: 'idle', error: null,
@@ -1185,8 +1207,48 @@ function paintTabSelection() {
     });
 }
 
+// ── focus: one side wide, the other folded to a strip ──
+//
+// What the single view was for — talking to one model — without leaving the conversation
+// or the chamber. The folded side is still a participant: it can be generating, and it
+// still reads the whole conversation next time it is asked. Remembered per thread.
+
+const focusKey = id => `airlock.duet.focus.${id}`;
+
+function setFocus(slot) {
+    state.focus = slot || null;
+    if (state.threadId) {
+        try {
+            if (state.focus) localStorage.setItem(focusKey(state.threadId), state.focus);
+            else localStorage.removeItem(focusKey(state.threadId));
+        } catch { /* private window: the choice lasts this session */ }
+    }
+    paintFocus();
+    if (state.focus) {
+        const focused = state.participants.find(p => p.slot === state.focus);
+        panes.get(focused?.id)?.nodes.input.focus();
+    }
+}
+
+function paintFocus() {
+    if (state.focus) duetEl.root.dataset.focus = state.focus;
+    else delete duetEl.root.dataset.focus;
+
+    for (const who of state.participants) {
+        const pane = panes.get(who.id);
+        if (!pane) continue;
+        const folded = Boolean(state.focus) && state.focus !== who.slot;
+        pane.nodes.fold.hidden = !folded;
+        pane.nodes.focus.textContent = state.focus === who.slot ? '⤡' : '⤢';
+        pane.nodes.focus.title = state.focus === who.slot
+            ? 'Show both sides again' : 'Focus this side — fold the other one away';
+        pane.nodes.focus.classList.toggle('on', state.focus === who.slot);
+    }
+}
+
 function paintView() {
     duetEl.root.dataset.slot = state.mobileSlot;
+    paintFocus();
     paintTabSelection();
     state.participants.forEach(p => paintPane(p.id));
     paintAirlock();
@@ -1299,6 +1361,7 @@ async function loadDuet(threadId) {
 
     state.threadId = threadId;
     state.enabled = data.enabled;
+    try { state.focus = localStorage.getItem(focusKey(threadId)) || null; } catch { state.focus = null; }
     state.participants = data.participants;
     state.messages = data.messages;
     state.userName = data.userName;
