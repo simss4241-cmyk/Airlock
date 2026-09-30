@@ -202,8 +202,9 @@ no addressee. Those show in **both** panes, and reach both models labelled
 `[an earlier assistant → User]` or `[User → everyone]`. They are not adopted into either
 participant's voice — quietly claiming them would put words in a model's mouth.
 
-Classic chat keeps working on a duet thread, and its turns behave the same way: shared
-by both panes, owned by neither.
+There is no classic chat any more — every thread opens as two panes, and one created
+before participants existed is seated when it is first opened. What classic chat wrote
+before stays exactly as above: shared by both panes, owned by neither.
 
 ## Files
 

@@ -19,8 +19,8 @@
  * gate rules before anything leaves. A refusal is rendered in place, not swallowed.
  *
  * Loaded after app.js and leans on it for the markdown renderer, the toast and the tray
- * rail. Classic chat keeps working exactly as it did; this is a second view over the same
- * thread, not a replacement for the first. The fetch wrapper in app.js attaches the access
+ * rail. This is THE view of a thread: the single-pane chat it grew up beside is gone, and
+ * talking to one model is focus mode (⤢), inside the same conversation and chamber. The fetch wrapper in app.js attaches the access
  * token to every /api call made here, so a hosted instance needs nothing extra.
  */
 
@@ -33,9 +33,6 @@ const duetEl = {
     railLog: $('airlockLog'),
     railSub: $('airlockSub'),
     railToggle: $('airlockToggle'),
-    toggle: $('duetToggle'),
-    main: $('main'),
-    footer: document.querySelector('.pane > footer')
 };
 
 const state = {
@@ -53,7 +50,6 @@ const state = {
 /** Per-pane live wiring. Never conversation data — that lives in state.messages. */
 const panes = new Map();    // participantId -> { nodes, controller, status, error, gate, frame }
 
-const viewKey = id => `airlock.duet.view.${id}`;
 
 // ─────────────────────────── filtering ───────────────────────────
 
@@ -1344,87 +1340,17 @@ function paintView() {
     paintAirlock();
 }
 
-/**
- * Reload the classic single-pane view from the store.
- *
- * app.js fills `messages` once, in selectThread, and duet turns are written after that —
- * so handing the pane back to classic chat without this shows the thread as it was when
- * it was opened, which for a thread that became a duet immediately is an empty list.
- * Reads the same endpoint selectThread does rather than translating duet state, so the
- * classic view stays the store's view and cannot drift into a second rendering of it.
- */
-async function refreshClassic() {
-    if (!activeThread) return;
-    try {
-        const packets = await (await fetch(`/api/threads/${activeThread.id}/packets`)).json();
-        if (Array.isArray(packets)) {
-            messages = flatten(packets);
-            render();
-            scrollDown();
-        }
-    } catch { /* the duet view is still correct; leave the classic list as it was */ }
-}
-
-/**
- * Re-read the shared conversation from the store, without rebuilding the panes.
- *
- * The mirror of refreshClassic. Classic chat writes packets to the same thread, so a turn
- * sent from the single-pane composer has to appear in the duet view too — it is the same
- * conversation, and a view that quietly omits part of it is exactly what this design is
- * meant to rule out. Panes are left standing so a half-typed message survives the switch.
- */
-async function refreshConversation() {
-    if (!state.threadId) return;
-    try {
-        const data = await (await fetch(`/api/duet/${state.threadId}`)).json();
-        if (data.error) return;
-        state.messages = data.messages;
-        state.participants = data.participants;
-    } catch { /* keep what we have; the next send will resync */ }
-}
-
-/** Show the duet view, or hand the pane back to classic chat. */
+/** Show the two panes and the chamber, or nothing (app.js shows the idle desk then). */
 function setActive(active) {
-    const leavingDuet = state.active && !active;
-    const enteringDuet = !state.active && active;
-    state.active = active && state.enabled;
-
+    state.active = Boolean(active) && state.enabled;
     duetEl.root.hidden = !state.active;
-    duetEl.main.hidden = state.active;
-    if (duetEl.footer) duetEl.footer.hidden = state.active;
-
-    // The sidebar model picker drives the single-pane view, not the panes — each of those
-    // has its own. Leaving it on screen in duet mode made it look like "the model" while
-    // it controlled neither side. It comes back with the classic view, where it applies.
-    if (el.model) el.model.hidden = state.active;
-
-    // Three states, not two: a thread that has never been a duet reads as an invitation,
-    // and only one that already has participants can be switched off.
-    duetEl.toggle.classList.toggle('on', state.active);
-    duetEl.toggle.textContent = !state.enabled ? '⇄ duet'
-        : state.active ? '⇄ duet' : '⇄ duet off';
-    duetEl.toggle.title = !state.enabled
-        ? 'Give this thread two named participants, each with its own pane'
-        : state.active ? 'Back to the single-pane view of this same conversation'
-            : 'Show both participants again';
-
-    if (state.threadId) {
-        localStorage.setItem(viewKey(state.threadId), state.active ? 'duet' : 'classic');
-    }
-    if (state.active) {
-        paintView();
-        // Repaint again once the store has answered, so turns sent from the classic
-        // composer while the duet view was hidden are not missing from it.
-        if (enteringDuet) refreshConversation().then(paintView);
-    } else if (leavingDuet) {
-        refreshClassic();
-    }
+    if (state.active) paintView();
 }
 
 // ─────────────────────────── lifecycle ───────────────────────────
 
 /**
- * Models come from /api/health, the same source the main dropdown uses, so the duet cannot
+ * Models come from /api/health, the same source the Settings picker uses, so the duet cannot
  * offer a model the rest of the app does not believe in — and each carries its tier.
  */
 async function loadModels() {
@@ -1446,8 +1372,18 @@ function teardown() {
 }
 
 async function loadDuet(threadId) {
-    const data = await (await fetch(`/api/duet/${threadId}`)).json();
+    let data = await (await fetch(`/api/duet/${threadId}`)).json();
     if (data.error) throw new Error(data.error);
+
+    // Every thread is a duet. One created before participants existed — or before this
+    // view was the only view — is seated now, with the same defaults a new thread gets,
+    // rather than opening onto nothing. Its earlier packets stay shared history.
+    if (!data.enabled) {
+        data = await (await fetch(`/api/duet/${threadId}/enable`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+        })).json();
+        if (data.error) throw new Error(data.error);
+    }
 
     state.threadId = threadId;
     state.enabled = data.enabled;
@@ -1476,12 +1412,9 @@ async function onThread(thread) {
     if (!thread) {
         state.threadId = null;
         state.enabled = false;
-        duetEl.toggle.hidden = true;
         setActive(false);
         return;
     }
-
-    duetEl.toggle.hidden = false;
 
     try {
         await loadDuet(thread.id);
@@ -1489,44 +1422,8 @@ async function onThread(thread) {
         flash(err.message, 6000);
         state.enabled = false;
     }
-
-    // A thread that HAS two participants opens as two panes. The view preference is now
-    // an opt-OUT, not an opt-in.
-    //
-    // ⚠ This was backwards, and it made the whole feature invisible. The old rule required
-    // localStorage to say 'duet' for this thread IN THIS BROWSER, so a thread with two
-    // participants still opened single-pane everywhere it had not been toggled before —
-    // a different browser, a fresh profile, the packaged app window rather than a tab.
-    // The app looked like it had one chat box and one model picker, and the only way in
-    // was a small pill in a crowded lane that gave no hint the thread was already a duet.
-    const preference = localStorage.getItem(viewKey(thread.id));
-    setActive(state.enabled && preference !== 'classic');
+    setActive(state.enabled);
 }
-
-duetEl.toggle.onclick = async () => {
-    if (!state.threadId) return flash('Pick a thread first — a duet needs somewhere to live.', 5000);
-
-    if (state.enabled) { setActive(!state.active); return; }
-
-    duetEl.toggle.disabled = true;
-    try {
-        const res = await fetch(`/api/duet/${state.threadId}/enable`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: el.model.value })
-        });
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-
-        await loadDuet(state.threadId);
-        setActive(true);
-        flash('Two participants, one conversation. Ask either one.', 6000);
-    } catch (err) {
-        flash(err.message, 6000);
-    } finally {
-        duetEl.toggle.disabled = false;
-    }
-};
 
 // ─────────────────────────── the chamber's own controls ───────────────────────────
 

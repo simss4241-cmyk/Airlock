@@ -35,7 +35,6 @@
             <span class="pill" id="status"><span class="dot" id="dot"></span><span id="statusText">checking…</span></span>
             <button class="pill pill-btn" id="tokenPill">Σ 0</button>
         </div>
-        <select id="model" title="Model"></select>
     </div>
 
     <div class="rail-head">
@@ -63,30 +62,22 @@
         tier needs no account and no key.
     </div>
 
-    <!-- The Galactic Oversight Committee. Drop a thread on a seat to escalate it.
-         Every seat is a Nemotron tier and crosses live, gated by the local model.
-         The manual brief path (POST /api/threads/:id/handoff) still exists and is
-         still tested — it simply has no seat in the lane. -->
-    <div class="committee" id="committee">
-        <span class="lane-label">Local</span>
-        <span class="chip-local" id="localChip">Local · 16 GB</span>
-        <span class="lane-arrow">↗</span>
-        <span class="lane-label">Oversight</span>
-        <div class="members" id="members">
-            <button class="member" data-actor="Nemotron Nano"
-                    title="Nemotron 3 Nano 30B — boundary checks and fast verdicts">Nano</button>
-            <button class="member" data-actor="Nemotron Super"
-                    title="Nemotron 3 Super 120B — the standard verdict">Super</button>
-            <button class="member" data-actor="Nemotron Ultra"
-                    title="Nemotron 3 Ultra 550B — deep review, 1M-token window">Ultra</button>
-        </div>
+    <!-- The boundary bar. What used to be here was the Oversight lane: three Nemotron seats
+         to drop a thread on for review. A participant pointed at Super or Ultra does that job
+         now, inside the conversation, so the lane is gone and the bar shows the boundary
+         itself: which local model rules on every crossing, how much of this thread has
+         crossed, and the one way to carry it out by hand. -->
+    <div class="boundary-bar" id="committee">
+        <span class="gate-chip" id="gateChip" title="The local model that rules on every crossing">
+            <span class="gate-dot"></span><span class="lane-label">Gate</span>
+            <span id="gateModel">checking…</span>
+        </span>
         <span class="spacer"></span>
-        <button class="pill pill-btn" id="duetToggle" hidden
-                title="Two named participants sharing this one conversation, each with its own pane">⇄ duet</button>
         <span class="pill" id="threadPill" hidden><span id="threadName"></span></span>
+        <span class="pill crossed-pill" id="crossedPill" hidden
+              title="Packets in this thread recorded as having left this machine"></span>
         <button class="pill pill-btn carry-btn" id="carryOut" hidden
                 title="Carry this thread out by hand — ruled on by the local gate first, recorded when it leaves">⇱ Carry out</button>
-        <span class="lane-hint" id="laneHint">drag a thread up here</span>
     </div>
 
     <!-- Every message used to be written into .lane-hint, which lives at the right
@@ -95,6 +86,8 @@
          outside that bar and cannot be scrolled away. -->
     <div class="toast" id="toast" hidden></div>
 
+    <!-- Shown only when no thread is open: the idle desk, and the way into a new thread.
+         There is no conversation outside a thread any more — see newThread() in app.js. -->
     <main id="main">
         <div class="wrap" id="messages"></div>
     </main>
@@ -155,24 +148,6 @@
         </section>
     </section>
 
-    <footer>
-        <div class="composer" id="composer">
-            <div class="attached" id="attached" hidden></div>
-            <textarea id="input" rows="1" placeholder="Ask Airlock…  (Enter to send, Shift+Enter for a new line)"></textarea>
-            <div class="row">
-                <button class="icon-btn" id="attach" title="Attach an image or a text/.md file">📎</button>
-                <input type="file" id="file" multiple hidden
-                       accept="image/*,.md,.markdown,.txt,.text,.json,.csv,.log,.yml,.yaml,.js,.ts,.py,.ps1,.scad,.html,.css">
-                <button class="icon-btn toggle" id="thinkToggle"
-                        title="The local model's reasoning channel. Off is ~3.7x faster on this hardware.">◈ reasoning</button>
-                <button class="icon-btn toggle" id="toolToggle"
-                        title="Let the model list, find and read files in the workspace root">⛁ files</button>
-                <span class="hint" id="hint"></span>
-                <span class="spacer"></span>
-                <button class="send" id="send">Send</button>
-            </div>
-        </div>
-    </footer>
 
 </div><!-- /.pane -->
 </div><!-- /.app-shell -->
@@ -191,6 +166,26 @@
                     <span class="hint" id="wsHint"></span>
                 </div>
                 <p class="note">Each thread has its own read-only workspace. Switching threads switches file access with it.</p>
+            </div>
+
+            <div class="field">
+                <label for="model">Default model for new threads</label>
+                <select id="model"></select>
+                <p class="note">
+                    A new thread seats this model on the side it belongs to — the left if it runs
+                    here, the right if it crosses — and each pane can be repointed afterwards.
+                    If <code>AIRLOCK_GATE_MODEL</code> is not set, a local model chosen here also
+                    rules on crossings.
+                </p>
+            </div>
+
+            <div class="field">
+                <label class="check"><input type="checkbox" id="thinkToggle"> Reasoning channel</label>
+                <p class="note">
+                    For models that have one: they think before they answer, shown folded above
+                    the reply. Off is about 3.7x faster on this hardware. Models without one
+                    answer directly either way.
+                </p>
             </div>
 
             <div class="field">

@@ -143,6 +143,49 @@ independent result. That set has now been used for two decisions (the gate model
 scanner) and is spent by its own rule. The next round needs fresh cases, ideally written by
 someone who has not seen the scanner.
 
+## Verified 2026-09-30 — one view, files in it, and every route out gated
+
+The single-pane view is gone. Every thread opens as two panes and the chamber. What only
+the single view could do came across first:
+- images (`duet_context_test`, 5 new);
+- moving and forking messages (`duet_test`, 6 new);
+- unnamed threads in place of the unrecorded scratch chat;
+- focus mode for one-model work;
+- workspace files, as below.
+
+The Oversight lane went too. The bar now shows the gate model the server will actually
+use, the record's count of what crossed, and ⇱ Carry out.
+
+**Workspace files in the duet**, and local contents ruled on by every route to the cloud:
+directly, through shared history, after a move, and by hand. `tools/duet_tools_test.js`
+covers all four, **30/30**. It runs a fake remote and a fake Ollama whose stand-in gate
+releases everything, so every refusal is the secret scanner's, and a route that skipped
+the gate would leak and fail. It also proves that a harmless file's contents were shown
+to the gate before they crossed, and that forged carry tokens and self-claimed rulings
+are refused.
+
+All sixteen suites the README lists pass (606 assertions), plus `workspace_http_test` (22),
+which the README does not list.
+
+In the browser:
+- the landing and Settings (default model, reasoning) render;
+- a pre-duet thread is seated on open;
+- ⇱ Carry out withheld a brief holding a key without ever showing it;
+- a clean brief was released, and Copy recorded `hand · a web chat · gate=released`.
+
+**Gate findings (qwen2.5:14b), not acted on:**
+- It withheld a request because it *asked to read* a local file: "the request involves a
+  local file", with or without the duet's `[User → Right]` label.
+- It withheld the same kind of request with different wording as "vague", after releasing
+  it on an earlier run.
+- It withheld a harmless brief because it named a model id, calling that "a project name
+  that may be sensitive".
+
+GATE_SYSTEM says paths and project names are not grounds to withhold, and file contents
+are ruled on separately when read. In practice the 14B gate will stop most requests for a
+remote side to read files before any file is opened. Fixing this is gate tuning, and the
+held-out set is spent, so it needs fresh held-out cases first.
+
 ---
 
 [← back to the README](../README.md)

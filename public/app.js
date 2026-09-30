@@ -4,21 +4,21 @@ const $ = id => document.getElementById(id);
 
 const el = {
     demoNotice: $('demoNotice'), toast: $('toast'),
-    messages: $('messages'), main: $('main'), input: $('input'), send: $('send'),
-    model: $('model'), dot: $('dot'), statusText: $('statusText'), hint: $('hint'),
-    attach: $('attach'), file: $('file'), attached: $('attached'), composer: $('composer'),
+    messages: $('messages'), main: $('main'),
+    model: $('model'), dot: $('dot'), statusText: $('statusText'),
+    gateModel: $('gateModel'), gateChip: $('gateChip'), crossedPill: $('crossedPill'),
     settings: $('settings'), newChat: $('newChat'), openSettings: $('openSettings'),
     sys: $('sys'), temp: $('temp'), topp: $('topp'), topk: $('topk'), ctx: $('ctx'),
     saveSettings: $('saveSettings'), trays: $('trays'), storeStats: $('storeStats'),
     newFolder: $('newFolder'), threadPill: $('threadPill'), threadName: $('threadName'),
-    committee: $('committee'), members: $('members'), laneHint: $('laneHint'),
+    committee: $('committee'),
     handoff: $('handoff'), handoffTitle: $('handoffTitle'), handoffMeta: $('handoffMeta'),
     brief: $('brief'), verdict: $('verdict'), signNote: $('signNote'), copyHint: $('copyHint'),
     copyBrief: $('copyBrief'), saveBrief: $('saveBrief'), recordBtn: $('recordHandoff'),
     handoffClose: $('handoffClose'), handoffCancel: $('handoffCancel'),
     carryTo: $('carryTo'), carryRuling: $('carryRuling'), carryReleased: $('carryReleased'),
     carryAnyway: $('carryAnyway'), carryOut: $('carryOut'),
-    thinkToggle: $('thinkToggle'), toolToggle: $('toolToggle'),
+    thinkToggle: $('thinkToggle'),
     wsRoot: $('wsRoot'), wsBrowse: $('wsBrowse'), wsClear: $('wsClear'), wsHint: $('wsHint'),
     wsThread: $('wsThread'), tokenPill: $('tokenPill')
 };
@@ -79,12 +79,9 @@ const DT_PACKET = 'application/x-airlock-packet';
 const DT_TRAY = 'application/x-airlock-tray';
 // The lane hint is static markup now; nothing in JS rewrites it.
 
-let messages = [];          // {role, content, images?: [dataUrl], stats?, error?}
-let pending = [];           // attachments staged for the next message
 let config = {};
-let controller = null;      // in-flight AbortController
 let tree = [];              // trays -> threads
-let activeThread = null;    // { id, title } — null means an unsaved scratch chat
+let activeThread = null;    // { id, title } — null means no thread is open
 
 // ─────────────────────────── markdown (tiny, dependency-free) ───────────────────────────
 
@@ -140,7 +137,7 @@ function paintNotice(h) {
     // The idle screen is drawn before the first health check answers, so it would keep
     // saying "on your machine" on a hosted page. Redraw once when the answer changes it —
     // not on every poll.
-    if (hosted !== hostedView) { hostedView = hosted; render(); }
+    if (hosted !== hostedView) { hostedView = hosted; if (!activeThread) renderLanding(); }
     const node = el.demoNotice;
     if (!node) return;
     if (node.dataset.shared === undefined) node.dataset.shared = node.innerHTML;
@@ -283,40 +280,11 @@ function renderMarkdown(text) {
     return html;
 }
 
-// ─────────────────────────── rendering ───────────────────────────
-
-const committeeActors = () =>
-    [...document.querySelectorAll('.member')].map(b => b.dataset.actor);
-
-/**
- * Who actually said this. An assistant packet carries the model that produced it, and
- * after a handoff that model is a committee member — so labelling every assistant turn
- * "Airlock" would credit the local tier for a remote model's words.
- */
-function speaker(m) {
-    if (m.role === 'user') return 'You';
-    return m.model || 'Local';
-}
-
-/** Provenance, read off the packet — where it was born, who signed it, how deep it sits. */
-function badges(m) {
-    const out = [];
-
-    if (m.model && committeeActors().includes(m.model)) {
-        out.push(`<span class="badge review">oversight verdict</span>`);
-    }
-
-    if (m.origin && activeThread && m.origin !== activeThread.title) {
-        out.push(`<span class="badge travel">from ${escapeHtml(m.origin)}</span>`);
-    }
-    if (m.depth > 0) out.push(`<span class="badge">nested</span>`);
-    if (m.hops > 0) out.push(`<span class="badge">${m.hops} hop${m.hops > 1 ? 's' : ''}</span>`);
-
-    for (const actor of (m.reviewers || '').split(',').filter(Boolean)) {
-        out.push(`<span class="badge review">reviewed by ${escapeHtml(actor)}</span>`);
-    }
-    return out.length ? `<div class="badges">${out.join('')}</div>` : '';
-}
+// ─────────────────────────── the idle desk ───────────────────────────
+//
+// What the pane shows with no thread open. There used to be a whole single-pane chat here;
+// every conversation now lives in a thread, with two participants and the chamber, so the
+// desk with nothing open is just the emblem, what the desk is, and the way in.
 
 /**
  * The hatch seal, large, for an empty desk. Same geometry as the brand mark — the seam is the
@@ -332,188 +300,25 @@ const HATCH_EMBLEM = `<div class="emblem" aria-hidden="true">
         </svg>
     </div>`;
 
-function render() {
-    if (!messages.length) {
-        el.messages.innerHTML = activeThread
-            ? `<div class="empty">${HATCH_EMBLEM}
-                   <h2>${escapeHtml(activeThread.title)} is empty</h2>
-                   <p>Anything you send here is stored as a packet in this thread.</p>
-               </div>`
-            : `<div class="empty">${HATCH_EMBLEM}
-                   <h2>Airlock is idle</h2>
-                   <p>${hostedView
-                       ? 'Answering locally, on this server, with its own model rather than a provider’s. '
-                         + 'Nothing is sent to a remote model unless you send it across the boundary.'
-                       : 'Answering locally, on your machine. Nothing leaves the desk unless you '
-                         + 'send it across the boundary.'}<br>
-                   Ask something, or drop an image in — the local model sees.</p>
-                   <p class="stats">Pick a thread on the left to save this as packets.</p>
-               </div>`;
-        return;
-    }
+function renderLanding() {
+    el.messages.innerHTML = `<div class="empty">${HATCH_EMBLEM}
+            <h2>Airlock is idle</h2>
+            <p>${hostedView
+                ? 'Answering locally, on this server, with its own model rather than a provider’s. '
+                  + 'Nothing is sent to a remote model unless you send it across the boundary.'
+                : 'Answering locally, on your machine. Nothing leaves the desk unless you '
+                  + 'send it across the boundary.'}</p>
+            <p><button class="send landing-new" id="landingNew">✎ New thread</button></p>
+            <p class="stats">Or open one on the left. Every thread has two sides — one here,
+               one that can cross — and the chamber between them.</p>
+        </div>`;
+    $('landingNew').onclick = () => newThread();
+}
 
-    el.messages.innerHTML = messages.map(m => {
-        const thumbs = m.images?.length
-            ? `<div class="thumbs">${m.images.map(src => `<img src="${src}" alt="attachment">`).join('')}</div>`
-            : '';
-
-        // The local model reasons in a separate `thinking` channel before it says anything. On a
-        // partially-offloaded 30B that can run the better part of a minute, so it has to be
-        // visible — otherwise the UI looks hung. Open while it reasons, folded once it talks.
-        const think = m.thinking
-            ? `<details class="think"${m.streaming && !m.content ? ' open' : ''}>
-                   <summary>reasoning${m.thinkingMs
-                       ? ` · ${(m.thinkingMs / 1000).toFixed(1)}s`
-                       : (m.streaming ? '…' : '')}</summary>
-                   <div class="think-body">${escapeHtml(m.thinking)}</div>
-               </details>`
-            : '';
-
-        // What the model actually touched on disk, as it happens.
-        const toolCards = m.tools?.length
-            ? `<div class="tools">${m.tools.map(t => `
-                   <div class="tool${t.ok ? '' : ' bad'}">
-                       <span class="tool-name">${escapeHtml(t.name)}</span>
-                       <span class="tool-sum">${escapeHtml(t.summary)}</span>
-                   </div>`).join('')}</div>`
-            : '';
-
-        const body = m.role === 'user'
-            ? `<div class="bubble">${thumbs}${renderProse(m.content)}</div>`
-            : `<div class="bubble${m.error ? ' err' : ''}${m.streaming && m.content ? ' caret' : ''}">${
-                  think
-              }${toolCards}${
-                  m.content ? renderMarkdown(m.content)
-                            : (m.thinking ? '' : '<p class="stats">thinking…</p>')
-              }</div>`;
-
-        // Only stored packets are draggable — a scratch message has no id to move.
-        // draggable lives on the label, NOT the whole message: a draggable ancestor eats
-        // mousedown, which made the bubble text impossible to select.
-        const drag = m.packetId ? ` data-packet="${m.packetId}"` : '';
-        // Nested packets sit indented on a connector rail, so containment is visible.
-        const nest = m.depth ? ` data-depth="${m.depth}" style="margin-left:${m.depth * 24}px"` : '';
-
-        // The tier is on the element, not just in a badge: a reply that came from across
-        // the boundary should be readable as such from the speaker line alone.
-        const tier = m.role === 'assistant' && crossedTier(m.tier) ? ' remote' : '';
-
-        return `<div class="msg ${m.role}${tier}"${drag}${nest}>
-                    <span class="who"${m.packetId ? ' draggable="true"' : ''}>${escapeHtml(speaker(m))}${
-                        m.packetId
-                            ? ` · #${m.packetId}<span class="grip" aria-hidden="true">⠿ drag</span>`
-                              + `<button class="prov-copy" type="button"`
-                              + ` title="Copy this with its provenance — works where a drag doesn't">⧉ copy</button>`
-                            : ''}</span>
-                    ${body}
-                    ${badges(m)}
-                    ${m.stats ? `<span class="stats">${m.stats}</span>` : ''}
-                </div>`;
-    }).join('');
-
-    el.messages.querySelectorAll('.copy').forEach(btn => {
-        btn.onclick = () => {
-            navigator.clipboard.writeText(btn.closest('.code').querySelector('pre').textContent);
-            btn.textContent = 'copied';
-            setTimeout(() => { btn.textContent = 'copy'; }, 1200);
-        };
-    });
-
-    el.messages.querySelectorAll('[data-packet]').forEach(node => {
-        const packetId = +node.dataset.packet;
-
-        const handle = node.querySelector('.who[draggable]');
-
-        // A button inside the handle does not start a drag (form controls aren't draggable),
-        // so the two gestures coexist on one line without fighting each other.
-        node.querySelector('.prov-copy')?.addEventListener('click', ev => {
-            ev.stopPropagation();
-            const msg = messages.find(x => x.packetId === packetId);
-            if (msg) copyWithProvenance(msg, packetId, ev.currentTarget);
-        });
-
-        handle?.addEventListener('dragstart', e => {
-            const dt = e.dataTransfer;
-            dt.setData(DT_PACKET, String(packetId));
-
-            // Drop into another model's input box, or any text field, and the thought
-            // itself lands as text — carrying the model that produced it and which side of
-            // the boundary it ran on. See provenanceOf().
-            const msg = messages.find(x => x.packetId === packetId);
-            if (msg) offerAsText(dt, exportText(msg, packetId), exportHtml(msg, packetId));
-
-            // Shift = export a file instead. DownloadURL turns the whole drag into a FILE
-            // drag as far as the OS is concerned, which makes chat inputs show a drop
-            // target and then insert nothing — so it must not be on by default.
-            if (e.shiftKey) {
-                dt.setData('DownloadURL',
-                    `text/markdown:airlock-packet-${packetId}.md:`
-                    + `${location.origin}/api/packets/${packetId}/packet.md`);
-            }
-
-            dt.effectAllowed = 'copyMove';
-            draggingPacket = packetId;
-            node.classList.add('dragging');
-
-            const mode = dragMode(e, true);
-            const tag = mode === 'export' ? ' <b>[.md]</b>' : mode === 'fork' ? ' <b>[fork]</b>' : '';
-            const preview = node.querySelector('.bubble')?.textContent.trim().slice(0, 46) || '';
-            dt.setDragImage(makeDragChip(
-                `<b>#${packetId}</b> ${escapeHtml(preview)}…${tag}`), 16, 14);
-
-            flash('drop on a thread to move · hold Alt to fork · Shift for .md', 30000);
-        });
-
-        // Packets can fork, so Alt is live here.
-        handle?.addEventListener('drag', e => {
-            const mode = dragMode(e, true);
-            if (mode === 'fork') announceSplit(node);
-            trail(e, mode);
-        });
-
-        handle?.addEventListener('dragend', () => {
-            node.classList.remove('dragging');
-            draggingPacket = null;
-            clearDragChip();
-            clearTrails();
-            clearFlash();
-            el.messages.querySelectorAll('.nest-target')
-                .forEach(n => n.classList.remove('nest-target'));
-        });
-
-        // Drop a packet onto a packet to nest it — a thread is a container, not a log.
-        node.addEventListener('dragover', e => {
-            if (!e.dataTransfer.types.includes(DT_PACKET)) return;
-            if (draggingPacket === packetId) return;          // no self-nesting
-            e.preventDefault();
-            e.stopPropagation();
-            e.dataTransfer.dropEffect = 'move';
-            node.classList.add('nest-target');
-        });
-
-        node.addEventListener('dragleave', e => {
-            if (!node.contains(e.relatedTarget)) node.classList.remove('nest-target');
-        });
-
-        node.addEventListener('drop', async e => {
-            if (!e.dataTransfer.types.includes(DT_PACKET)) return;
-            e.preventDefault();
-            e.stopPropagation();
-            node.classList.remove('nest-target');
-
-            const childId = +e.dataTransfer.getData(DT_PACKET);
-            if (childId === packetId) return;
-
-            const source = el.messages.querySelector(`[data-packet="${childId}"]`);
-            comet(source, node);
-
-            const res = await json(`/api/packets/${childId}/move`, { parentId: packetId });
-            if (res.error) return flash(res.error, 6000);
-
-            if (activeThread) await selectThread(activeThread.id, activeThread.title);
-            flash(`Nested #${childId} inside #${packetId}`);
-        });
-    });
+/** Show the landing, or hand the pane to the duet. Exactly one of them is on screen. */
+function paintPaneMode() {
+    el.main.hidden = Boolean(activeThread);
+    if (!activeThread) renderLanding();
 }
 
 let flashTimer;
@@ -542,13 +347,6 @@ function flash(msg, ms = 4000) {
 function clearFlash() {
     clearTimeout(flashTimer);
     if (el.toast) el.toast.hidden = true;
-}
-
-function scrollDown() {
-    el.main.scrollTop = el.main.scrollHeight;
-    // keep the reasoning pane pinned to its newest line while it streams
-    const think = [...el.messages.querySelectorAll('.think[open] .think-body')].pop();
-    if (think) think.scrollTop = think.scrollHeight;
 }
 
 // ─────────────────────────── health / models ───────────────────────────
@@ -586,17 +384,10 @@ async function refreshHealth() {
         // One-time cleanup of that private copy.
         try { localStorage.removeItem('airlock.model'); } catch { /* ignore */ }
 
-        modelCaps = Object.fromEntries(h.models.map(m => [m.name, m.caps || []]));
-
-        // Seats that can cross on their own. Everything else is carried by hand,
-        // so with no key configured the committee behaves exactly as it always did.
-        liveSeats = Object.fromEntries((h.seats || []).map(s => [s.actor, s.model]));
-        // A missing tier is 'unknown', not 'local' — the default is the claim.
-        modelTier = Object.fromEntries(h.models.map(m => [m.name, m.tier || 'unknown']));
 
         // A shared instance says so, every load. There is no dismiss control.
         paintNotice(h);
-        paintSeats();
+        paintGate(h.gate);
 
         // Grouped by tier, because which side of the boundary a model sits on is the
         // one thing you must know before picking it. Nemotron gets its own group rather
@@ -626,13 +417,38 @@ async function refreshHealth() {
                 + 'will be refused. Try: ollama pull nemotron-3-nano:4b (2.8 GB).';
         }
 
-        // capabilities just changed shape, so the pills have to agree with the selection
         paintThinkToggle();
         paintWorkspace();
     } catch {
         el.dot.className = 'dot bad';
         el.statusText.textContent = 'server offline';
     }
+}
+
+/**
+ * The boundary bar names the model that will actually rule on the next crossing — the
+ * server resolves it exactly as runGate does. No gate means every crossing is refused, and
+ * the bar says so in red rather than leaving it to be discovered on the first send.
+ */
+function paintGate(gate) {
+    el.gateModel.textContent = gate || 'none reachable';
+    el.gateChip.classList.toggle('bad', !gate);
+    el.gateChip.title = gate
+        ? `${gate} rules on every crossing, on this side of the boundary, after the secret scanner. `
+          + 'Set AIRLOCK_GATE_MODEL in .env to choose it.'
+        : 'No local model is reachable to rule on crossings, so every crossing will be refused.';
+}
+
+/** How much of the open thread has left this machine — from the record, not the screen. */
+async function paintCrossed() {
+    if (!activeThread) { el.crossedPill.hidden = true; return; }
+    try {
+        const exposure = await (await fetch(`/api/threads/${activeThread.id}/exposure`)).json();
+        const n = exposure.packetCount || 0;
+        el.crossedPill.hidden = false;
+        el.crossedPill.textContent = n ? `↗ ${n} crossed` : 'nothing crossed';
+        el.crossedPill.classList.toggle('some', n > 0);
+    } catch { el.crossedPill.hidden = true; }
 }
 
 async function loadConfig() {
@@ -645,31 +461,18 @@ async function loadConfig() {
     paintThinkToggle();
 }
 
-let modelCaps = {};   // name -> capability list, from /api/health
-
-const selectedCaps = () => modelCaps[el.model.value] || [];
 
 function paintThinkToggle() {
-    // A model without a thinking channel can't reason no matter what config says —
-    // pretending otherwise is how "does not support thinking" errors reach the user.
-    const supported = selectedCaps().includes('thinking');
-    const on = supported && config.think !== false;
-
-    el.thinkToggle.classList.toggle('on', on);
-    el.thinkToggle.disabled = !supported;
-    el.thinkToggle.textContent = !supported ? '◇ no reasoning'
-        : on ? '◈ reasoning' : '◇ reasoning off';
-    el.thinkToggle.title = !supported
-        ? `${el.model.value} has no reasoning channel — this model answers directly`
-        : 'The local model\'s reasoning channel. Off is ~3.7x faster on this hardware.';
+    el.thinkToggle.checked = config.think !== false;
 }
 
-el.thinkToggle.onclick = async () => {
-    config = await json('/api/config', { think: config.think === false }, 'POST');
+// Saved at once, like the model picker: it is a switch, not a draft.
+el.thinkToggle.onchange = async () => {
+    config = await json('/api/config', { think: el.thinkToggle.checked }, 'POST');
     paintThinkToggle();
     flash(config.think === false
-        ? 'Reasoning off — faster, but the model answers straight from the hip'
-        : 'Reasoning on — slower, but it thinks first', 5000);
+        ? 'Reasoning off — faster, and models answer straight away'
+        : 'Reasoning on — slower, but models that can think first will', 5000);
 };
 
 // ─────────────────────────── token counter ───────────────────────────
@@ -739,29 +542,7 @@ let wsBrowsing = false;
 let wsNotice = '';
 
 function paintWorkspace() {
-    const canTool = selectedCaps().includes('tools');
     const hasThread = !!activeThread;
-
-    // A root whose folder has gone is not file access, so don't paint it as armed. The
-    // server won't offer tools for it either — otherwise every call fails and a confused
-    // model burns the whole round budget at 8 tok/s discovering that.
-    const broken = !!workspace.root && !workspace.exists;
-    const armed = canTool && hasThread && !!workspace.root && !broken;
-
-    el.toolToggle.classList.toggle('on', armed);
-    el.toolToggle.disabled = !canTool;
-    el.toolToggle.textContent = !canTool ? '⛁ no tools'
-        : armed ? '⛁ files'
-            : broken ? '⛁ files missing' : '⛁ files off';
-    el.toolToggle.title = !canTool
-        ? `${el.model.value} can't call tools — attach files by hand with 📎 instead`
-        : !hasThread
-            ? 'Pick a thread before assigning a workspace'
-            : broken
-                ? `${workspace.root} no longer exists — click to pick a new one`
-                : workspace.root
-                    ? `${activeThread.title} may read files under ${workspace.root} — click to change it`
-                    : `No workspace for ${activeThread.title} — click to choose one`;
 
     el.wsThread.textContent = activeThread?.title || 'No thread selected';
     el.wsRoot.disabled = !hasThread;
@@ -803,7 +584,6 @@ function openWorkspaceSettings() {
 }
 
 // The pill is a doorway to the current thread's workspace, not a global on/off switch.
-el.toolToggle.onclick = () => openWorkspaceSettings();
 
 const notice = msg => { wsNotice = msg; paintWorkspace(); };
 
@@ -948,7 +728,7 @@ function renderRail() {
         if (!confirm(warn)) return;
 
         await fetch(`/api/threads/${id}`, { method: 'DELETE' });
-        if (activeThread?.id === id) { leaveThread(); messages = []; render(); }
+        if (activeThread?.id === id) { leaveThread(); }
         await loadTree();
         flash(`Deleted thread "${name}"`);
     }));
@@ -963,7 +743,7 @@ function renderRail() {
             + `and ${packets} packet(s). This cannot be undone.`)) return;
 
         await fetch(`/api/folders/${id}`, { method: 'DELETE' });
-        if (threads.some(t => t.id === activeThread?.id)) { leaveThread(); messages = []; render(); }
+        if (threads.some(t => t.id === activeThread?.id)) { leaveThread(); }
         await loadTree();
         flash(`Deleted tray "${name}"`);
     }));
@@ -1037,22 +817,7 @@ async function loadTree() {
     el.storeStats.textContent = `${s.packets} packets · ${s.nested} nested · ${s.forks} forks · ${s.reviews} reviews`;
 }
 
-/** Depth-first flatten — a nesting tree read as a transcript, depth kept for the badge. */
-function flatten(nodes, depth = 0, out = []) {
-    for (const p of nodes) {
-        out.push({
-            role: p.role, content: p.content, images: p.images || [],
-            packetId: p.id, depth, model: p.model, tier: p.tier,
-            origin: p.origin_thread_title, reviewers: p.reviewers, hops: p.hops
-        });
-        if (p.children?.length) flatten(p.children, depth + 1, out);
-    }
-    return out;
-}
-
 async function selectThread(id, title) {
-    if (controller) controller.abort();
-
     activeThread = { id, title };
     wsNotice = '';
     localStorage.setItem('airlock.thread', String(id));
@@ -1060,21 +825,15 @@ async function selectThread(id, title) {
     el.threadPill.hidden = false;
     el.carryOut.hidden = false;
 
-    const [packets] = await Promise.all([
-        fetch(`/api/threads/${id}/packets`).then(response => response.json()),
-        loadWorkspace(id)
-    ]);
-    messages = flatten(packets);
+    await loadWorkspace(id);
 
     // loadTree, not renderRail: packets can move underneath us (another window, an
     // agent, a curl), so re-read the counts rather than repainting stale ones.
     await loadTree();
-    render();
-    scrollDown();
+    paintPaneMode();
+    paintCrossed();
 
-    // A thread can also be a duet — two participants over this same packet log. duet.js
-    // decides whether to take the pane over; the classic view above is built either way,
-    // so switching back is instant and nothing here needs to know which is on screen.
+    // Every thread is a duet: two participants and the chamber. duet.js builds the panes.
     await window.duetUI?.onThread(activeThread);
 }
 
@@ -1085,8 +844,10 @@ function leaveThread() {
     localStorage.removeItem('airlock.thread');
     el.threadPill.hidden = true;
     el.carryOut.hidden = true;
+    el.crossedPill.hidden = true;
     paintWorkspace();
     renderRail();
+    paintPaneMode();
     window.duetUI?.onThread(null);
 }
 
@@ -1129,23 +890,6 @@ async function nameUntitled(threadId, text) {
     activeThread.title = title;
     el.threadName.textContent = title;
     await loadTree();
-}
-
-/** Persist one turn as a packet. No-op when no thread is selected. */
-async function persist(role, content, images = []) {
-    if (!activeThread || !content) return null;
-    try {
-        // Tier is decided server-side from the model id — the client does not get to
-        // assert which side of the boundary produced something.
-        const p = await json('/api/packets', {
-            threadId: activeThread.id, role, content,
-            model: role === 'assistant' ? el.model.value : null,
-            images
-        });
-        return p.id ?? null;
-    } catch {
-        return null;   // a store hiccup must never eat the reply the user just got
-    }
 }
 
 // ─────────────────────────── physics ───────────────────────────
@@ -1582,7 +1326,6 @@ function wireThreadDnd(row) {
         draggingThread = threadId;
         row.classList.add('dragging');
         document.body.classList.add('dragging-thread');   // opens every tray's landing strip
-        el.committee.classList.add('armed');
         flash(`"${title}" — drop on a tray or between threads to re-file it. `
             + 'To take it out of Airlock, use ⇱ Carry out.', 30000);
     });
@@ -1592,7 +1335,6 @@ function wireThreadDnd(row) {
 
     row.addEventListener('dragend', () => {
         row.classList.remove('dragging');
-        el.committee.classList.remove('armed');
         clearDragChip();
         clearTrails();
         clearInsertMarks();
@@ -1798,67 +1540,6 @@ function wireTrayDnd(tray) {
     });
 }
 
-// ─────────────────── The Galactic Oversight Committee ───────────────────
-// No API, no keys, no spend. Out by clipboard, back by paste. The committee gets a
-// vote without every thought making a pilgrimage through a paid endpoint.
-
-let liveSeats = {};
-let modelTier = {};   // model id -> 'local' | 'remote', from /api/health
-
-/** Title for a thread id, from the tray tree already in hand. */
-const threadTitle = id => {
-    for (const tray of tree) {
-        const found = (tray.threads || []).find(t => t.id === id);
-        if (found) return found.title;
-    }
-    return 'thread';
-};
-
-/** A live seat says so: it crosses by itself, and that should be visible before you drop. */
-function paintSeats() {
-    el.members.querySelectorAll('.member').forEach(m => {
-        const model = liveSeats[m.dataset.actor];
-        m.classList.toggle('live', Boolean(model));
-        m.title = model
-            ? `${model} — crosses the boundary directly. The local gate rules first.`
-            : `${m.dataset.actor} — brief out, verdict pasted back by hand.`;
-    });
-}
-
-/**
- * Cross for real. The server gates before it sends, so a refusal here means
- * nothing left the machine — say that plainly rather than reporting a failure.
- */
-async function escalate(threadId, actor, title) {
-    const model = liveSeats[actor];
-    const seat = [...el.members.querySelectorAll('.member')].find(m => m.dataset.actor === actor);
-
-    seat?.classList.add('working');
-    flash(`Gate is reading the thread before anything leaves…`, 4000);
-
-    try {
-        const res = await json(`/api/threads/${threadId}/escalate`, { actor, model });
-
-        if (res.error) { flash(res.error, 8000); return; }
-
-        if (!res.escalated) {
-            const why = res.gate?.reason || 'The gate withheld release.';
-            const concerns = res.gate?.concerns?.length
-                ? ` Flagged: ${res.gate.concerns.join('; ')}.` : '';
-            flash(`Nothing sent. ${why}${concerns}`, 12000);
-            return;
-        }
-
-        await selectThread(threadId, title);
-        flash(`${actor} reviewed ${res.crossed} packet(s) · `
-            + `${res.usage.prompt}+${res.usage.reply} tokens · logged as crossed`, 9000);
-    } catch (err) {
-        flash(`Escalation failed: ${err.message}`, 8000);
-    } finally {
-        seat?.classList.remove('working');
-    }
-}
-
 // ─────────────────── Carry out by hand ───────────────────
 //
 // The brief is ruled on BEFORE it is shown: the secret scanner, then the local gate, over the
@@ -1996,344 +1677,13 @@ el.recordBtn.onclick = async () => {
     flash(`${actor}'s reply is in ${title}, and ${res.signed} packet(s) are recorded as carried to them.`, 7000);
 };
 
-// Kept for the Oversight lane's hand-carried seats until the lane is removed.
-const openHandoff = threadId => openCarry(threadId, threadTitle(threadId));
-
 el.handoffClose.onclick = () => el.handoff.close();
 el.handoffCancel.onclick = () => el.handoff.close();
 
-el.members.querySelectorAll('.member').forEach(m => {
-    const actor = m.dataset.actor;
-    const wants = e => e.dataTransfer.types.includes(DT_THREAD);
-
-    m.addEventListener('dragover', e => {
-        if (!wants(e)) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'copy';
-        m.classList.add('over');
-    });
-
-    m.addEventListener('dragleave', () => m.classList.remove('over'));
-
-    m.addEventListener('drop', e => {
-        if (!wants(e)) return;
-        e.preventDefault();
-        m.classList.remove('over');
-        const threadId = +e.dataTransfer.getData(DT_THREAD);
-        if (liveSeats[actor]) escalate(threadId, actor, threadTitle(threadId));
-        else openHandoff(threadId, actor);
-    });
-
-    // Clicking works too — dragging is the gesture, not the only way in.
-    m.addEventListener('click', () => {
-        if (!activeThread) return flash('Pick a thread first, or drag one up here.', 5000);
-        if (liveSeats[actor]) escalate(activeThread.id, actor, activeThread.title);
-        else openHandoff(activeThread.id, actor);
-    });
-});
-
-// ─────────────────────────── sending ───────────────────────────
-
-function setBusy(busy) {
-    el.send.textContent = busy ? 'Stop' : 'Send';
-    el.send.classList.toggle('stop', busy);
-    el.input.disabled = false;
-}
-
-async function send() {
-    if (controller) { controller.abort(); return; }   // button is acting as Stop
-
-    const text = el.input.value.trim();
-    if (!text && !pending.length) return;
-
-    const model = el.model.value;
-    const sendingThreadId = activeThread?.id || null;
-
-    const userImages = pending.map(p => p.dataUrl);
-    const userMsg = { role: 'user', content: text, images: userImages };
-    messages.push(userMsg);
-    const outgoingImages = pending.map(p => p.base64);
-    pending = [];
-    renderAttachments();
-
-    // Awaited, not fired-and-forgotten: insert order is what gives the two packets
-    // their position, and a reply that lands before its prompt reads backwards.
-    //
-    // The returned id has to land on the message object. Without it the turn renders with
-    // no data-packet, so a just-sent packet has no drag handle until the thread is reloaded.
-    const userPacketId = await persist('user', text, userImages);
-    if (userPacketId) userMsg.packetId = userPacketId;
-
-    el.input.value = '';
-    el.input.style.height = 'auto';
-
-    const reply = { role: 'assistant', content: '', streaming: true, model };
-    messages.push(reply);
-    render();
-    scrollDown();
-
-    // Build the wire payload: system prompt first, images on the last user turn.
-    const wire = [];
-    if (config.systemPrompt) wire.push({ role: 'system', content: config.systemPrompt });
-
-    // The packets this request exposes. Every turn resends the whole conversation,
-    // so on a remote model that is what crosses — and the server cannot know which
-    // packets these messages are unless we say. Without this the audit reports
-    // nothing crossed while the entire thread is on its way to a remote endpoint.
-    const sending = messages.filter(m => !m.streaming && !m.error);
-    const sendingPacketIds = sending.map(m => m.packetId).filter(Boolean);
-
-    sending.forEach((m, i, arr) => {
-        const msg = { role: m.role, content: m.content };
-        if (m.role === 'user' && i === arr.length - 1 && outgoingImages.length) msg.images = outgoingImages;
-        wire.push(msg);
-    });
-
-    controller = new AbortController();
-    setBusy(true);
-    const started = performance.now();
-
-    try {
-        const res = await fetch('/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                model, messages: wire, threadId: sendingThreadId,
-                packetIds: sendingPacketIds
-            }),
-            signal: controller.signal
-        });
-
-        if (!res.ok) {
-            const { error } = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-            throw new Error(error);
-        }
-
-        // The gate withheld release, so nothing was sent. Not an error: the request
-        // worked and the answer was no, so say what the gate said rather than
-        // rendering a failure the user cannot act on.
-        if (res.headers.get('content-type')?.includes('application/json')) {
-            const verdict = await res.json();
-            if (verdict.blocked) {
-                const concerns = verdict.gate?.concerns?.length
-                    ? `
-
-Flagged: ${verdict.gate.concerns.join('; ')}` : '';
-                reply.content = `**Nothing was sent.** ${verdict.gate?.reason || 'The gate withheld release.'}`
-                              + concerns
-                              + `
-
-_The local gate rules before anything crosses. `
-                              + `Switch to a local model to continue here._`;
-                reply.blocked = true;
-                return;
-            }
-        }
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let firstToken = null;
-        let countedUsage = false;   // fall back to the done chunk if no usage line arrives
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop();   // keep the partial line
-
-            for (const line of lines) {
-                if (!line.trim()) continue;
-
-                let chunk;
-                try { chunk = JSON.parse(line); } catch { continue; }
-
-                if (chunk.error) throw new Error(chunk.error);
-
-                // Server-injected token totals for the whole turn, tool rounds included.
-                if (chunk.airlock_usage) {
-                    countTokens(chunk.airlock_usage.prompt, chunk.airlock_usage.reply);
-                    countedUsage = true;
-                    continue;
-                }
-
-                // The gate refused partway through a turn: the model asked for files, and
-                // the local gate ruled on what they contained before it would send them,
-                // and said no. Nothing listed left the machine. Rendered as the gate's
-                // answer rather than an error — the request worked, the answer was no —
-                // and marked blocked so it is not saved as though it were a reply.
-                if (chunk.airlock_blocked) {
-                    const { gate = {}, withheld = [] } = chunk.airlock_blocked;
-                    const concerns = gate.concerns?.length ? `\n\nFlagged: ${gate.concerns.join('; ')}` : '';
-                    const held = withheld.length ? `\n\nWithheld: ${withheld.join(', ')}` : '';
-                    reply.content += `${reply.content ? '\n\n' : ''}**Stopped before sending tool results.** `
-                                   + `${gate.reason || 'The gate withheld release.'}${concerns}${held}`
-                                   + '\n\n_The model asked to read your workspace. The local gate rules on '
-                                   + 'what a tool returns before it crosses, and withheld this — nothing '
-                                   + 'above was sent._';
-                    reply.blocked = true;
-                    render();
-                    scrollDown();
-                    continue;
-                }
-
-                // Server-injected tool event (Ollama never emits this key).
-                if (chunk.airlock_tool) {
-                    (reply.tools ||= []).push(chunk.airlock_tool);
-                    render();
-                    scrollDown();
-                    continue;
-                }
-
-                // Reasoning arrives first and can run for a long time on this hardware.
-                if (chunk.message?.thinking) {
-                    reply.thinking = (reply.thinking || '') + chunk.message.thinking;
-                    reply.thinkingMs = performance.now() - started;
-                }
-
-                if (chunk.message?.content) {
-                    if (firstToken === null) firstToken = performance.now();
-                    reply.content += chunk.message.content;
-                }
-
-                if (chunk.done) {
-                    // Only if the server didn't total it for us — never both.
-                    if (!countedUsage) countTokens(chunk.prompt_eval_count, chunk.eval_count);
-
-                    const tps = chunk.eval_count && chunk.eval_duration
-                        ? (chunk.eval_count / (chunk.eval_duration / 1e9)).toFixed(1)
-                        : '?';
-                    const ttft = firstToken ? ((firstToken - started) / 1000).toFixed(1) : '?';
-                    const thought = reply.thinkingMs
-                        ? `${(reply.thinkingMs / 1000).toFixed(1)}s reasoning · ` : '';
-                    reply.stats = `${thought}${chunk.eval_count ?? '?'} tokens · ${tps} tok/s · `
-                                + `${ttft}s to first token · ${chunk.prompt_eval_count ?? '?'} prompt tokens`;
-                }
-            }
-
-            reply.streaming = true;
-            render();
-            scrollDown();
-        }
-    } catch (err) {
-        if (err.name === 'AbortError') {
-            reply.content += reply.content ? '\n\n(stopped)' : '(stopped)';
-        } else {
-            reply.error = true;
-            reply.content = `**Error:** ${err.message}`;
-        }
-    } finally {
-        controller = null;
-        reply.streaming = false;
-        setBusy(false);
-        render();
-        scrollDown();
-        save();
-
-        if (activeThread && reply.content && !reply.error && !reply.blocked) {
-            const replyPacketId = await persist('assistant', reply.content);
-            if (replyPacketId) {
-                reply.packetId = replyPacketId;
-                render();          // repaint so the reply gets its drag handle too
-            }
-            await loadTree();      // refresh the packet counts in the rail
-        }
-    }
-}
-
-// ─────────────────────────── attachments ───────────────────────────
-
-function renderAttachments() {
-    el.attached.hidden = !pending.length;
-    el.attached.innerHTML = pending.map((p, i) =>
-        `<span class="chip"><img src="${p.dataUrl}" alt=""><span>${escapeHtml(p.name)}</span>
-         <button type="button" data-i="${i}" title="Remove">✕</button></span>`).join('');
-
-    el.attached.querySelectorAll('button').forEach(b => {
-        b.onclick = () => { pending.splice(+b.dataset.i, 1); renderAttachments(); };
-    });
-}
-
+// Text files a composer folds straight into the message. Shared with duet.js.
 const TEXT_ATTACH = /\.(md|markdown|txt|text|json|jsonl|csv|tsv|log|ya?ml|toml|ini|cfg|conf|js|mjs|cjs|ts|tsx|jsx|py|rb|go|rs|java|c|h|cpp|cs|sql|sh|ps1|bat|vbs|html?|css|scss|svg|scad|xml)$/i;
 
-function addFiles(list) {
-    for (const f of list) {
-        // Images go to the perception encoder as base64.
-        if (f.type.startsWith('image/')) {
-            const fr = new FileReader();
-            fr.onload = () => {
-                const dataUrl = fr.result;
-                pending.push({ name: f.name || 'pasted.png', dataUrl, base64: dataUrl.split(',')[1] });
-                renderAttachments();
-            };
-            fr.readAsDataURL(f);
-            continue;
-        }
-
-        // Text files fold straight into the message — no tool round needed, and it works
-        // for files outside the workspace since you handed it over explicitly.
-        if (TEXT_ATTACH.test(f.name)) {
-            const fr = new FileReader();
-            fr.onload = () => {
-                const text = String(fr.result).slice(0, 60000);
-                const fence = '```';
-                el.input.value += `${el.input.value ? '\n\n' : ''}${f.name}:\n${fence}\n${text}\n${fence}\n`;
-                el.input.dispatchEvent(new Event('input'));
-                el.input.focus();
-                flash(`Pasted ${f.name} into the message (${text.length.toLocaleString()} chars)`, 5000);
-            };
-            fr.readAsText(f);
-            continue;
-        }
-
-        flash(`Skipped ${f.name} — not an image or a text file`, 5000);
-    }
-}
-
-// ─────────────────────────── persistence ───────────────────────────
-
-// localStorage only backs the scratch chat. Once a thread is selected the packet
-// store is the source of truth, and mirroring into localStorage would let the two
-// disagree.
-const save = () => {
-    if (!activeThread) localStorage.setItem('airlock.chat', JSON.stringify(messages.slice(-40)));
-};
-
-function restore() {
-    try {
-        messages = JSON.parse(localStorage.getItem('airlock.chat') || '[]')
-            .map(m => ({ ...m, streaming: false }));
-    } catch { messages = []; }
-}
-
 // ─────────────────────────── wiring ───────────────────────────
-
-el.send.onclick = send;
-
-el.input.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
-});
-
-el.input.addEventListener('input', () => {
-    el.input.style.height = 'auto';
-    el.input.style.height = Math.min(el.input.scrollHeight, 200) + 'px';
-});
-
-el.input.addEventListener('paste', e => {
-    const imgs = [...e.clipboardData.files].filter(f => f.type.startsWith('image/'));
-    if (imgs.length) { e.preventDefault(); addFiles(imgs); }
-});
-
-el.attach.onclick = () => el.file.click();
-el.file.onchange = () => { addFiles(el.file.files); el.file.value = ''; };
-
-['dragenter', 'dragover'].forEach(ev =>
-    el.composer.addEventListener(ev, e => { e.preventDefault(); el.composer.classList.add('drag'); }));
-['dragleave', 'drop'].forEach(ev =>
-    el.composer.addEventListener(ev, e => { e.preventDefault(); el.composer.classList.remove('drag'); }));
-el.composer.addEventListener('drop', e => addFiles(e.dataTransfer.files));
 
 el.newChat.onclick = () => newThread();
 el.carryOut.onclick = () => openCarry();
@@ -2366,9 +1716,6 @@ el.saveSettings.onclick = async () => {
 };
 
 el.model.onchange = async () => {
-    paintThinkToggle();     // capabilities differ per model
-    paintWorkspace();
-
     // Persisted server-side, so the choice survives a reload, a different browser
     // and a restart — and so there is only ever one answer to "which model".
     try {
@@ -2378,17 +1725,8 @@ el.model.onchange = async () => {
     }
 };
 
-el.hint.textContent = 'images + tool use supported';
-
-// The picker is hidden in duet mode (each pane has its own), but in the single-pane view
-// it is still doing more than its label suggests — including choosing the gatekeeper when
-// the selection is local. Say so on hover rather than leaving that to be discovered.
-el.model.title = 'Model for the single-pane view. Also seeds new threads, and — when it '
-    + 'is a local model — it is the one that rules on crossings.';
-
 (async () => {
-    restore();
-    render();
+    renderLanding();
     loadTokens();
     await loadConfig();
     await loadWorkspace();
@@ -2404,5 +1742,4 @@ el.model.title = 'Model for the single-pane view. Also seeds new threads, and �
     }
 
     setInterval(refreshHealth, 15000);
-    el.input.focus();
 })();

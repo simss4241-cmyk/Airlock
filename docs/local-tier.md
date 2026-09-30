@@ -91,7 +91,7 @@ reasoning. A UI that renders only `message.content` looks frozen for a minute.
 So reasoning streams live into a collapsible pane that folds itself once the answer starts,
 and the stats line reports it separately (`29.0s reasoning · 252 tokens · 8.6 tok/s`).
 
-The **◈ reasoning** toggle in the composer sets Ollama's `think` flag. Off is roughly 3.7×
+The **Reasoning channel** switch in ⚙ Settings sets Ollama's `think` flag. Off is roughly 3.7×
 faster on this hardware and perfectly fine for lookups; on is the reason to run this model
 at all. It persists in `airlock-config.json`.
 
@@ -106,9 +106,10 @@ So the server reads `POST /api/show` → `capabilities` per model (cached in `ca
 only sets a flag the model actually advertises. `think` is **omitted** rather than sent as
 `false`, since the field itself is the request.
 
-The UI mirrors it: `/api/health` returns each model's capabilities, the dropdown badges them
-(`◈` thinking, `👁` vision, `⛁` tools), and the pills disable themselves with an explanation
-— `◇ no reasoning`, `⛁ no tools` — rather than offering a toggle that would error.
+The UI mirrors it: `/api/health` returns each model's capabilities, the pickers badge them
+(`◈` thinking, `👁` vision, `⛁` tools), and a pane's ⛁ switch reads `⛁ no tools` for a
+model that has none, and 📎 warns before an image goes to a model that cannot see —
+rather than offering something that would error.
 
 Current roster:
 

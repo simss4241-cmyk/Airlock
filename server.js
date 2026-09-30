@@ -9,7 +9,7 @@ const path = require('path');
 const store = require('./db');
 const files = require('./files');
 const providers = require('./providers');
-const { runGate } = require('./boundary');
+const { runGate, resolveGateModel } = require('./boundary');
 const kernel = require('./kernel');
 const sandbox = require('./sandbox');
 const auth = require('./auth');
@@ -388,7 +388,11 @@ app.get('/api/health', async (req, res) => {
             // matters beyond the dot: with nothing local installed there is no gate, and
             // every crossing is refused.
             localModelInstalled: providers.localModels().length > 0,
-            activeModel: config.model
+            activeModel: config.model,
+            // Which local model rules on crossings right now — the same resolution runGate
+            // makes, so the boundary bar names the gate that will actually run. null means
+            // none is reachable, and every crossing will be refused.
+            gate: await resolveGateModel(config).catch(() => null)
         });
     } catch (err) {
         // Ollama being down must not take the remote tier with it.

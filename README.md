@@ -42,11 +42,11 @@ what leaves it. This table is the honest version — clone it and check.
 | Per-thread read-only workspaces, with containment tests | working, 46 assertions |
 | Remote tier on Nebius Token Factory (Nemotron 3) | working, 61 assertions |
 | One streaming contract across both tiers | working |
-| Model dropdown grouped by tier, capability-badged | working |
+| Model pickers grouped by tier, capability-badged — per pane, and the default in Settings | working |
 | Local gate rules before anything crosses, and fails closed | working, 73 assertions (28 spend credits, opt-in) |
 | Known credential formats withheld by a scanner before the gate model reads anything | working, 54 assertions |
 | Tier recorded per packet; "what crossed?" as a query | working |
-| Escalation by router **and** by hand, both recorded as crossings | working |
+| Crossing by a remote participant **and** by hand, both gated and recorded | working |
 | Access token + remote spend cap for hosting | working, 26 assertions |
 | Duet — two addressable participants over one conversation | working, 84 assertions |
 | Per-thread consent retired; an old database is cleaned on open | working, 7 assertions |
@@ -161,13 +161,23 @@ For Ollama setup and the GPU archaeology that came with it, see
 
 ## Features
 
-- Streaming replies, Stop mid-generation
-- Markdown rendering with per-block copy buttons
-- Image attach — drag, paste, or the 🖼 button (Muse Glimmer has a perception encoder)
-- Model dropdown grouped by tier — local, Nemotron, other remote — with capability badges
+Every thread is one conversation with two participants: a pane on each side, and the
+airlock chamber between them, where every message enters and every crossing is marked.
+
+- Two participants per thread, each with its own model, role and composer — a side on
+  this machine and a side that can cross, or any mix — reading one shared conversation
+- The chamber: pressure doors that hold shut while the local gate rules, and a seal on
+  every row that crossed (amber) or was withheld (red)
+- Focus mode (⤢) — one side wide, the other folded to a strip — for talking to one model
+- Workspace files (⛁) per side: on by default here, off by default across the boundary,
+  and every file result ruled on before it crosses
+- Images — 📎, paste or drop — for models that can see (👁)
+- Move or fork a finished message to another thread by dragging it onto the rail
+- ⇱ Carry out: a thread as a brief for a chat Airlock cannot see, gated first and
+  recorded when it leaves
+- ✎ New thread, named from the first thing you say in it
+- Streaming, Stop, retry, markdown with per-block copy, tok/s and prompt-token counts
 - Sampling controls, and a panel that says which of them actually cross the boundary
-- tok/s, time-to-first-token, prompt-token count per reply
-- Conversation survives reload (localStorage, last 40 messages)
 
 ## The gate
 
@@ -265,14 +275,12 @@ model leaves the catalogue. Packets written before the column existed predate th
 remote tier entirely, so the one-time backfill marks them `local` as a fact
 rather than a guess.
 
-### Chat crosses too, and it is recorded
+### A conversation crosses too, and it is recorded
 
-Selecting an Oversight model in the composer dropdown is the other way across the
-boundary, and it is the easier one to do by accident: the choice is sticky in
-`localStorage`, so you can come back to a thread tomorrow already pointed at a
-remote endpoint.
-
-So the same three rules apply to chat as to escalation.
+A pane pointed at a remote model is the everyday way across the boundary, and it
+carries more than the message you typed: the shared conversation, the other
+participant's words included. The pane says "↗ crosses" in its header, and the same
+three rules apply to every turn it sends.
 
 **Every turn is gated, and the ruling is bound to the words.** `kernel.js` hashes
 each outgoing message and issues a clearance for exactly that set, going to exactly
@@ -309,8 +317,10 @@ never a crossing. Beneath it, `providers/egress.js` is the only file allowed to 
 `fetch` (a test fails on any other), and it will not open a content-bearing
 connection without a clearance the kernel issued.
 
-> ⚠ **What the kernel cannot mediate.** A brief or packet you export and carry out
-> by hand — that crossing is recorded, not prevented. And code that opens its own
+> ⚠ **What the kernel cannot mediate.** A brief carried out by hand is gated and
+> recorded, but once copied it is out of Airlock's hands. A single message dragged or
+> copied out (⧉) carries its provenance but is not gated — Airlock cannot see where a
+> drop lands, so it cannot tell an export to your notes from one to a chat window. And code that opens its own
 > socket: a tool that runs third-party code would have to live in a separate
 > process for any of this to hold, and none does today.
 
@@ -332,30 +342,22 @@ a local model — but it is never invisible. The crossing note carries
 the verdict packet naming it a bypass. An override that leaves no trace is the
 one thing an audit trail must not permit.
 
-## Seats
+## Asking a bigger model
 
-Three seats, one per Nemotron tier. Drop a thread on one — or click it with a
-thread open — and it gates locally, crosses to Token Factory, and records the
-crossing.
+There used to be an Oversight lane: three Nemotron seats to drop a thread on for a
+review. A participant does that job now, inside the conversation. Point the right
+pane at Nemotron 3 Super or Ultra and ask it — it reads the shared conversation,
+the gate rules first, and the crossing is recorded like any other.
 
-| Seat | Model | For |
-|---|---|---|
-| ↗ Nano | Nemotron 3 Nano 30B | fast verdicts, cheap enough to use freely |
-| ↗ Super | Nemotron 3 Super 120B | the standard review |
-| ↗ Ultra | Nemotron 3 Ultra 550B | deep review, a million-token window |
+| Model | For |
+|---|---|
+| Nemotron 3 Nano 30B | fast answers, cheap enough to use freely |
+| Nemotron 3 Super 120B | the standard review |
+| Nemotron 3 Ultra 550B | deep review, a million-token window |
 
-Which seats exist comes from `.env` by way of `/api/health`, so the model ids
-have one home and the markup only names actors. **A seat with no model
-configured is not live**, so with no key at all the lane is empty rather than
-misleading.
-
-The manual path — `GET /api/threads/:id/brief` out, `POST
-/api/threads/:id/handoff` back — still exists and is still tested. It records a
-`crossed` event exactly like an API call does, because a brief pasted into
-someone else's chat window exposes the same content and only the carrier
-differs. It simply has no seat in the lane any more: this is a Nemotron desk, and
-three tiers plus three vendor buttons made the lane read like a vendor list
-rather than an escalation ladder.
+Which of them exist comes from `.env` by way of `/api/health`. The whole-thread
+review behind the old seats is still an API — `POST /api/threads/:id/escalate`,
+gate first, cross second, record third — and still tested, with no button.
 
 ## Two tiers, one stream
 
@@ -430,7 +432,7 @@ worse than one that isn't there.
 
 ### ⚠ The system prompt crosses
 
-It is prepended to every turn, so when an Oversight model is selected it travels
+It is prepended to every turn, so when a participant runs across the boundary it travels
 with the conversation. That makes it the one setting which is not configuration
 at all but *content* — and the panel warns accordingly.
 

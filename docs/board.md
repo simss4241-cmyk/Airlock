@@ -95,8 +95,10 @@ the handoff dialog still has a **Save .md** button for threads.
 
 What the text looks like depends on what you grabbed:
 
-- **A thread** drops the full oversight brief — provenance, every packet numbered, the review
-  ask. From `/api/threads/:id/brief.md`.
+- **A thread** used to drop the full oversight brief. It no longer does (2026-09-30): a
+  whole thread leaving by drag was a crossing by hand with no ruling and no record, since a
+  drop into another app is invisible from here. Dragging a thread now only re-files it; ⇱
+  Carry out is the way a thread leaves, gated first and recorded when it goes.
 - **A packet** drops just that thought, with a one-line context header:
   `[Airlock packet #12 · thread: Indexing · born in Schema · reviewed by Claude]`.
   From `/api/packets/:id/packet.md`.
@@ -161,6 +163,11 @@ Badges under a packet read its provenance: `from Schema` when it was born elsewh
 `nested`, `reviewed by Claude`, `oversight verdict`.
 
 ## The Galactic Oversight Committee
+
+> **Retired 2026-09-30.** The lane is gone. A participant pointed at Super or Ultra does
+> the reviewing now, inside the conversation, and a brief carried by hand goes through ⇱
+> Carry out, which gates it before showing it. This section records how the lane worked;
+> `POST /api/threads/:id/escalate` and the handoff routes still exist and are tested.
 
 Escalation as a deliberate act. Drag a thread onto a committee member and you get a
 portable markdown brief: the tray and thread, every packet numbered,
