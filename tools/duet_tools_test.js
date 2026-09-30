@@ -336,6 +336,23 @@ async function main() {
         ok(Boolean(s3.last('blocked')), 'asking the remote side there is withheld too');
         ok(!leakedSince(n3), 'NOTHING from it arrived at the far side');
 
+        // ── 3b. one message, exported ──
+        //
+        // A single message dragged or copied out goes wherever the drop lands, so Airlock
+        // cannot gate it with a model — but the scanner runs on the way out, in the page for
+        // the drag's text and here for the Shift-drag .md file.
+        console.log('\n3b. one message, dragged out as a file');
+        const md = await api('GET', `/api/packets/${quoted.id}/packet.md`);
+        ok(md.status === 403 && !md.text.includes(CANARY_MARK) && !md.text.includes('PRIVATE KEY'),
+            'a message holding a private key is not exported as a file, and the refusal does not quote it',
+            `${md.status} ${md.text.slice(0, 80)}`);
+        const clean = (await api('POST', '/api/packets', { threadId: t3.id, role: 'user', content: 'A teal ribbon, please.' })).body;
+        const cleanMd = await api('GET', `/api/packets/${clean.id}/packet.md`);
+        ok(cleanMd.status === 200 && cleanMd.text.includes('A teal ribbon'), 'a clean one is');
+        const served = await api('GET', '/secrets.js');
+        ok(served.status === 200 && /AirlockSecrets/.test(served.text),
+            'the page is served the same scanner the gate runs, for drags and copies');
+
         // ── 4. by hand ──
         console.log('\n4. carried out by hand');
         const c3 = await api('POST', `/api/threads/${t3.id}/carry`, { actor: 'a web chat' });

@@ -110,6 +110,30 @@ const two = scan('ANTHROPIC_KEY sk-ant-api03-Zq8Lm3Kx7Vp2Rt9Wn4Yb6Hc1Jd5Fg0');
 ok(two.length === 1 && two[0].rule === 'anthropic-key',
     'one secret is one finding, named by its most specific rule', JSON.stringify(two.map(h => h.rule)));
 
+// ─────────────────────────── the same file, in the page ───────────────────────────
+//
+// Served as /secrets.js so a message dragged or copied out is checked by these exact rules.
+// Loaded as a plain browser script, with no `module`, it must expose them as
+// window.AirlockSecrets — and nothing else: a stray global would collide with app.js.
+
+console.log('\nloaded as a browser script');
+{
+    const vm = require('vm');
+    const page = { window: {} };
+    vm.createContext(page);
+    vm.runInContext(require('fs').readFileSync(require('path').join(__dirname, '..', 'secrets.js'), 'utf8'), page);
+    const browser = page.window.AirlockSecrets;
+    ok(typeof browser?.scan === 'function', 'it exposes the scanner as window.AirlockSecrets');
+    ok(browser && browser.scan('try glpat-Rk4mZ8qT2xW7vN3pL9sY').map(h => h.rule).join() === 'gitlab-token',
+        'and finds what the server finds');
+    ok(Object.keys(page).join() === 'window', 'without leaking a single global besides it',
+        Object.keys(page).join());
+    const before = browser?.RULES.length;
+    try { browser.RULES.length = 0; browser.RULES[0].re = /(?!)/; } catch { /* strict mode throws; either way */ }
+    ok(browser.RULES.length === before && browser.scan('glpat-Rk4mZ8qT2xW7vN3pL9sY').length === 1,
+        'and a page script cannot empty or blunt its rules', `${before} -> ${browser.RULES.length}`);
+}
+
 // ─────────────────────────── wired into the gate ───────────────────────────
 
 (async () => {

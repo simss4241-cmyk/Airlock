@@ -1184,6 +1184,24 @@ const clearDragChip = () => { dragChip?.remove(); dragChip = null; };
  * it is the exported copy — the one that ends up in a doc, a review, a ticket — where that
  * failure actually happens.
  */
+/**
+ * Known credential formats in a message, by the same rules a crossing is scanned with
+ * (secrets.js, served to the page). A drag or a copy has to hand over its text at once and
+ * cannot wait for the gate model, but these patterns run in microseconds — so every way a
+ * single message leaves Airlock is checked by them.
+ *
+ * Fails closed: if the scanner did not load, that is reported as a finding, not a pass.
+ */
+function credentialsIn(text) {
+    if (!window.AirlockSecrets) return [{ rule: 'scanner-missing', label: 'something the scanner could not check (it failed to load)', preview: '' }];
+    return window.AirlockSecrets.scan(String(text || ''));
+}
+
+/** What a refused export says, so every refusal reads the same. */
+const exportRefusal = (hits, packetId) =>
+    `#${packetId} contains ${[...new Set(hits.map(h => h.label))].join(', ')} — it does not leave by `
+    + 'drag or copy. If it must go, ⇱ Carry out the thread: that is gated, overridable and recorded.';
+
 function provenanceOf(m, packetId) {
     const bits = [`Airlock packet #${packetId}`];
     if (activeThread) bits.push(`thread: ${activeThread.title}`);
@@ -1193,7 +1211,9 @@ function provenanceOf(m, packetId) {
     } else {
         bits.push(`model: ${m.model || 'unnamed local model'}`);
         // Stated outright, because it is the one fact a reader cannot recover downstream.
-        bits.push(m.tier === 'remote' ? 'ran off-machine'
+        // A withheld reply never ran anywhere — its tier only says where it was BOUND.
+        bits.push(m.status === 'blocked' ? 'withheld by the local gate — nothing was sent'
+            : m.tier === 'remote' ? 'ran off-machine'
             : m.tier === 'unknown' ? 'ran on a model Airlock could not place — logged as a crossing'
             : hostedView ? "ran on this server's own model" : 'ran on local hardware');
     }
@@ -1242,6 +1262,13 @@ function offerAsText(dt, text, html = asHtml(text)) {
  * The clipboard has no such veto, so everything draggable here is also copyable.
  */
 async function copyWithProvenance(m, packetId, btn) {
+    const hits = credentialsIn(m.content);
+    if (hits.length) {
+        flash(exportRefusal(hits, packetId), 9000);
+        if (btn) { btn.textContent = '⚠ kept'; setTimeout(() => { btn.textContent = '⧉ copy'; }, 1800); }
+        return;
+    }
+
     const text = exportText(m, packetId);
 
     const done = () => {

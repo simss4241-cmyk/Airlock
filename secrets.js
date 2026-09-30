@@ -1,3 +1,8 @@
+// One file, two places: required by boundary.js on the server, and served to the page as
+// /secrets.js so a message dragged or copied OUT of Airlock is checked in the same instant,
+// by the same rules. A drag has to hand over its text synchronously — it cannot wait for
+// the gate model — but it can run these patterns. Wrapped so neither place leaks globals.
+(function (root) {
 'use strict';
 
 // ─────────────────────── The secret scanner ───────────────────────
@@ -159,4 +164,11 @@ function rule(text) {
     };
 }
 
-module.exports = { scan, rule, RULES, PLACEHOLDER };
+// Frozen, rules included: the page must not be able to empty the list it checks against.
+for (const r of RULES) Object.freeze(r);
+Object.freeze(RULES);
+
+const api = { scan, rule, RULES, PLACEHOLDER };
+if (typeof module === 'object' && module.exports) module.exports = api;
+else root.AirlockSecrets = Object.freeze(api);
+})(typeof window !== 'undefined' ? window : globalThis);

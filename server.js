@@ -142,6 +142,11 @@ app.use(express.json({ limit: '32mb' }));  // images ride along as base64
 // /api, which is guarded.
 app.use(express.static(path.join(__dirname, 'public')));
 
+// The secret scanner, for the page: the same file boundary.js runs, so a message dragged or
+// copied out is checked by exactly the rules a crossing is. Open like the other static
+// assets — it is patterns, not data.
+app.get('/secrets.js', (req, res) => res.type('application/javascript').sendFile(path.join(__dirname, 'secrets.js')));
+
 /**
  * Who is answering on this port.
  *
@@ -1327,6 +1332,16 @@ app.get('/api/packets/:id/packet.md', (req, res) => {
         const p = store.getPacket(id(req));
         if (!p) throw new Error(`No packet ${id(req)}`);
 
+        // A file dragged out of Airlock goes wherever the drop lands — it is an export the
+        // app cannot follow, so a known credential format does not go at all. The gate
+        // model cannot run here (the drag is already in flight); the scanner can, and does.
+        const hits = require('./secrets').scan(p.content);
+        if (hits.length) {
+            return res.status(403).type('text/plain').send(
+                `Packet #${p.id} contains ${[...new Set(hits.map(h => h.label))].join(', ')}, so it `
+                + 'is not exported. Use ⇱ Carry out if it really must leave — that is gated and recorded.');
+        }
+
         const thread = store.getThread(p.thread_id);
         const reviews = store.getReviews(p.id);
         const origin = p.origin_thread_id && p.origin_thread_id !== p.thread_id
@@ -1338,7 +1353,10 @@ app.get('/api/packets/:id/packet.md', (req, res) => {
         // Which side of the boundary produced it, said in the exported file too — the drag
         // header carries this, and a file that omitted it would contradict the paste.
         if (p.role === 'assistant') {
-            lines.push(`Ran: ${p.tier === 'remote' ? '**off-machine**' : 'on local hardware'}`);
+            // A reply the gate withheld never ran anywhere; its tier only says where it was bound.
+            lines.push(p.status === 'blocked'
+                ? 'Ran: **nowhere** — withheld by the local gate, nothing was sent'
+                : `Ran: ${p.tier === 'remote' ? '**off-machine**' : 'on local hardware'}`);
         }
         if (origin) lines.push(`Born in: **${origin.title}**`);
         if (reviews.length) lines.push(`Reviewed by: ${reviews.map(r => r.actor).join(', ')}`);

@@ -20,8 +20,9 @@
  *
  * Loaded after app.js and leans on it for the markdown renderer, the toast and the tray
  * rail. This is THE view of a thread: the single-pane chat it grew up beside is gone, and
- * talking to one model is focus mode (⤢), inside the same conversation and chamber. The fetch wrapper in app.js attaches the access
- * token to every /api call made here, so a hosted instance needs nothing extra.
+ * talking to one model is focus mode (⤢), inside the same conversation and chamber. The
+ * fetch wrapper in app.js attaches the access token to every /api call made here, so a
+ * hosted instance needs nothing extra.
  */
 
 const duetEl = {
@@ -146,6 +147,18 @@ function upsert(message) {
 
 const messageById = id => state.messages.find(m => m.id === id);
 
+/**
+ * Scanner findings per message, remembered by content. A pane repaints every frame while a
+ * reply streams, and re-running every pattern over every message each frame is waste —
+ * but a message's content only changes while it streams, so id + length is a sound key.
+ */
+const credentialCache = new Map();
+function credentialsCached(message) {
+    const key = `${message.id}:${(message.content || '').length}`;
+    if (!credentialCache.has(key)) credentialCache.set(key, credentialsIn(message.content));
+    return credentialCache.get(key);
+}
+
 // ─────────────────────────── rendering ───────────────────────────
 
 const STATUS_NOTE = {
@@ -169,6 +182,13 @@ function messageHtml(message, { showAddressing = false } = {}) {
     // Only one that DID — see didCross().
     const crossed = didCross(message)
         ? ' <span class="badge travel">↗ crossed</span>' : '';
+
+    // Holding a known credential: said on the message, before anyone reaches for the drag.
+    const secret = message.streaming ? [] : credentialsCached(message);
+    const kept = secret.length
+        ? ` <span class="badge secret" title="${escapeHtml(`Contains ${[...new Set(secret.map(h => h.label))].join(', ')}. `
+            + 'It will not leave by drag or copy; the gate withholds it from any crossing.')}">⚠ credential</span>`
+        : '';
 
     const think = message.thinking
         ? `<details class="think"${message.streaming && !message.content ? ' open' : ''}>
@@ -237,7 +257,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
 
     return `<div class="${classes.join(' ')}" data-message="${message.id}">
                 <span class="who"${portable ? ' draggable="true"' : ''}>${who}${addressed}${
-                    message.id ? ` · #${message.id}` : ''}${crossed}${note}${handoff}</span>
+                    message.id ? ` · #${message.id}` : ''}${crossed}${kept}${note}${handoff}</span>
                 <div class="bubble${message.streaming && message.content ? ' caret' : ''}">${
                     think}${body}</div>
                 ${message.stats ? `<span class="stats">${escapeHtml(message.stats)}</span>` : ''}
@@ -621,7 +641,15 @@ function wireHandoff(scope) {
 
         handle?.addEventListener('dragstart', e => {
             const dt = e.dataTransfer;
-            offerAsText(dt, exportText(message, packetId), exportHtml(message, packetId));
+
+            // ⚠ The one check a drag can afford. It must hand over its text now, so the gate
+            // model cannot rule — but the secret scanner can, in microseconds. A message
+            // holding a known credential carries NO text out: dropped into another app it
+            // inserts nothing. It can still move between threads here, which is not leaving.
+            const hits = credentialsIn(message.content);
+            if (hits.length && !movable) { e.preventDefault(); flash(exportRefusal(hits, packetId), 9000); return; }
+
+            if (!hits.length) offerAsText(dt, exportText(message, packetId), exportHtml(message, packetId));
             if (movable) {
                 dt.setData(DT_PACKET, String(packetId));
                 draggingPacket = packetId;
@@ -629,8 +657,9 @@ function wireHandoff(scope) {
 
             // Shift turns the whole gesture into a FILE drag as far as the OS is concerned,
             // which is why it cannot be on by default: a chat composer then shows a drop
-            // target and inserts nothing at all.
-            if (e.shiftKey) {
+            // target and inserts nothing at all. (The server refuses the file for a message
+            // holding a credential, too — see /api/packets/:id/packet.md.)
+            if (e.shiftKey && !hits.length) {
                 dt.setData('DownloadURL',
                     `text/markdown:airlock-packet-${packetId}.md:`
                     + `${location.origin}/api/packets/${packetId}/packet.md`);
@@ -645,6 +674,12 @@ function wireHandoff(scope) {
             const tag = mode === 'export' ? ' <b>[.md]</b>' : mode === 'fork' ? ' <b>[fork]</b>' : '';
             const preview = node.querySelector('.bubble')?.textContent.trim().slice(0, 46) || '';
             dt.setDragImage(makeDragChip(`<b>#${packetId}</b> ${escapeHtml(preview)}…${tag}`), 16, 14);
+
+            if (hits.length) {
+                dt.setDragImage(makeDragChip(`<b>#${packetId}</b> ⚠ kept in Airlock — move or fork only`), 16, 14);
+                flash(`${exportRefusal(hits, packetId)} Dropping it on a thread here still moves it.`, 30000);
+                return;
+            }
 
             flash(movable
                 ? 'drop on a thread to move · Alt to fork · any text box takes it with its provenance · Shift for .md'

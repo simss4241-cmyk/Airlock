@@ -44,7 +44,7 @@ what leaves it. This table is the honest version — clone it and check.
 | One streaming contract across both tiers | working |
 | Model pickers grouped by tier, capability-badged — per pane, and the default in Settings | working |
 | Local gate rules before anything crosses, and fails closed | working, 73 assertions (28 spend credits, opt-in) |
-| Known credential formats withheld by a scanner before the gate model reads anything | working, 54 assertions |
+| Known credential formats withheld by a scanner before the gate model reads anything | working, 58 assertions |
 | Tier recorded per packet; "what crossed?" as a query | working |
 | Crossing by a remote participant **and** by hand, both gated and recorded | working |
 | Access token + remote spend cap for hosting | working, 26 assertions |
@@ -53,7 +53,8 @@ what leaves it. This table is the honest version — clone it and check.
 | Every turn gated, bound to the exact words sent — only what is new is re-read | working |
 | One door: nothing reaches the network without a clearance the kernel issued | working, 34 assertions |
 | Tool results a remote model reads are gated, and recorded as crossed | working, 12 assertions end to end |
-| Workspace files in a duet, ruled on by every route to a cloud model: directly, through shared history, after a move, by hand | working, 30 assertions end to end |
+| Workspace files in a duet, ruled on by every route to a cloud model: directly, through shared history, after a move, by hand | working, 33 assertions end to end |
+| A single message dragged or copied out is scanned on the way; a credential does not leave | working |
 | Carry out by hand: the brief is gated before it is shown, and recorded when it leaves | working |
 | Redaction — crossing a brief with the sensitive parts stripped | not built |
 | Hosted: workspaces limited to an allowlist, and OFF if the allowlist is forgotten | working, 27 assertions |
@@ -61,7 +62,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Per-visitor settings, remote budgets, gate memory and generation slots; a daily cap that survives restarts | working |
 | Hosted deployment on Nebius AI Cloud, with the gate beside the app | not built |
 
-**606 assertions across sixteen suites.** Run them:
+**613 assertions across sixteen suites.** Run them:
 
 ```
 npm start                          # in one terminal
@@ -319,8 +320,14 @@ connection without a clearance the kernel issued.
 
 > ⚠ **What the kernel cannot mediate.** A brief carried out by hand is gated and
 > recorded, but once copied it is out of Airlock's hands. A single message dragged or
-> copied out (⧉) carries its provenance but is not gated — Airlock cannot see where a
-> drop lands, so it cannot tell an export to your notes from one to a chat window. And code that opens its own
+> copied out (⧉) cannot wait for the gate model — the drag hands its text over at once,
+> and Airlock cannot see where it lands. What it can do in that instant, it does: the
+> secret scanner runs on the way out, in the page, by the same rules a crossing is scanned
+> with. A message holding a known credential format carries no text out at all (it still
+> moves between threads), its ⧉ copy is refused, its `.md` export is refused by the
+> server, and it wears a ⚠ mark. What needs judgement rather than a pattern — a medical
+> note, a memo marked confidential — can still leave this way; ⇱ Carry out is the route
+> that rules on those. And code that opens its own
 > socket: a tool that runs third-party code would have to live in a separate
 > process for any of this to hold, and none does today.
 

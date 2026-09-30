@@ -186,6 +186,35 @@ are ruled on separately when read. In practice the 14B gate will stop most reque
 remote side to read files before any file is opened. Fixing this is gate tuning, and the
 held-out set is spent, so it needs fresh held-out cases first.
 
+## Verified 2026-09-30 — a single message, on its way out
+
+**Found by the operator, by hand:** dragging packet #4 (a user message holding a fake AWS
+key) out of Airlock and into a Claude chat window pasted the key. The gate had withheld
+that same text from Nemotron minutes earlier. Dragging #5, the withheld reply, produced a
+header claiming it "ran off-machine", when it never ran anywhere.
+
+**Fixed.** `secrets.js` now loads in the page too, as `window.AirlockSecrets`: frozen, with
+no other globals, and tested for both. Every way a single message leaves runs it:
+- a drag holding a credential carries no text (it can still move between threads);
+- ⧉ copy is refused, with the reason;
+- the Shift-drag `.md` file is refused by the server (403), without quoting the secret;
+- the message wears a ⚠ credential mark.
+
+If the scanner fails to load, that counts as a finding, not a pass. A withheld reply's
+header and `.md` say "withheld by the local gate — nothing was sent".
+
+Checked in the browser on the same thread:
+- #4's drag carried only `application/x-airlock-packet`, no text, and its copy was refused;
+- #3 (clean) exported as before;
+- #5's header read "withheld by the local gate — nothing was sent".
+
+`secrets_test` 58/58 (4 new: loads as a browser script, finds what the server finds, no
+stray globals, rules cannot be emptied or blunted). `duet_tools_test` 33/33 (3 new: `.md`
+refused for a key and served for a clean message, `/secrets.js` served).
+
+Still not covered, and said in the README: what needs judgement rather than a pattern can
+still leave by drag. A drag cannot wait for the gate model.
+
 ---
 
 [← back to the README](../README.md)

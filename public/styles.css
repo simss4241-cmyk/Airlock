@@ -1019,6 +1019,8 @@ main {
 }
 
 .badge.travel { border-color: var(--cross-dim); color: var(--cross); background: rgba(255, 176, 32, .07); }
+/* Holds a known credential: red, because it is kept — it will not leave by drag or copy. */
+.badge.secret { border-color: #4a1d1f; color: #ffb3b5; background: rgba(255, 90, 95, .08); cursor: help; }
 .badge.review { border-color: var(--accent-dim); color: var(--accent); background: rgba(118, 185, 0, .07); }
 
 /* ── Composer pieces, shared by each pane's composer ── */
