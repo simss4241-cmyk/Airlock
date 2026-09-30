@@ -78,56 +78,10 @@ const DEFAULTS = {
 };
 
 // ─────────────────────── Workspace tools ───────────────────────
-// Read-only, confined by files.js to the workspace root of the thread the request names.
-// Bounded rounds so a confused model can't spin the loop forever on an 8 tok/s budget.
+// Defined in workspace-tools.js, shared with the duet runner so a tool result is the same
+// thing to the kernel, and to the crossing record, whichever path produced it.
 
-const MAX_TOOL_ROUNDS = 5;
-
-const TOOLS = [
-    {
-        type: 'function',
-        function: {
-            name: 'list_directory',
-            description: 'List files and folders inside the workspace. Use "." for the workspace root.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    path: { type: 'string', description: 'Folder path relative to the workspace root.' }
-                }
-            }
-        }
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'find_files',
-            description: 'Find files anywhere in the workspace whose filename contains the query. '
-                + 'Use this when you know roughly what a file is called but not where it lives.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    query: { type: 'string', description: 'Substring to match against filenames.' }
-                },
-                required: ['query']
-            }
-        }
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'read_file',
-            description: 'Read a text file from the workspace (.md, .txt, .json, source code, etc). '
-                + 'Returns the file contents, truncated if very large.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    path: { type: 'string', description: 'File path relative to the workspace root.' }
-                },
-                required: ['path']
-            }
-        }
-    }
-];
+const { MAX_TOOL_ROUNDS, TOOLS, usableRoot, runCalls } = require('./workspace-tools');
 
 /**
  * Per-model capabilities, cached.
@@ -139,27 +93,6 @@ const TOOLS = [
 // Capability lookup moved into the provider layer: a remote model has no
 // /api/show to ask, so each provider answers for its own models.
 const modelCaps = model => providers.capabilities(model);
-
-async function runTool(name, args, root) {
-    switch (name) {
-        case 'list_directory': return files.listDirectory(root, args.path || '.');
-        case 'find_files':     return files.findFiles(root, args.query);
-        case 'read_file':      return files.readTextFile(root, args.path);
-        default: throw new Error(`Unknown tool: ${name}`);
-    }
-}
-
-/** One-line description for the UI's tool card. */
-function summarise(name, args, result, ok) {
-    if (!ok) return `${name} failed: ${result.error}`;
-    switch (name) {
-        case 'list_directory': return `${result.path} — ${result.entries.length} entries`;
-        case 'find_files':     return `"${result.query}" — ${result.count} match(es)`;
-        case 'read_file':      return `${result.path} — ${result.bytes.toLocaleString()} bytes`
-                                    + (result.truncated ? ' (truncated)' : '');
-        default: return name;
-    }
-}
 
 // ── config: the operator's, and on a hosted instance each visitor's own on top ──
 //
@@ -502,16 +435,8 @@ app.post('/api/chat', async (req, res) => {
     const canThink = caps.includes('thinking');
     const workspaceRoot = threadId ? store.getThread(Number(threadId))?.workspace_root : null;
 
-    // A root pointing at a folder that no longer exists is worse than no tools at all:
-    // every call fails, and the model spends the whole round budget finding that out.
-    //
-    // And a root must still be PERMITTED when it is used, not just when it was chosen: a
-    // database carried onto a hosted box holds whatever roots were set on the desk.
-    const rootUsable = workspaceRoot
-        ? await fs.stat(workspaceRoot).then(s => s.isDirectory()).catch(() => false)
-            && await files.permitRoot(workspaceRoot).then(() => true, () => false)
-        : false;
-    const useTools = rootUsable && caps.includes('tools');
+    // usableRoot: the folder still exists, and is still permitted — see workspace-tools.js.
+    const useTools = await usableRoot(workspaceRoot) && caps.includes('tools');
 
     // The conversation grows as tools run: assistant tool_calls, then tool results.
     const convo = [...messages];
@@ -694,41 +619,11 @@ app.post('/api/chat', async (req, res) => {
             // ruling judges the file contents, not the far side's own words.
             if (crosses) kernel.acknowledge([asked]);
 
-            for (const call of toolCalls) {
-                const name = call.function?.name;
-                let args = call.function?.arguments ?? {};
-                if (typeof args === 'string') {
-                    try { args = JSON.parse(args); } catch { args = {}; }
-                }
-
-                let result, ok = true;
-                try {
-                    result = await runTool(name, args, workspaceRoot);
-                } catch (err) {
-                    ok = false;
-                    result = { error: err.message };
-                }
-
+            for (const { message, card, artifact } of await runCalls(toolCalls, workspaceRoot)) {
                 // Custom line the client renders as a tool card. Ollama never emits this key.
-                send({ airlock_tool: { name, args, ok, summary: summarise(name, args, result, ok) } });
-
-                const toolMessage = {
-                    role: 'tool',
-                    tool_name: name,
-                    content: JSON.stringify(result).slice(0, 120000)
-                };
-                convo.push(toolMessage);
-
-                if (crosses) {
-                    const target = args.path || args.query || '.';
-                    pendingArtifacts.push({
-                        label: `${name}(${target}) ${toolMessage.content.length.toLocaleString()} chars`
-                            + ` sha:${kernel.unitHash(toolMessage).slice(0, 12)}`,
-                        tool: name,
-                        target,
-                        ok
-                    });
-                }
+                send({ airlock_tool: card });
+                convo.push(message);
+                if (crosses) pendingArtifacts.push(artifact);
             }
         }
 
@@ -1067,6 +962,8 @@ app.post('/api/duet/:id/send', async (req, res) => {
             participantId: Number(req.body.participantId),
             text: req.body.text,
             images: req.body.images,
+            // Files are opt-in per request, and only an explicit true opts in.
+            tools: req.body.tools === true,
             clientRequestId: req.body.clientRequestId,
             retryOf: req.body.retryOf ? Number(req.body.retryOf) : null,
             config,
@@ -1317,7 +1214,85 @@ app.post('/api/threads/:id/escalate', async (req, res) => {
 // Back in: the verdict, as a packet plus signatures on what was reviewed.
 // The live path is /escalate above; this one is still how a human seat works.
 app.get('/api/threads/:id/brief', ok(req => store.buildBrief(id(req), { actor: req.query.actor })));
-app.post('/api/threads/:id/handoff', ok(req => store.recordHandoff(id(req), req.body)));
+
+// ─────────────────────── Carry out by hand ───────────────────────
+//
+// A brief copied into a browser chat window crosses the boundary exactly as an API call
+// does; only the carrier differs. So it is ruled on exactly as an API call is — the secret
+// scanner, then the local gate, over the WHOLE brief, which is every reply in the thread
+// including any that quote files a participant read. Released: the brief is handed over.
+// Withheld: it is not, and the ruling is. An operator can override, and the record says so.
+//
+// The ruling lives HERE, under a token, never in the client. /carried and /handoff record
+// the crossing with the ruling the server issued; a client cannot claim "released" for a
+// brief no gate ever saw. GET /brief stays as the raw local read it always was — reading
+// your own thread on your own machine crosses nothing.
+
+const carries = new Map();          // token -> { scope, threadId, actor, packetIds, gate, at }
+const CARRY_TTL_MS = 60 * 60 * 1000;
+
+function takeCarry(token, threadId) {
+    const carry = carries.get(String(token || ''));
+    if (!carry || carry.threadId !== threadId || carry.scope !== sandbox.scopeKey()) {
+        throw new Error('That brief was not ruled on here (or it has expired) — carry it out again.');
+    }
+    if (Date.now() - carry.at > CARRY_TTL_MS) {
+        carries.delete(token);
+        throw new Error('That ruling has expired — carry the brief out again.');
+    }
+    return carry;
+}
+
+app.post('/api/threads/:id/carry', async (req, res) => {
+    try {
+        const threadId = id(req);
+        const actor = String(req.body?.actor || '').trim().slice(0, 80);
+        if (!actor) throw new Error('Say where it is going — "Claude", "a colleague", anything.');
+
+        const brief = store.buildBrief(threadId, { actor });
+        if (!brief.packetIds.length) throw new Error('Nothing to carry — this thread has no packets yet.');
+
+        const gate = req.body?.force === true
+            ? { release: true, reason: 'Carried by hand over the gate: the operator decided.',
+                concerns: [], model: null, forced: true }
+            : await runGate(brief.markdown, { config });
+
+        if (!gate.release) {
+            return res.json({ released: false, gate, packets: brief.packetIds.length });
+        }
+
+        for (const [t, c] of carries) if (Date.now() - c.at > CARRY_TTL_MS) carries.delete(t);
+        const token = require('node:crypto').randomUUID();
+        carries.set(token, {
+            scope: sandbox.scopeKey(), threadId, actor, packetIds: brief.packetIds, gate, at: Date.now()
+        });
+
+        res.json({ released: true, gate, token, ...brief });
+    } catch (err) {
+        res.status(400).json({ error: err.message });
+    }
+});
+
+// The brief was copied or saved: it has left. Record it now, with the server's ruling.
+app.post('/api/threads/:id/carried', ok(req => {
+    const carry = takeCarry(req.body?.token, id(req));
+    return store.recordCarry(id(req), { actor: carry.actor, packetIds: carry.packetIds, gate: carry.gate });
+}));
+
+app.post('/api/threads/:id/handoff', ok(req => {
+    // With a carry token, what was carried and what ruled on it come from the server.
+    // Without one (the older API), the caller's own gate claim is dropped: a ruling nobody
+    // here issued is recorded as "no gate ruling recorded", which is the truth.
+    if (req.body?.token) {
+        const carry = takeCarry(req.body.token, id(req));
+        return store.recordHandoff(id(req), {
+            actor: carry.actor, verdict: req.body.verdict, packetIds: carry.packetIds,
+            gate: carry.gate, transport: 'hand', tier: 'remote'
+        });
+    }
+    const { gate, ...rest } = req.body || {};
+    return store.recordHandoff(id(req), rest);
+}));
 
 app.post('/api/packets', ok(req => {
     const { threadId, role, content, model } = req.body;

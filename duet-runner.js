@@ -45,6 +45,7 @@ const auth = require('./auth');
 const kernel = require('./kernel');
 const sandbox = require('./sandbox');
 const { buildContext } = require('./duet-context');
+const workspace = require('./workspace-tools');
 
 const { STATUS } = duet;
 
@@ -215,7 +216,9 @@ function resolveTrigger({ threadId, participant, text, images = [], clientReques
  * @param {AbortSignal} args.signal       the client hung up, or hit Stop
  * @param {(event: object) => void} args.emit
  */
-async function generate({ threadId, participantId, text, images, clientRequestId, retryOf, config, signal, emit }) {
+async function generate({
+    threadId, participantId, text, images, tools: wantTools = false, clientRequestId, retryOf, config, signal, emit
+}) {
     const participant = duet.getParticipant(participantId);
     if (!participant) throw new Error(`No participant ${participantId}`);
     if (participant.thread_id !== Number(threadId)) {
@@ -291,7 +294,9 @@ async function generate({ threadId, participantId, text, images, clientRequestId
     // ⚠ `!== 'local'`: anything the local catalogue did not name is treated as a
     // crossing. A duet crossing carries the OTHER participant's words too, so this is
     // the last place that should be deciding by exact string match on 'remote'.
-    if (tier !== 'local') {
+    const crosses = tier !== 'local';
+
+    if (crosses) {
         emit({ type: 'gating', messageId: reply.id });
 
         try {
@@ -314,12 +319,26 @@ async function generate({ threadId, participantId, text, images, clientRequestId
             emit({ type: 'blocked', message: reply, gate: gateRuling, tier });
             return reply;
         }
+    }
 
-        const over = auth.spendRemote();
-        if (over) {
-            reply = settle(STATUS.FAILED, '', { error: over });
-            emit({ type: 'error', message: reply, error: over });
-            return reply;
+    // ── the workspace ──
+    //
+    // Files are offered only when the client asked for them for THIS participant (the pane's
+    // ⛁ switch — on by default for a local side, off for a remote one), the thread has a
+    // workspace that still exists and is permitted, and the model can call tools. Checked
+    // here, per request, never remembered.
+    const root = wantTools ? store.getThread(Number(threadId))?.workspace_root : null;
+    const capsNow = await providers.capabilities(model).catch(() => []);
+    const useTools = Boolean(root) && capsNow.includes('tools') && await workspace.usableRoot(root);
+
+    // Which of the context's own messages were written after reading the workspace. When
+    // they cross now, as someone else's context, the record says which files were behind
+    // them — the raw tool results never enter another context, but their words may quote.
+    const reads = {};
+    if (crosses) {
+        for (const m of snapshot) {
+            const files = (m.requestMeta?.tools || []).filter(t => t.ok && t.name === 'read_file');
+            if (files.length && meta.sourceIds.includes(m.id)) reads[m.id] = files.map(t => t.label);
         }
     }
 
@@ -335,6 +354,9 @@ async function generate({ threadId, participantId, text, images, clientRequestId
     let firstTokenAt = null;
     let finalChunk = null;
     let crossingRecorded = false;
+    const usage = { prompt: 0, reply: 0, evalDuration: 0, rounds: 0 };
+    const toolTrace = [];           // every call this reply made — stored on it, shown on it
+    let withheld = null;            // a mid-turn refusal: the tool results the gate kept back
 
     try {
         // ⚠ Bound to the visitor who queued it. The queue is shared, and a waiting job is
@@ -349,50 +371,116 @@ async function generate({ threadId, participantId, text, images, clientRequestId
 
             emit({ type: 'running', messageId: reply.id });
 
-            const caps = await providers.capabilities(model).catch(() => []);
-            const canThink = caps.includes('thinking');
+            const canThink = capsNow.includes('thinking');
 
-            // One generator whatever the tier — the provider layer has already normalised
-            // the remote stream into Ollama's chunk shape, which is Airlock's contract.
-            const stream = providers.chat({
-                model,
-                messages: wire,
-                config,
-                // Omitted entirely when unsupported: sending `false` is still a request to
-                // a model that has no thinking channel, and that is a hard 400.
-                ...(canThink ? { think: config.think !== false } : {}),
-                signal,
-                clearance
-            });
+            // The conversation grows as tools run: the model's tool_calls, then the results.
+            const convo = [...wire];
+            let pendingArtifacts = [];
 
-            for await (const chunk of stream) {
-                // First chunk back proves the request was accepted, which is the moment the
-                // content is provably across. Recording on dispatch would log crossings
-                // that never happened.
-                // `!== 'local'` for the same reason the gate above uses it: a crossing
-                // the registry could not classify is still a crossing, and the audit
-                // trail is worth less if it only records the ones we were sure about.
-                if (tier !== 'local' && !crossingRecorded) {
-                    crossingRecorded = true;
-                    try {
-                        store.recordCrossings(meta.sourceIds, {
-                            actor: model, model, transport: 'duet', gate: gateRuling
-                        });
-                    } catch (err) {
-                        console.error('crossing not recorded:', err.message);
+            for (let round = 0; round <= workspace.MAX_TOOL_ROUNDS; round++) {
+                const lastRound = round === workspace.MAX_TOOL_ROUNDS;   // no tools: force an answer
+                let roundRecorded = false;
+
+                if (crosses) {
+                    // ⚠ Every round after the first carries something new: the tool results
+                    // the model asked for — file contents. They are ruled on before they go,
+                    // exactly as /api/chat rules on them, and a refusal ends the turn here.
+                    if (round > 0) {
+                        emit({ type: 'gating', messageId: reply.id });
+                        const next = await kernel.clear({ model, messages: convo, config });
+                        if (!next.ok) {
+                            gateRuling = next.ruling;
+                            withheld = pendingArtifacts.map(a => a.label);
+                            return;
+                        }
+                        clearance = next.token;
+                        gateRuling = next.ruling;
+                        emit({ type: 'running', messageId: reply.id });
                     }
+
+                    // Every round is a separately billed remote call, so every round is charged.
+                    const over = auth.spendRemote();
+                    if (over) throw new Error(over);
                 }
 
-                if (chunk.message?.thinking) {
-                    thinking += chunk.message.thinking;
-                    emit({ type: 'thinking', messageId: reply.id, text: chunk.message.thinking });
+                // One generator whatever the tier — the provider layer has already normalised
+                // the remote stream into Ollama's chunk shape, which is Airlock's contract.
+                const stream = providers.chat({
+                    model,
+                    messages: convo,
+                    config,
+                    // Omitted entirely when unsupported: sending `false` is still a request to
+                    // a model that has no thinking channel, and that is a hard 400.
+                    ...(canThink ? { think: config.think !== false } : {}),
+                    tools: useTools && !lastRound ? workspace.TOOLS : undefined,
+                    signal,
+                    clearance
+                });
+
+                let roundContent = '';
+                const toolCalls = [];
+                let roundFinal = null;
+
+                for await (const chunk of stream) {
+                    // First chunk back proves the request was accepted, which is the moment the
+                    // content is provably across. Recording on dispatch would log crossings
+                    // that never happened. Per round: round 0 carried the conversation, later
+                    // rounds carried the tool results the model asked for.
+                    if (crosses && !roundRecorded) {
+                        roundRecorded = true;
+                        crossingRecorded = true;
+                        try {
+                            const opts = { actor: model, model, transport: 'duet', gate: gateRuling };
+                            if (round === 0) store.recordCrossings(meta.sourceIds, { ...opts, reads });
+                            if (pendingArtifacts.length) {
+                                store.recordArtifactCrossing(trigger.id, { ...opts, artifacts: pendingArtifacts });
+                                pendingArtifacts = [];
+                            }
+                        } catch (err) {
+                            console.error('crossing not recorded:', err.message);
+                        }
+                    }
+
+                    if (chunk.message?.thinking) {
+                        thinking += chunk.message.thinking;
+                        emit({ type: 'thinking', messageId: reply.id, text: chunk.message.thinking });
+                    }
+                    if (chunk.message?.content) {
+                        if (firstTokenAt === null) firstTokenAt = Date.now();
+                        content += chunk.message.content;
+                        roundContent += chunk.message.content;
+                        emit({ type: 'token', messageId: reply.id, text: chunk.message.content });
+                    }
+                    if (chunk.message?.tool_calls?.length) toolCalls.push(...chunk.message.tool_calls);
+                    if (chunk.done) roundFinal = chunk;
                 }
-                if (chunk.message?.content) {
-                    if (firstTokenAt === null) firstTokenAt = Date.now();
-                    content += chunk.message.content;
-                    emit({ type: 'token', messageId: reply.id, text: chunk.message.content });
+
+                if (roundFinal) {
+                    finalChunk = roundFinal;
+                    usage.prompt += roundFinal.prompt_eval_count ?? 0;
+                    usage.reply += roundFinal.eval_count ?? 0;
+                    // Nanoseconds, because that is what Ollama reports and what the client
+                    // divides by 1e9. providers/tokenfactory.js measures its own — see README.
+                    usage.evalDuration += roundFinal.eval_duration ?? 0;
+                    usage.rounds++;
                 }
-                if (chunk.done) finalChunk = chunk;
+
+                if (!toolCalls.length) return;          // this round is the answer
+
+                const asked = { role: 'assistant', content: roundContent, tool_calls: toolCalls };
+                convo.push(asked);
+
+                // The model's own request, going back to the model that made it, is not new
+                // exposure — only the results it asked for are. Acknowledged so the next
+                // ruling judges the file contents, not the far side's own words.
+                if (crosses) kernel.acknowledge([asked]);
+
+                for (const { message, card, artifact } of await workspace.runCalls(toolCalls, root)) {
+                    convo.push(message);
+                    toolTrace.push({ ...artifact, summary: card.summary, name: card.name });
+                    emit({ type: 'tool', messageId: reply.id, ...card });
+                    if (crosses) pendingArtifacts.push(artifact);
+                }
             }
         }), position => {
             // Position updates keep arriving as the queue drains; once this job is running
@@ -400,22 +488,34 @@ async function generate({ threadId, participantId, text, images, clientRequestId
             if (!started) emit({ type: 'queued', messageId: reply.id, position });
         });
 
-        const usage = finalChunk ? {
-            prompt: finalChunk.prompt_eval_count ?? 0,
-            reply: finalChunk.eval_count ?? 0,
-            // Nanoseconds, because that is what Ollama reports and what the client divides
-            // by 1e9. providers/tokenfactory.js measures its own — see README.
-            evalDuration: finalChunk.eval_duration ?? 0
+        const usageOut = usage.rounds ? {
+            prompt: usage.prompt, reply: usage.reply, evalDuration: usage.evalDuration,
+            ...(usage.rounds > 1 ? { rounds: usage.rounds } : {})
         } : null;
 
+        const trace = toolTrace.length ? { tools: toolTrace } : {};
+
+        if (withheld) {
+            // The gate kept the file results back mid-turn. The request itself had crossed
+            // (round 0 is on the record); the results did not. Blocked, so the partial text
+            // stays out of every later context, and the ruling says what was withheld.
+            reply = settle(STATUS.BLOCKED, content, {
+                gate: gateRuling, withheld, usage: usageOut, ...trace,
+                crossed: crossingRecorded || undefined
+            });
+            emit({ type: 'blocked', message: reply, gate: gateRuling, tier, withheld });
+            return reply;
+        }
+
         reply = settle(STATUS.COMPLETE, content, {
-            usage,
+            usage: usageOut,
             thinkingChars: thinking.length || undefined,
             ttftMs: firstTokenAt ? firstTokenAt - queuedAt : null,
-            crossed: crossingRecorded || undefined
+            crossed: crossingRecorded || undefined,
+            ...trace
         });
 
-        emit({ type: 'done', message: reply, usage, thinking, done: finalChunk });
+        emit({ type: 'done', message: reply, usage: usageOut, thinking, done: finalChunk });
         return reply;
     } catch (err) {
         // Stop is not an error, and a stopped reply is not context. Partial text is kept
@@ -426,7 +526,8 @@ async function generate({ threadId, participantId, text, images, clientRequestId
 
         reply = settle(status, content, {
             error: aborted ? null : err.message,
-            crossed: crossingRecorded || undefined
+            crossed: crossingRecorded || undefined,
+            ...(toolTrace.length ? { tools: toolTrace } : {})
         });
 
         emit(aborted

@@ -1213,6 +1213,32 @@ dialog[open] { animation: dialog-in .26s var(--ease); }
 
 dialog#handoff { width: min(760px, 94vw); }
 
+/* ── Carry out by hand ── the ruling comes first, and says which way it went */
+.carry-btn { border-color: var(--cross-dim); color: var(--cross); }
+.carry-btn:hover { border-color: var(--cross); color: var(--cross); }
+
+.carry-ruling {
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    border-left-width: 3px;
+    background: var(--panel-2);
+    font-size: 13px;
+    line-height: 1.5;
+}
+.carry-ruling p { margin: .35em 0; }
+.carry-ruling ul { margin: .3em 0 .4em; padding-left: 1.3em; }
+.carry-ruling.busy { color: var(--muted); border-left-color: var(--cross); animation: seat-working 1.1s ease-in-out infinite; }
+.carry-ruling.released { border-left-color: var(--cross); }
+.carry-ruling.released b { color: var(--cross); }
+.carry-ruling.withheld, .carry-ruling.bad { border-left-color: var(--danger); background: #1a1113; }
+.carry-ruling.withheld b { color: var(--danger); }
+.carry-ruling.forced { border-left-color: var(--danger); }
+.carry-ruling.forced b { color: var(--danger); }
+
+.icon-btn.danger { color: #ffb3b5; border-color: #4a1d1f; }
+.icon-btn.danger:hover { color: #fff; background: #3a1417; border-color: var(--danger); }
+
 dialog::backdrop { background: rgba(0, 0, 0, .55); backdrop-filter: blur(4px); }
 
 .dlg-head {
@@ -1590,6 +1616,15 @@ main::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
 }
 
 .duet-focus.on { color: var(--accent); border-color: var(--accent-dim); }
+
+/* Files switched on for a side across the boundary: amber, because every file it reads is a
+   candidate crossing. */
+.icon-btn.toggle.duet-files.on.remote {
+    color: var(--cross);
+    border-color: var(--cross-dim);
+    background: linear-gradient(180deg, #2a2010, #1d170c);
+    box-shadow: var(--hi), 0 0 14px -6px rgba(255, 176, 32, .6);
+}
 
 .duet-fold {
     flex: 1;

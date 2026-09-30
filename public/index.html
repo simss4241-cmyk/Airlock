@@ -84,6 +84,8 @@
         <button class="pill pill-btn" id="duetToggle" hidden
                 title="Two named participants sharing this one conversation, each with its own pane">⇄ duet</button>
         <span class="pill" id="threadPill" hidden><span id="threadName"></span></span>
+        <button class="pill pill-btn carry-btn" id="carryOut" hidden
+                title="Carry this thread out by hand — ruled on by the local gate first, recorded when it leaves">⇱ Carry out</button>
         <span class="lane-hint" id="laneHint">drag a thread up here</span>
     </div>
 
@@ -239,36 +241,53 @@
     </form>
 </dialog>
 
-<!-- Handoff: out by clipboard, back by paste. No API, no spend. -->
+<!-- Carry out by hand. A brief pasted into a browser chat crosses the boundary exactly as an
+     API call does, so it is ruled on exactly as one is: the secret scanner, then the local
+     gate, over the whole brief. Withheld, the brief is not shown at all. Released, it is,
+     and the crossing is recorded the moment it is copied or saved — whether or not a reply
+     ever comes back. See /api/threads/:id/carry in server.js. -->
 <dialog id="handoff">
     <div class="dlg-head">
-        <span id="handoffTitle">Handoff</span>
+        <span id="handoffTitle">Carry out by hand</span>
         <button class="icon-btn sm" id="handoffClose" title="Close">✕</button>
     </div>
     <div class="dlg-body">
         <p class="note" id="handoffMeta"></p>
 
         <div class="field">
-            <label for="brief">Brief — carry this to them</label>
-            <textarea id="brief" readonly spellcheck="false"></textarea>
-        </div>
-        <div class="row gap">
-            <button class="icon-btn" id="copyBrief">Copy brief</button>
-            <button class="icon-btn" id="saveBrief">Save .md</button>
-            <span class="hint" id="copyHint"></span>
+            <label for="carryTo">Where is it going?</label>
+            <input id="carryTo" type="text" spellcheck="false" maxlength="80"
+                   placeholder="Claude, ChatGPT, a colleague — recorded as the destination">
         </div>
 
-        <hr>
+        <div class="carry-ruling" id="carryRuling" hidden></div>
 
-        <div class="field">
-            <label for="verdict">Their verdict — paste it back</label>
-            <textarea id="verdict" placeholder="Paste the committee member's reply here…"></textarea>
+        <div id="carryReleased" hidden>
+            <div class="field">
+                <label for="brief">Brief — cleared to leave</label>
+                <textarea id="brief" readonly spellcheck="false"></textarea>
+            </div>
+            <div class="row gap">
+                <button class="icon-btn" id="copyBrief">Copy brief</button>
+                <button class="icon-btn" id="saveBrief">Save .md</button>
+                <span class="hint" id="copyHint"></span>
+            </div>
+
+            <hr>
+
+            <div class="field">
+                <label for="verdict">Their reply — optional, paste it back</label>
+                <textarea id="verdict" placeholder="Paste what came back, if you want it in the thread…"></textarea>
+            </div>
+            <p class="note" id="signNote"></p>
         </div>
-        <p class="note" id="signNote"></p>
     </div>
     <div class="dlg-foot">
-        <button class="icon-btn" id="handoffCancel">Cancel</button>
-        <button class="send" id="recordHandoff">Record signature</button>
+        <button class="icon-btn danger" id="carryAnyway" hidden
+                title="Carry it past the gate. The record will say you decided, permanently.">Carry it anyway</button>
+        <span class="spacer"></span>
+        <button class="icon-btn" id="handoffCancel">Close</button>
+        <button class="send" id="recordHandoff" hidden>Record their reply</button>
     </div>
 </dialog>
 

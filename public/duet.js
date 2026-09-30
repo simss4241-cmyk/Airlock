@@ -187,7 +187,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
 
     // A blocked generation has no text, so the gate's reason IS the message.
     const gate = message.status === 'blocked' && message.requestMeta?.gate
-        ? gateHtml(message.requestMeta.gate)
+        ? gateHtml(message.requestMeta.gate, message.requestMeta.withheld)
         : '';
 
     // A failure with nothing written says why, from the record — an empty red box reads as
@@ -201,9 +201,23 @@ function messageHtml(message, { showAddressing = false } = {}) {
         ? `<div class="thumbs">${message.images.map(src =>
               `<img src="${escapeHtml(src)}" alt="attached image">`).join('')}</div>`
         : '';
+    // What the model touched on disk, one card per call — live from 'tool' events, and
+    // from the stored trace once the reply has settled.
+    const calls = message.tools || message.requestMeta?.tools || [];
+    const toolCards = calls.length
+        ? `<div class="tools">${calls.map(t => `
+               <div class="tool${t.ok ? '' : ' bad'}">
+                   <span class="tool-name">${escapeHtml(t.name || t.tool || 'tool')}</span>
+                   <span class="tool-sum">${escapeHtml(t.summary || t.label || '')}</span>
+               </div>`).join('')}</div>`
+        : '';
+
+    // A blocked reply can have text now (a turn stopped mid-way at a file result), so the
+    // gate's ruling is shown under whatever was said, not only in place of it.
     const body = mine
         ? thumbs + (message.content ? renderProse(message.content) : '')
-        : (message.content ? renderMarkdown(message.content) : (gate || empty));
+        : toolCards + (message.content ? renderMarkdown(message.content) : '')
+          + (message.status === 'blocked' ? gate : (message.content ? '' : empty));
 
     const classes = ['msg', mine ? 'user' : 'assistant'];
     // Same tier marking the classic view uses, so a reply produced across the boundary
@@ -235,10 +249,24 @@ function messageHtml(message, { showAddressing = false } = {}) {
 }
 
 /** The local gate's ruling, rendered where the answer would have been. */
-function gateHtml(gate) {
+function gateHtml(gate, withheld = null) {
     const concerns = gate.concerns?.length
         ? `<ul>${gate.concerns.map(c => `<li>${escapeHtml(String(c))}</li>`).join('')}</ul>`
         : '';
+
+    // Mid-turn: the request had already crossed (it is on the record); the file results the
+    // model then asked for did not. Saying "nothing was sent" here would be false.
+    if (withheld?.length) {
+        return `<div class="duet-gate">
+                    <b>The local gate withheld the files this model asked for.</b>
+                    <p>${escapeHtml(gate.reason || 'No reason given.')}</p>
+                    ${concerns}
+                    <p class="stats">Kept on this machine: ${escapeHtml(withheld.join('; '))}. The request
+                    itself had already crossed; these results did not.${
+                        gate.model || gate.ruledBy ? ` Ruled by ${escapeHtml(gate.model || gate.ruledBy)}.` : ''}</p>
+                </div>`;
+    }
+
     return `<div class="duet-gate">
                 <b>The local gate withheld this.</b>
                 <p>${escapeHtml(gate.reason || 'No reason given.')}</p>
@@ -708,6 +736,7 @@ function paintPaneTier(participantId) {
         : `This participant runs on ${here()}. Nothing sent here goes to a remote model.`;
 
     pane.nodes.node.classList.toggle('is-remote', remote);
+    paintFiles(participantId);      // tools, and the remote default, follow the model
 }
 
 // ─────────────────────────── sending ───────────────────────────
@@ -762,6 +791,7 @@ async function submit(participantId, { retryOf = null } = {}) {
                 participantId,
                 text: retryOf ? undefined : text,
                 images: staged.length ? staged.map(p => p.dataUrl) : undefined,
+                tools: filesWanted(participantId),
                 clientRequestId: retryOf ? undefined : requestId,
                 retryOf
             }),
@@ -883,6 +913,13 @@ function handleEvent(participantId, event, streamed) {
             return streamed;
         }
 
+        case 'tool': {
+            const message = messageById(event.messageId);
+            if (message) (message.tools ||= []).push({ name: event.name, ok: event.ok, summary: event.summary });
+            schedulePaint(participantId);
+            return streamed;
+        }
+
         case 'blocked':
             upsert({ ...event.message, streaming: false });
             releaseDoors(participantId, 'withheld');
@@ -982,6 +1019,7 @@ function buildPane(who) {
                       placeholder="Ask ${who.slot === 'a' ? 'left' : 'right'}…  (Enter to send)"></textarea>
             <div class="row">
                 <button class="icon-btn sm duet-attach" title="Attach an image (needs a 👁 model) or a text file">📎</button>
+                <button class="icon-btn sm toggle duet-files" type="button">⛁ files</button>
                 <input type="file" class="duet-file" multiple hidden
                        accept="image/*,.md,.markdown,.txt,.text,.json,.csv,.log,.yml,.yaml,.js,.ts,.py,.ps1,.scad,.html,.css">
                 <button class="icon-btn sm duet-retry" hidden title="Ask again — the original request is reused, not repeated">↻ retry</button>
@@ -1008,7 +1046,19 @@ function buildPane(who) {
         attach: node.querySelector('.duet-attach'),
         file: node.querySelector('.duet-file'),
         focus: node.querySelector('.duet-focus'),
-        fold: node.querySelector('.duet-fold')
+        fold: node.querySelector('.duet-fold'),
+        files: node.querySelector('.duet-files')
+    };
+
+    nodes.files.onclick = () => {
+        const on = !filesWanted(who.id);
+        try { localStorage.setItem(filesKey(who.id), on ? '1' : '0'); } catch { /* session only */ }
+        paintFiles(who.id);
+        if (on && isRemote(who.id)) {
+            flash(`${participant(who.id)?.model || 'This model'} runs across the boundary. It may now ask `
+                + 'to read files in this thread\'s workspace; the local gate rules on every file '
+                + 'before it is sent.', 9000);
+        }
     };
 
     nodes.focus.onclick = () => setFocus(state.focus === who.slot ? null : who.slot);
@@ -1084,6 +1134,46 @@ function buildPane(who) {
     nodes.roleBtn.classList.toggle('has-role', Boolean(who.instructions));
 
     return node;
+}
+
+// ─────────────────────────── workspace files ───────────────────────────
+//
+// Per participant, remembered in this browser. On by default for a side on this machine,
+// OFF by default for a side across the boundary: letting a cloud model read your files is
+// something you switch on, never something you find on. The server offers tools only when
+// the request says so, the thread has a usable workspace, and the model can call them —
+// and every file result bound for a remote model is ruled on before it goes.
+
+const filesKey = id => `airlock.duet.files.${id}`;
+const isRemote = id => {
+    const model = participant(id)?.model;
+    return model ? tierOfModel(model) !== 'local' : false;
+};
+
+function filesWanted(id) {
+    let stored = null;
+    try { stored = localStorage.getItem(filesKey(id)); } catch { /* default below */ }
+    return stored === null ? !isRemote(id) : stored === '1';
+}
+
+function paintFiles(id) {
+    const pane = panes.get(id);
+    if (!pane) return;
+    const model = participant(id)?.model;
+    const canTool = Boolean(state.models.find(m => m.name === model)?.caps?.includes('tools'));
+    const root = workspace.threadId === state.threadId ? workspace.root : null;
+    const on = filesWanted(id);
+    const armed = on && canTool && Boolean(root) && workspace.exists;
+
+    const btn = pane.nodes.files;
+    btn.classList.toggle('on', armed);
+    btn.classList.toggle('remote', armed && isRemote(id));
+    btn.disabled = !canTool;
+    btn.textContent = !canTool ? '⛁ no tools' : armed ? '⛁ files' : on && !root ? '⛁ no workspace' : '⛁ files off';
+    btn.title = !canTool ? `${model} can't call tools — attach files with 📎 instead`
+        : !root ? 'This thread has no workspace — set one in ⚙ Settings'
+            : on ? `May read files under ${root}${isRemote(id) ? ' — each one ruled on by the local gate before it crosses' : ''}. Click to turn off.`
+                : `Click to let ${participant(id)?.name || 'this side'} read files under ${root}`;
 }
 
 // ─────────────────────────── attachments ───────────────────────────
@@ -1461,4 +1551,5 @@ if (duetEl.railHead) {
 }
 
 // app.js drives thread selection; this is the only hook it needs.
-window.duetUI = { onThread, state };
+// app.js calls refreshFiles when the thread's workspace changes under the panes.
+window.duetUI = { onThread, state, refreshFiles: () => state.participants.forEach(p => paintFiles(p.id)) };

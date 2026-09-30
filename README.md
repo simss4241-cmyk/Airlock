@@ -48,18 +48,20 @@ what leaves it. This table is the honest version — clone it and check.
 | Tier recorded per packet; "what crossed?" as a query | working |
 | Escalation by router **and** by hand, both recorded as crossings | working |
 | Access token + remote spend cap for hosting | working, 26 assertions |
-| Duet — two addressable participants over one conversation | working, 73 assertions |
+| Duet — two addressable participants over one conversation | working, 84 assertions |
 | Per-thread consent retired; an old database is cleaned on open | working, 7 assertions |
 | Every turn gated, bound to the exact words sent — only what is new is re-read | working |
 | One door: nothing reaches the network without a clearance the kernel issued | working, 34 assertions |
 | Tool results a remote model reads are gated, and recorded as crossed | working, 12 assertions end to end |
+| Workspace files in a duet, ruled on by every route to a cloud model: directly, through shared history, after a move, by hand | working, 30 assertions end to end |
+| Carry out by hand: the brief is gated before it is shown, and recorded when it leaves | working |
 | Redaction — crossing a brief with the sensitive parts stripped | not built |
 | Hosted: workspaces limited to an allowlist, and OFF if the allowlist is forgotten | working, 27 assertions |
 | Per-visitor sandboxes: each visitor's threads, packets and duets are private | working, 63 assertions |
 | Per-visitor settings, remote budgets, gate memory and generation slots; a daily cap that survives restarts | working |
 | Hosted deployment on Nebius AI Cloud, with the gate beside the app | not built |
 
-**565 assertions across fifteen suites.** Run them:
+**606 assertions across sixteen suites.** Run them:
 
 ```
 npm start                          # in one terminal
@@ -71,6 +73,7 @@ node tools/files_test.js           # workspace containment
 node tools/workspace_test.js       # migrations
 node tools/duet_context_test.js    # what each participant is shown
 node tools/duet_test.js            # two panes, one conversation
+node tools/duet_tools_test.js      # workspace files in a duet, every route to the cloud (fakes both sides)
 node tools/clearance_test.js       # retired per-thread consent is removed from old databases
 node tools/secrets_test.js         # the credential scanner in front of the gate (offline)
 node tools/kernel_test.js          # the kernel, both locks, one door
@@ -247,7 +250,12 @@ than a flag on the other.
 
 **A manual handoff is a crossing too.** Copying a brief into Claude by hand
 exposes exactly the same content as an API call; the only difference is who
-carried it. Both record `crossed`, and the `transport` field says which — so the
+carried it. So **⇱ Carry out** rules on it the same way: the secret scanner, then
+the local gate, over the whole brief, before it is shown. A withheld brief is never
+put on screen. A released one is recorded as `crossed` the moment it is copied or
+saved, whether or not a reply ever comes back. The ruling is held by the server
+under a one-hour token, so the record cannot claim a release no gate gave, and an
+override is recorded as `gate=FORCED`. The `transport` field says `hand`, so the
 audit answers "what left this desk", not "what used an API".
 
 Tier is **recorded, not derived**. `packets.tier` is written at creation rather

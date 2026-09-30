@@ -104,6 +104,33 @@ written, and the composer keeps the message. A remote participant is also refuse
 kernel rather than here: the local gate reads text only and cannot rule on what an image
 shows, so an image never crosses.
 
+## Workspace files
+
+Each pane has a **⛁ files** switch. It is on by default for a side on this machine and
+off by default for a side across the boundary: letting a cloud model read your files is
+something you switch on, never something you find on. The server offers the tools only
+when the request asks, the thread has a workspace that still exists and is permitted, and
+the model can call tools (`workspace-tools.js`, shared with `/api/chat`).
+
+Local file contents are ruled on whenever they enter a cloud-bound context, not only when
+they are first read. There are four routes, and all four are tested end to end against a
+fake remote and a stand-in gate that releases everything, so every refusal is the secret
+scanner's on that route (`tools/duet_tools_test.js`):
+
+1. **Directly.** A remote side reads a file, and the result goes back to it. Every tool
+   round after the first is ruled on before it is sent. A refusal ends the turn there, and
+   the reply is marked with what was kept back. The request itself had crossed; the
+   results did not, and the pane says exactly that.
+2. **Shared history.** Raw tool results never enter another participant's context; only
+   the reply does. When that reply later crosses as someone else's context, it is ruled on
+   as a message the gate has not seen, and the crossing record names the files it had read.
+3. **Moved.** A quoting reply dragged to another thread is ruled on when it crosses there.
+   The kernel's memory is by content, not by thread.
+4. **By hand.** ⇱ Carry out rules on the whole brief before showing it. See the README.
+
+Each reply records the calls it made in `request_meta.tools` (name, target, size, hash),
+and the pane shows them as cards.
+
 ## Concurrency
 
 A context snapshot is taken at **submit** time, not when the model starts. So a reply

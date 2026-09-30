@@ -750,6 +750,33 @@ function createCore(db, file) {
     }
 
     /**
+     * A brief carried out by hand: copied, or saved as a file, to take somewhere Airlock
+     * cannot see. Recorded at THAT moment, not when a reply is pasted back — the content
+     * has left whether or not anyone ever brings an answer home. Deduped per packet and
+     * destination, so copying the same brief twice is one crossing, not two.
+     *
+     * `gate` is the ruling the SERVER issued for this brief (see /carry), never one the
+     * client supplied; a forced carry says so in the note, permanently.
+     */
+    function recordCarry(threadId, { actor, packetIds = [], gate = null }) {
+        if (!getThread(threadId)) throw new Error(`No thread ${threadId}`);
+        if (!actor) throw new Error('A carry needs a destination — where is it going?');
+
+        const note = crossingNote({ transport: 'hand', actor, gate })
+            + (gate?.forced ? ` · gate bypassed: ${(gate.reason || '').slice(0, 160)}` : '');
+        let written = 0;
+        db.exec('BEGIN');
+        try {
+            for (const pid of packetIds) written += crossOnce(pid, actor, note);
+            db.exec('COMMIT');
+        } catch (err) {
+            db.exec('ROLLBACK');
+            throw err;
+        }
+        return { crossed: written, of: packetIds.length };
+    }
+
+    /**
      * Record that some packets crossed the boundary.
      *
      * Deduplicated per (packet, actor). Every chat turn resends the whole
@@ -807,12 +834,23 @@ function createCore(db, file) {
         return 1;
     }
 
+    /**
+     * `opts.reads`, optional: { packetId: [artifact labels] } for packets that were written
+     * after reading the workspace — a duet reply that used read_file. Its raw tool results
+     * never enter another context, but its words may quote them, so when it crosses as
+     * part of a later conversation the record says which files it had read. "What has a
+     * remote model seen?" then reaches the files behind a quotation, not just the quotation.
+     */
     function recordCrossings(packetIds, opts) {
         const note = crossingNote(opts);
         let written = 0;
         db.exec('BEGIN');
         try {
-            for (const pid of packetIds) written += crossOnce(pid, opts.actor, note);
+            for (const pid of packetIds) {
+                const reads = opts.reads?.[pid];
+                written += crossOnce(pid, opts.actor,
+                    reads?.length ? `${note} · had read from the workspace: ${reads.join('; ')}` : note);
+            }
             db.exec('COMMIT');
         } catch (err) {
             db.exec('ROLLBACK');
@@ -886,7 +924,7 @@ function createCore(db, file) {
         setThreadWorkspace, migrateWorkspaceRoot, getMeta, setMeta,
         createPacket, getPacket, getThreadPackets, movePacket, forkPacket, deletePacket,
         reviewPacket, getProvenance, getReviews, search, getTravelled, stats, subtreeIds,
-        buildBrief, recordHandoff, getExposure, recordCrossings, recordArtifactCrossing
+        buildBrief, recordHandoff, recordCarry, getExposure, recordCrossings, recordArtifactCrossing
     };
 }
 

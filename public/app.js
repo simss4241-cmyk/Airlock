@@ -16,6 +16,8 @@ const el = {
     brief: $('brief'), verdict: $('verdict'), signNote: $('signNote'), copyHint: $('copyHint'),
     copyBrief: $('copyBrief'), saveBrief: $('saveBrief'), recordBtn: $('recordHandoff'),
     handoffClose: $('handoffClose'), handoffCancel: $('handoffCancel'),
+    carryTo: $('carryTo'), carryRuling: $('carryRuling'), carryReleased: $('carryReleased'),
+    carryAnyway: $('carryAnyway'), carryOut: $('carryOut'),
     thinkToggle: $('thinkToggle'), toolToggle: $('toolToggle'),
     wsRoot: $('wsRoot'), wsBrowse: $('wsBrowse'), wsClear: $('wsClear'), wsHint: $('wsHint'),
     wsThread: $('wsThread'), tokenPill: $('tokenPill')
@@ -769,6 +771,8 @@ function paintWorkspace() {
     // Don't fight the user's typing — only overwrite the box when it isn't focused.
     if (document.activeElement !== el.wsRoot) el.wsRoot.value = workspace.root || '';
 
+    window.duetUI?.refreshFiles?.();       // each pane's ⛁ switch reads the same workspace
+
     el.wsHint.textContent = wsNotice || (!hasThread ? 'Choose a thread from the left first.'
         : !workspace.root ? 'No file access for this thread.'
             : workspace.exists ? 'Read-only, confined to this folder.'
@@ -911,7 +915,6 @@ function renderRail() {
                 selectThread(+node.dataset.thread, node.dataset.title);
             }
         });
-        node.addEventListener('pointerenter', () => warmBrief(+node.dataset.thread));
         wireThreadDnd(node);
     });
 
@@ -1029,7 +1032,6 @@ function beginRename(span, kind, id) {
 
 async function loadTree() {
     tree = await (await fetch('/api/tree')).json();
-    briefCache.clear();     // packet counts changed, so any cached brief is stale
     renderRail();
     const s = await (await fetch('/api/stats')).json();
     el.storeStats.textContent = `${s.packets} packets · ${s.nested} nested · ${s.forks} forks · ${s.reviews} reviews`;
@@ -1056,6 +1058,7 @@ async function selectThread(id, title) {
     localStorage.setItem('airlock.thread', String(id));
     el.threadName.textContent = title;
     el.threadPill.hidden = false;
+    el.carryOut.hidden = false;
 
     const [packets] = await Promise.all([
         fetch(`/api/threads/${id}/packets`).then(response => response.json()),
@@ -1081,6 +1084,7 @@ function leaveThread() {
     wsNotice = '';
     localStorage.removeItem('airlock.thread');
     el.threadPill.hidden = true;
+    el.carryOut.hidden = true;
     paintWorkspace();
     renderRail();
     window.duetUI?.onThread(null);
@@ -1149,7 +1153,6 @@ async function persist(role, content, images = []) {
 // *before* the refetch and none of them gate the result, so a janky frame or a
 // prefers-reduced-motion user never changes what actually got stored.
 
-const briefCache = new Map();
 const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 // dragover can't read dataTransfer's payload, so track what's in flight here
 let draggingPacket = null;
@@ -1424,17 +1427,6 @@ function makeDragChip(html) {
 
 const clearDragChip = () => { dragChip?.remove(); dragChip = null; };
 
-/** Pre-render a thread's brief so dragstart — which cannot await — has text ready. */
-async function warmBrief(threadId) {
-    if (briefCache.has(threadId)) return;
-    briefCache.set(threadId, null);             // in-flight marker
-    try {
-        const b = await (await fetch(`/api/threads/${threadId}/brief`)).json();
-        if (b.markdown) briefCache.set(threadId, b.markdown);
-    } catch {
-        briefCache.delete(threadId);
-    }
-}
 
 // ─────────────────── what a packet says about itself on the way out ───────────────────
 
@@ -1574,36 +1566,25 @@ function wireThreadDnd(row) {
 
         dt.setData(DT_THREAD, String(threadId));
 
-        // Drop into a text field or another model's chat box → pastes the brief. Offered as
-        // HTML too, because a rich composer reads that first and ignores the plain text.
-        offerAsText(dt, briefCache.get(threadId)
-            || `Airlock thread "${title}" — open ${location.origin} to read it.`);
-
-        // Shift = export a file instead. Setting DownloadURL makes the OS treat this as a
-        // FILE drag, which outranks the text — a chat input then shows a drop target and
-        // inserts nothing. So it's opt-in, not always-on. Format is strict:
-        // mime:filename:absolute-url
-        if (e.shiftKey) {
-            dt.setData('DownloadURL',
-                `text/markdown:airlock-${slug(title)}.md:`
-                + `${location.origin}/api/threads/${threadId}/brief.md`);
-        }
+        // ⚠ A thread dragged OUT of Airlock used to paste its whole brief into whatever it
+        // landed on (and Shift saved it as a file) — ungated, and never recorded, because a
+        // drop into another app is invisible from here. That is a crossing by hand with no
+        // ruling and no record, so it is gone. Carrying a thread out is "Carry out by hand":
+        // ruled on first, recorded when it leaves. Dragging a thread now re-files it here.
 
         // MUST be copyMove, not copy. A tray/reorder drop sets dropEffect 'move', and the
         // drag model forces dropEffect to 'none' when it isn't permitted by effectAllowed —
         // so 'copy' alone silently makes every in-app thread drop illegal (no-entry cursor,
-        // no drop event). 'copy' is still what the desktop/DownloadURL drag uses.
+        // no drop event).
         dt.effectAllowed = 'copyMove';
-        dt.setDragImage(makeDragChip(
-            `<b>❖</b> ${escapeHtml(title)} ${e.shiftKey ? '<b>[.md]</b>' : '<b>→</b>'}`), 16, 14);
+        dt.setDragImage(makeDragChip(`<b>❖</b> ${escapeHtml(title)} <b>→</b>`), 16, 14);
 
         draggingThread = threadId;
         row.classList.add('dragging');
         document.body.classList.add('dragging-thread');   // opens every tray's landing strip
         el.committee.classList.add('armed');
-        flash(e.shiftKey
-            ? `"${title}" as .md — drop on your desktop or a folder`
-            : `"${title}" — drop on a member, a tray, or any text box (Shift-drag for .md)`, 30000);
+        flash(`"${title}" — drop on a tray or between threads to re-file it. `
+            + 'To take it out of Airlock, use ⇱ Carry out.', 30000);
     });
 
     // Threads don't fork — only move or export — so Alt is inert here.
@@ -1821,7 +1802,6 @@ function wireTrayDnd(tray) {
 // No API, no keys, no spend. Out by clipboard, back by paste. The committee gets a
 // vote without every thought making a pilgrimage through a paid endpoint.
 
-let handoffCtx = null;
 let liveSeats = {};
 let modelTier = {};   // model id -> 'local' | 'remote', from /api/health
 
@@ -1879,74 +1859,145 @@ async function escalate(threadId, actor, title) {
     }
 }
 
-async function openHandoff(threadId, actor) {
-    const brief = await (await fetch(
-        `/api/threads/${threadId}/brief?actor=${encodeURIComponent(actor)}`)).json();
+// ─────────────────── Carry out by hand ───────────────────
+//
+// The brief is ruled on BEFORE it is shown: the secret scanner, then the local gate, over the
+// whole thread — every reply in it, including any that quote files a participant read.
+// Withheld, the brief is never put on screen, so it cannot be copied by accident. The
+// crossing is recorded when the brief is copied or saved, because that is when it leaves;
+// pasting a reply back is optional and records that reply as well.
 
-    if (brief.error) return flash(brief.error, 6000);
+const CARRY_TO_KEY = 'airlock.carry.to';
+let carryCtx = null;        // { threadId, title, token, actor, forced }
 
-    handoffCtx = { threadId, actor, packetIds: brief.packetIds, title: brief.thread.title };
+async function openCarry(threadId = activeThread?.id, title = activeThread?.title) {
+    if (!threadId) return flash('Open a thread first — carrying out means carrying a thread.', 5000);
 
-    el.handoffTitle.textContent = `Handoff → ${actor}`;
-    el.handoffMeta.innerHTML = `<b>${escapeHtml(brief.thread.title)}</b> · `
-        + `${escapeHtml(brief.thread.folder)} · ${brief.packetIds.length} packet(s). `
-        + `Nothing is transmitted — copy the brief, take it to ${escapeHtml(actor)} yourself, `
-        + `then paste the reply back.`;
+    let saved = '';
+    try { saved = localStorage.getItem(CARRY_TO_KEY) || ''; } catch { /* default below */ }
+    el.carryTo.value = saved || 'a web chat';
 
-    el.brief.value = brief.markdown;
-    el.verdict.value = '';
-    el.copyHint.textContent = '';
-    el.signNote.textContent = brief.packetIds.length
-        ? `Recording adds ${actor}'s verdict as a packet in ${brief.thread.title}, and stamps `
-          + `"reviewed by ${actor}" on ${brief.packetIds.length} packet(s).`
-        : `${brief.thread.title} has no packets yet — the verdict still lands as one.`;
-
+    carryCtx = { threadId, title, token: null, actor: null, forced: false };
+    el.handoffTitle.textContent = 'Carry out by hand';
+    el.handoffMeta.innerHTML = `<b>${escapeHtml(title || 'this thread')}</b> — the whole thread, as a brief, `
+        + 'to paste into a chat Airlock cannot see. It is ruled on first, exactly as a crossing '
+        + 'over an API would be.';
     el.handoff.showModal();
+    await ruleOnCarry();
 }
 
-el.copyBrief.onclick = async () => {
-    try {
-        await navigator.clipboard.writeText(el.brief.value);
-        el.copyHint.textContent = 'Copied. Paste it to them, bring the reply back.';
-    } catch {
-        el.brief.select();
-        el.copyHint.textContent = 'Clipboard blocked — the text is selected, hit Ctrl+C.';
+async function ruleOnCarry({ force = false } = {}) {
+    if (!carryCtx) return;
+    const actor = el.carryTo.value.trim();
+    if (!actor) { el.carryTo.focus(); return; }
+    try { localStorage.setItem(CARRY_TO_KEY, actor); } catch { /* fine */ }
+
+    carryCtx.token = null;
+    el.carryReleased.hidden = true;
+    el.recordBtn.hidden = true;
+    el.carryAnyway.hidden = true;
+    el.carryRuling.hidden = false;
+    el.carryRuling.className = 'carry-ruling busy';
+    el.carryRuling.textContent = force
+        ? 'Carrying it past the gate…'
+        : 'The gate is reading the brief before anything can leave…';
+
+    const res = await json(`/api/threads/${carryCtx.threadId}/carry`, { actor, force });
+
+    if (res.error) {
+        el.carryRuling.className = 'carry-ruling bad';
+        el.carryRuling.textContent = res.error;
+        return;
     }
+
+    if (!res.released) {
+        // The brief is NOT on screen. Say why, and offer the deliberate override.
+        const concerns = res.gate?.concerns?.length
+            ? `<ul>${res.gate.concerns.map(c => `<li>${escapeHtml(String(c))}</li>`).join('')}</ul>` : '';
+        el.carryRuling.className = 'carry-ruling withheld';
+        el.carryRuling.innerHTML = `<b>The gate withheld this brief.</b>
+            <p>${escapeHtml(res.gate?.reason || 'No reason given.')}</p>${concerns}
+            <p class="stats">It is not shown, so it cannot be copied by accident. ${
+                res.gate?.model || res.gate?.ruledBy ? `Ruled by ${escapeHtml(res.gate.model || res.gate.ruledBy)}.` : ''}</p>`;
+        el.carryAnyway.hidden = false;
+        return;
+    }
+
+    carryCtx = { ...carryCtx, token: res.token, actor, forced: Boolean(res.gate?.forced) };
+    el.carryRuling.className = `carry-ruling ${res.gate?.forced ? 'forced' : 'released'}`;
+    el.carryRuling.innerHTML = res.gate?.forced
+        ? '<b>Carried past the gate.</b> The record will say you decided, permanently.'
+        : `<b>Cleared to leave.</b> ${escapeHtml(res.gate?.reason || '')}`;
+    el.brief.value = res.markdown;
+    el.verdict.value = '';
+    el.copyHint.textContent = '';
+    el.signNote.textContent = `Copying or saving records ${res.packetIds.length} packet(s) as carried to `
+        + `${actor}. A reply pasted back lands in ${carryCtx.title || 'the thread'} as its own packet.`;
+    el.carryReleased.hidden = false;
+    el.recordBtn.hidden = false;
+}
+
+/** The brief has left: record it now, with the ruling the server issued. */
+async function markCarried() {
+    if (!carryCtx?.token) return false;
+    const res = await json(`/api/threads/${carryCtx.threadId}/carried`, { token: carryCtx.token });
+    if (res.error) { el.copyHint.textContent = res.error; return false; }
+    if (res.crossed) loadTree().catch(() => {});
+    return true;
+}
+
+el.carryTo.addEventListener('change', () => ruleOnCarry());
+el.carryTo.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); ruleOnCarry(); } });
+
+el.carryAnyway.onclick = () => {
+    if (!confirm('Carry this brief out even though the gate withheld it?\n\n'
+        + 'The crossing will be recorded as FORCED, with you as the one who decided.')) return;
+    ruleOnCarry({ force: true });
 };
 
-el.saveBrief.onclick = () => {
-    const slug = (handoffCtx?.title || 'thread').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+el.copyBrief.onclick = async () => {
+    if (!carryCtx?.token) return;
+    try {
+        await navigator.clipboard.writeText(el.brief.value);
+        el.copyHint.textContent = 'Copied — and recorded as carried out.';
+    } catch {
+        el.brief.select();
+        el.copyHint.textContent = 'Clipboard blocked — the text is selected, press Ctrl+C. Recorded as carried out.';
+    }
+    await markCarried();
+};
+
+el.saveBrief.onclick = async () => {
+    if (!carryCtx?.token) return;
+    const slug = (carryCtx.title || 'thread').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
     const url = URL.createObjectURL(new Blob([el.brief.value], { type: 'text/markdown' }));
-    const a = Object.assign(document.createElement('a'), {
-        href: url,
-        download: `airlock-brief-${slug}-${handoffCtx?.actor || 'committee'}.md`
-    });
+    const a = Object.assign(document.createElement('a'), { href: url, download: `airlock-brief-${slug}.md` });
     a.click();
     URL.revokeObjectURL(url);
-    el.copyHint.textContent = 'Saved to your downloads.';
+    el.copyHint.textContent = 'Saved to your downloads — and recorded as carried out.';
+    await markCarried();
 };
 
 el.recordBtn.onclick = async () => {
-    if (!handoffCtx) return;
-
+    if (!carryCtx?.token) return;
     const verdict = el.verdict.value.trim();
     if (!verdict) {
-        el.copyHint.textContent = 'Paste their verdict first — nothing to record yet.';
+        el.copyHint.textContent = 'Paste their reply first — nothing to record yet.';
         el.verdict.focus();
         return;
     }
 
-    const res = await json(`/api/threads/${handoffCtx.threadId}/handoff`, {
-        actor: handoffCtx.actor, verdict, packetIds: handoffCtx.packetIds
-    });
-
+    const res = await json(`/api/threads/${carryCtx.threadId}/handoff`, { token: carryCtx.token, verdict });
     if (res.error) { el.copyHint.textContent = res.error; return; }
 
-    const { actor, threadId, title } = handoffCtx;
+    const { actor, threadId, title } = carryCtx;
     el.handoff.close();
     await selectThread(threadId, title);
-    flash(`${actor} signed ${res.signed} packet(s) in ${title}`, 6000);
+    flash(`${actor}'s reply is in ${title}, and ${res.signed} packet(s) are recorded as carried to them.`, 7000);
 };
+
+// Kept for the Oversight lane's hand-carried seats until the lane is removed.
+const openHandoff = threadId => openCarry(threadId, threadTitle(threadId));
 
 el.handoffClose.onclick = () => el.handoff.close();
 el.handoffCancel.onclick = () => el.handoff.close();
@@ -2285,6 +2336,7 @@ el.file.onchange = () => { addFiles(el.file.files); el.file.value = ''; };
 el.composer.addEventListener('drop', e => addFiles(e.dataTransfer.files));
 
 el.newChat.onclick = () => newThread();
+el.carryOut.onclick = () => openCarry();
 
 el.newFolder.onclick = async () => {
     const name = prompt('New tray name:');
