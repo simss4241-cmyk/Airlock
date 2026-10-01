@@ -131,6 +131,37 @@ scanner's on that route (`tools/duet_tools_test.js`):
 Each reply records the calls it made in `request_meta.tools` (name, target, size, hash),
 and the pane shows them as cards.
 
+## Chatter
+
+The participants can answer each other. **⇄ Step**, in the chamber header, hands the floor
+to the side that did not write the newest reply, for one turn. **▶ Auto** runs Steps until
+the cap (×6 by default, at most 20), until you press **■ Stop**, until the gate withholds a
+turn, or until a turn fails or comes back empty. While it runs, the seam over the chamber
+sweeps green to amber and back, and the header counts the turns.
+
+A chatter turn is a **relay**: `POST /api/duet/:id/send` with `relayOf`, the id of the
+other side's finished reply. No request is written. The reply is addressed to the
+participant it answers, so it is labelled `[Right → Left]` and shows in both panes. The
+answering side's system message, and only that, says this turn is its reply to the other
+participant and that the user is listening. The transcript never carries an instruction.
+
+The server refuses a relay aimed at its own reply, at a request, at an unfinished,
+withheld or empty reply, or at another thread, and it writes nothing when it does
+(`resolveRelay` in `duet-runner.js`). Toward a remote side, a relay is a crossing like
+any other: it is gated, the doors hold, and it is recorded.
+
+**Joining in.** Type into either composer during a run. If that side is free, your message
+goes straight in and it answers you. If it is busy, your message waits in the composer and
+goes in as soon as that turn ends; Enter does not act as Stop mid-run. The run then carries
+on from the answer, with your message in everyone's context.
+
+**The run lives in the page.** Close the tab, or switch threads, and it stops, so a
+conversation with a cloud model cannot keep spending with nobody watching.
+
+`tools/duet_chatter_test.js`, **23/23**, runs against fakes on both sides: addressing,
+gating, the crossing record, an interjection reaching the next relay, every refusal, a
+withheld relay that delivers nothing, and an empty reply that is not answered.
+
 ## Concurrency
 
 A context snapshot is taken at **submit** time, not when the model starts. So a reply
@@ -220,6 +251,5 @@ before stays exactly as above: shared by both panes, owned by neither.
 ## Not built
 
 - **Send to both.** Deliberately deferred until the core was solid.
-- **Autonomous back-and-forth.** Models answer when asked and never on their own.
 - **More than two participants.** The schema has a `slot` and would take a third; the
   layout and the context labels are what would need thought, not the store.

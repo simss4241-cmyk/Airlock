@@ -1659,6 +1659,36 @@ main::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
 
 .airlock-legend { display: flex; gap: 10px; }
 
+/* ── Chatter controls, in the chamber header ── */
+.chatter { display: inline-flex; align-items: center; gap: 6px; margin-right: 6px; cursor: default; }
+.chatter-btn { font-size: 11px; padding: 3px 9px; }
+.chatter-btn.stop { color: #ffb3b5; border-color: #4a1d1f; }
+.chatter-cap { display: inline-flex; align-items: center; gap: 1px; font-size: 11px; color: var(--muted); }
+.chatter-cap input {
+    width: 40px;
+    padding: 2px 4px;
+    border-radius: 6px;
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    font-size: 11px;
+    text-align: center;
+}
+.chatter-cap input:disabled { opacity: .55; }
+.chatter-state { font-size: 10.5px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.airlock.chattering .chatter-state { color: var(--text); }
+
+/* A run is live: the seam over the chamber carries the exchange, green to amber and back. */
+.airlock.chattering {
+    box-shadow: inset 0 2px 0 rgba(118, 185, 0, .55), inset 0 4px 0 rgba(255, 176, 32, .35);
+    animation: chatter-seam 2.4s ease-in-out infinite;
+}
+@keyframes chatter-seam {
+    0%, 100% { box-shadow: inset 0 2px 0 rgba(118, 185, 0, .6), inset 0 4px 0 rgba(255, 176, 32, .15); }
+    50%      { box-shadow: inset 0 2px 0 rgba(255, 176, 32, .6), inset 0 4px 0 rgba(118, 185, 0, .15); }
+}
+@media (prefers-reduced-motion: reduce) { .airlock.chattering { animation: none; } }
+@media (max-width: 860px) { .chatter-cap, .chatter-state { display: none; } }
+
 .airlock-legend .key {
     font-size: 9.5px;
     text-transform: uppercase;

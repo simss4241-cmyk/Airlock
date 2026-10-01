@@ -278,5 +278,31 @@ ok(buildContext({
 }).messages.every(m => !('images' in m)),
     'a request without images carries no images field at all');
 
+// ── 10. a chatter turn ──
+//
+// Nobody asked the answering participant anything: the trigger is the OTHER side's reply.
+// It must arrive as attributed conversation (never in this participant's own voice), and the
+// instruction to answer it must live in the system message, not in the transcript.
+
+const leftOpens = replyFrom(LEFT, 'I think teal robots should be called Verdigris.');
+const rightTurn = buildContext({
+    participant: RIGHT, others: [LEFT], messages: [askLeft, leftOpens], trigger: leftOpens,
+    numCtx: 8192, userName: 'User', dialogueWith: LEFT
+});
+const rightSystem = rightTurn.messages[0].content;
+const rightLast = rightTurn.messages[rightTurn.messages.length - 1];
+
+ok(/dialogue between the participants/.test(rightSystem) && /answer LEFT directly/.test(rightSystem),
+    'a chatter turn tells the participant, in the system message, that it is answering the other side');
+ok(/may join in at any point/.test(rightSystem), 'and that the user is listening and may join in');
+ok(rightLast.role === 'user' && rightLast.content.includes('I think teal robots should be called Verdigris.'),
+    "the other side's reply is the newest line, as conversation — not in this participant's mouth");
+ok(rightTurn.messages.every(m => m.role !== 'assistant'),
+    'a participant that has not spoken yet has no assistant turns, even mid-dialogue');
+ok(rightTurn.meta.sourceIds.includes(leftOpens.id),
+    'the reply being answered is in the crossing record if it crosses');
+ok(!/dialogue between the participants/.test(build(LEFT, [RIGHT]).messages[0].content),
+    'an ordinary turn carries no dialogue instruction');
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

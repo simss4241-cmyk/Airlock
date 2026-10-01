@@ -215,6 +215,35 @@ refused for a key and served for a clean message, `/secrets.js` served).
 Still not covered, and said in the README: what needs judgement rather than a pattern can
 still leave by drag. A drag cannot wait for the gate model.
 
+## Verified 2026-10-01 — chatter
+
+The participants answer each other: ⇄ Step, or ▶ Auto up to a cap. The server side is a
+relay (`relayOf`), and `tools/duet_chatter_test.js` checks it **23/23** against fakes on both
+sides: addressing, gating, the crossing record, interjections, every refusal, a withheld
+relay that delivers nothing, and an empty reply that is not answered. `duet_context_test`
+40/40 (6 new, on the dialogue instruction and attribution).
+
+**Live, in the browser, both sides on the local nemotron-3-nano:4b** (nothing crossed):
+- **Auto ×4:** a real exchange — teal, "it clashes", muted teal, white or matte black, then
+  a soft-grey compromise — alternating `→ Left` / `→ Right`, ending at "4 turns — the cap".
+- **The answering side's reasoning** opened "So as Left, I need to reply to RIGHT's
+  opening", so the dialogue instruction lands.
+- **Jumping in:** an interjection typed into the busy side waited, was announced, and went in
+  as soon as that turn ended.
+
+**Found live and fixed:**
+- **An empty reply was answered.** The 4B, reasoning on, answered "what about orange?" with
+  12 tokens of reasoning and no text. It was stored complete and empty, and the run had the
+  other side answer it, which produced another empty reply. Now the server refuses to relay
+  an empty reply, the run stops with "finished without saying anything", and the pane says
+  "Finished without an answer — it reasoned, then said nothing" instead of an empty box.
+- **The live check first hit a stale server**, started before the relay code existed. "The
+  turn did not start" hid the reason. A run that cannot start a turn now reports the pane's
+  own error.
+
+**Not yet run live: a chatter run toward a remote side.** It spends credit, and with the 14B
+gate, turns may be withheld for the reasons logged on 2026-09-30.
+
 ---
 
 [← back to the README](../README.md)

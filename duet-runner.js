@@ -173,6 +173,30 @@ function checkImages(images) {
     return images;
 }
 
+/**
+ * The message a chatter turn answers: the other side's finished reply, in this thread.
+ *
+ * Checked hard, because a relay sends the conversation to a model WITHOUT a new request the
+ * user typed: it must be a complete assistant message (a withheld or failed one is not
+ * conversation), in this thread, and not this participant's own — answering yourself is a
+ * monologue, and a client pointing the relay anywhere else is refused before anything runs.
+ * A reply from before the thread had participants (no author) may be answered by either side.
+ */
+function resolveRelay({ threadId, participant, relayOf }) {
+    const trigger = duet.getMessage(relayOf);
+    if (!trigger) throw new Error(`No message ${relayOf} to reply to.`);
+    if (trigger.threadId !== Number(threadId)) throw new Error('That message is in another conversation.');
+    if (trigger.role !== 'assistant') throw new Error('A chatter turn answers a reply, not a request.');
+    if (trigger.status !== STATUS.COMPLETE) {
+        throw new Error(`That reply is ${trigger.status}, not finished — there is nothing to answer.`);
+    }
+    if (trigger.authorId === participant.id) throw new Error(`${participant.name} cannot answer its own reply.`);
+    // A model can finish with reasoning and no answer at all. That is complete, and empty, and
+    // there is nothing in it to answer — relaying it just makes the other side talk to silence.
+    if (!String(trigger.content || '').trim()) throw new Error('That reply is empty — there is nothing to answer.');
+    return trigger;
+}
+
 function resolveTrigger({ threadId, participant, text, images = [], clientRequestId, retryOf }) {
     if (retryOf) {
         const existing = duet.getMessage(retryOf);
@@ -217,7 +241,8 @@ function resolveTrigger({ threadId, participant, text, images = [], clientReques
  * @param {(event: object) => void} args.emit
  */
 async function generate({
-    threadId, participantId, text, images, tools: wantTools = false, clientRequestId, retryOf, config, signal, emit
+    threadId, participantId, text, images, tools: wantTools = false, clientRequestId, retryOf,
+    relayOf = null, config, signal, emit
 }) {
     const participant = duet.getParticipant(participantId);
     if (!participant) throw new Error(`No participant ${participantId}`);
@@ -235,7 +260,7 @@ async function generate({
     // a plain error and keeps the message — rather than a packet in the log holding an image
     // nobody could read, and a reply that answers the text as though the picture were not
     // there. Retries re-check against the model the participant has now.
-    const attached = retryOf ? (duet.getMessage(retryOf)?.images || []) : checkImages(images);
+    const attached = relayOf ? [] : retryOf ? (duet.getMessage(retryOf)?.images || []) : checkImages(images);
     if (attached.length) {
         const caps = await providers.capabilities(model).catch(() => []);
         if (!caps.includes('vision')) {
@@ -244,11 +269,21 @@ async function generate({
         }
     }
 
-    // ── 1. the request lands in the shared log ──
-    const { trigger, created } = resolveTrigger({
-        threadId, participant, text, images: attached, clientRequestId, retryOf
-    });
-    emit({ type: 'user', message: trigger, created });
+    // ── 1. the request lands in the shared log — or, in a chatter turn, already did ──
+    //
+    // A relay answers the OTHER side's finished reply rather than a new request: nothing is
+    // written until this participant's own reply exists, and the trigger is that reply.
+    let trigger, created = false, dialogueWith = null;
+    if (relayOf) {
+        trigger = resolveRelay({ threadId, participant, relayOf });
+        dialogueWith = trigger.authorId ? duet.getParticipant(trigger.authorId) : null;
+        emit({ type: 'relay', message: trigger });
+    } else {
+        ({ trigger, created } = resolveTrigger({
+            threadId, participant, text, images: attached, clientRequestId, retryOf
+        }));
+        emit({ type: 'user', message: trigger, created });
+    }
 
     // ── 2. snapshot, fixed at submit time ──
     const snapshotSeq = trigger.seq;
@@ -261,11 +296,17 @@ async function generate({
         trigger,
         appSystemPrompt: config.systemPrompt,
         numCtx: config.num_ctx,
-        userName: duet.USER_NAME
+        userName: duet.USER_NAME,
+        // Any relay is a dialogue turn — including one answering a reply from before the
+        // thread had participants, which has no author to name.
+        dialogueWith: relayOf ? (dialogueWith || { name: 'the other participant' }) : null
     });
 
     const generationId = nextGenerationId();
-    const requestMeta = { model, tier, snapshotSeq, contextMessages: wire.length, ...meta };
+    const requestMeta = {
+        model, tier, snapshotSeq, contextMessages: wire.length, ...meta,
+        ...(relayOf ? { relayOf: trigger.id } : {})
+    };
 
     // ── 3. the reply exists, and is owned, before it says anything ──
     let reply = duet.appendMessage({
@@ -275,7 +316,9 @@ async function generate({
         model,
         tier,
         authorId: participant.id,
-        recipientId: null,          // a reply is addressed back to the user
+        // A reply is addressed back to the user — except in a chatter turn, where it is
+        // addressed to the participant it answers. That is what labels it [Right → Left].
+        recipientId: dialogueWith ? dialogueWith.id : null,
         status: STATUS.STREAMING,
         replyTo: trigger.id,
         generationId,

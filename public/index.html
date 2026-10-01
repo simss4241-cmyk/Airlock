@@ -116,6 +116,19 @@
                 <span class="airlock-title">Airlock</span>
                 <span class="airlock-sub" id="airlockSub"></span>
                 <span class="spacer"></span>
+                <!-- Chatter: the participants answering each other. Step hands the floor to
+                     the side that did not speak last, for one reply; Auto runs Steps until
+                     the cap, Stop, or a turn the gate withholds. The loop runs in this page —
+                     close it and the run stops, so nothing spends unattended. -->
+                <span class="chatter" id="chatter">
+                    <button class="icon-btn sm chatter-btn" id="chatterStep"
+                            title="Hand the floor to the side that did not speak last, for one reply">⇄ Step</button>
+                    <button class="icon-btn sm chatter-btn" id="chatterAuto"
+                            title="Let them talk: one side answers the other, back and forth, up to the cap">▶ Auto</button>
+                    <label class="chatter-cap" title="Most replies an Auto run makes before it stops">×<input
+                        id="chatterCap" type="number" min="1" max="20" value="6"></label>
+                    <span class="chatter-state" id="chatterState"></span>
+                </span>
                 <span class="airlock-legend">
                     <span class="key local">local</span>
                     <span class="key crossed">↗ crossed</span>

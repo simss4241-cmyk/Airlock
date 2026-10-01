@@ -48,7 +48,8 @@ what leaves it. This table is the honest version — clone it and check.
 | Tier recorded per packet; "what crossed?" as a query | working |
 | Crossing by a remote participant **and** by hand, both gated and recorded | working |
 | Access token + remote spend cap for hosting | working, 26 assertions |
-| Duet — two addressable participants over one conversation | working, 84 assertions |
+| Duet — two addressable participants over one conversation | working, 90 assertions |
+| Chatter — the participants answering each other, step or auto, every turn gated | working, 23 assertions end to end |
 | Per-thread consent retired; an old database is cleaned on open | working, 7 assertions |
 | Every turn gated, bound to the exact words sent — only what is new is re-read | working |
 | One door: nothing reaches the network without a clearance the kernel issued | working, 34 assertions |
@@ -62,7 +63,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Per-visitor settings, remote budgets, gate memory and generation slots; a daily cap that survives restarts | working |
 | Hosted deployment on Nebius AI Cloud, with the gate beside the app | not built |
 
-**613 assertions across sixteen suites.** Run them:
+**642 assertions across seventeen suites.** Run them:
 
 ```
 npm start                          # in one terminal
@@ -75,6 +76,7 @@ node tools/workspace_test.js       # migrations
 node tools/duet_context_test.js    # what each participant is shown
 node tools/duet_test.js            # two panes, one conversation
 node tools/duet_tools_test.js      # workspace files in a duet, every route to the cloud (fakes both sides)
+node tools/duet_chatter_test.js    # the participants answering each other (fakes both sides)
 node tools/clearance_test.js       # retired per-thread consent is removed from old databases
 node tools/secrets_test.js         # the credential scanner in front of the gate (offline)
 node tools/kernel_test.js          # the kernel, both locks, one door
@@ -176,6 +178,8 @@ airlock chamber between them, where every message enters and every crossing is m
 - Move or fork a finished message to another thread by dragging it onto the rail
 - ⇱ Carry out: a thread as a brief for a chat Airlock cannot see, gated first and
   recorded when it leaves
+- Chatter: ⇄ Step hands the floor to the other side; ▶ Auto lets them talk to a cap, every
+  turn toward the cloud gated. Type into either side to join in.
 - ✎ New thread, named from the first thing you say in it
 - Streaming, Stop, retry, markdown with per-block copy, tok/s and prompt-token counts
 - Sampling controls, and a panel that says which of them actually cross the boundary

@@ -212,7 +212,12 @@ function messageHtml(message, { showAddressing = false } = {}) {
     const why = message.status === 'failed' && message.requestMeta?.error
         ? `<p class="stats">Failed: ${escapeHtml(String(message.requestMeta.error).slice(0, 240))}</p>`
         : '';
-    const empty = message.streaming ? '<p class="stats">thinking…</p>' : why;
+    // Finished with nothing to say — a model can stop after its reasoning. Said, so an empty
+    // box is not mistaken for a rendering fault, and so it is clear why chatter stopped.
+    const silent = !mine && message.status === 'complete' && !message.streaming && !message.content
+        ? `<p class="stats">Finished without an answer${message.thinking || message.requestMeta?.thinkingChars
+            ? ' — it reasoned, then said nothing' : ''}.</p>` : '';
+    const empty = message.streaming ? '<p class="stats">thinking…</p>' : (why || silent);
     const thumbs = message.images?.length
         ? `<div class="thumbs">${message.images.map(src =>
               `<img src="${escapeHtml(src)}" alt="attached image">`).join('')}</div>`
@@ -739,7 +744,7 @@ function paintPaneStatus(participantId) {
 
     pane.nodes.send.textContent = busy ? 'Stop' : 'Send';
     pane.nodes.send.classList.toggle('stop', Boolean(busy));
-    pane.nodes.retry.hidden = !pane.retryOf;
+    pane.nodes.retry.hidden = !pane.retryOf && !pane.retryRelay;
 }
 
 /** The header chip: which side of the boundary this participant sits on. */
@@ -784,19 +789,34 @@ const newRequestId = () => (crypto.randomUUID
  * server matches so a resent submission reuses the request it already wrote rather than
  * asking the same question twice.
  */
-async function submit(participantId, { retryOf = null } = {}) {
+async function submit(participantId, { retryOf = null, relayOf = null } = {}) {
     const pane = panes.get(participantId);
-    if (!pane) return;
-
-    if (pane.controller) { pane.controller.abort(); return; }   // button is acting as Stop
+    if (!pane) return null;
 
     const box = pane.nodes.input;
     const text = box.value.trim();
-    const staged = retryOf ? [] : pane.pending;
-    if (!retryOf && !text && !staged.length) return;
+    const automatic = Boolean(retryOf || relayOf);     // nothing typed: a retry or a chatter turn
 
+    if (pane.controller) {
+        // Mid-run, a message typed into a side that is busy answering is the user joining
+        // in — not a request to stop it. It waits in the composer and goes in the moment
+        // this turn ends (see sendInterjections). Outside a run, the button is Stop.
+        if (chatter.running && !automatic && (text || pane.pending.length)) {
+            pane.interject = true;
+            flash(`You'll come in as soon as ${participant(participantId)?.name || 'this side'} finishes this turn.`, 5000);
+            return null;
+        }
+        pane.controller.abort();
+        return null;
+    }
+
+    const staged = automatic ? [] : pane.pending;
+    if (!automatic && !text && !staged.length) return null;
+
+    pane.interject = false;
     pane.error = null;
     pane.retryOf = null;
+    pane.retryRelay = null;
     pane.status = 'sending';
     pane.queuePosition = 0;
     pane.controller = new AbortController();
@@ -804,7 +824,7 @@ async function submit(participantId, { retryOf = null } = {}) {
 
     // Cleared optimistically so the composer is usable again immediately; put back if the
     // request never reached the server, so a mis-send is not a lost message.
-    if (!retryOf) {
+    if (!automatic) {
         box.value = '';
         box.style.height = 'auto';
         pane.pending = [];
@@ -820,11 +840,12 @@ async function submit(participantId, { retryOf = null } = {}) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 participantId,
-                text: retryOf ? undefined : text,
+                text: automatic ? undefined : text,
                 images: staged.length ? staged.map(p => p.dataUrl) : undefined,
                 tools: filesWanted(participantId),
-                clientRequestId: retryOf ? undefined : requestId,
-                retryOf
+                clientRequestId: automatic ? undefined : requestId,
+                retryOf,
+                relayOf
             }),
             signal: pane.controller.signal
         });
@@ -861,18 +882,18 @@ async function submit(participantId, { retryOf = null } = {}) {
             // packet as cancelled; mirror that locally so the pane agrees without a reload.
             const message = streamed && messageById(streamed);
             if (message) { message.streaming = false; message.status = 'cancelled'; }
-            pane.retryOf = pane.triggerId;
+            markRetry(pane);
         } else {
             pane.error = err.message;
             const message = streamed && messageById(streamed);
             if (message) { message.streaming = false; message.status = 'failed'; }
             // Nothing was sent at all — hand the text and images back rather than swallowing them.
-            if (!streamed && !retryOf && !box.value.trim()) box.value = text;
-            if (!streamed && !retryOf && !pane.pending.length && staged.length) {
+            if (!streamed && !automatic && !box.value.trim()) box.value = text;
+            if (!streamed && !automatic && !pane.pending.length && staged.length) {
                 pane.pending = staged;
                 paintAttachments(participantId);
             }
-            pane.retryOf = pane.triggerId;
+            markRetry(pane);
         }
     } finally {
         // Stopped at the gate, or the stream died there: open up. A no-op if it already ruled.
@@ -883,9 +904,20 @@ async function submit(participantId, { retryOf = null } = {}) {
         paintPane(participantId);
         paintAirlock();
 
-        // Duet turns are packets like any other, so the tray counts moved.
+        // Duet turns are packets like any other, so the tray counts moved — and the bar's
+        // crossed count, which reads the record.
         loadTree().catch(() => {});
+        paintCrossed();
     }
+
+    // The settled reply, so a chatter run can see how the turn ended.
+    return streamed ? messageById(streamed) : null;
+}
+
+/** A turn that did not finish can be asked again — a request, or a chatter turn. */
+function markRetry(pane) {
+    pane.retryOf = pane.triggerId;
+    pane.retryRelay = pane.relayTrigger;
 }
 
 /** One NDJSON event from the server. Returns the reply id being streamed, if known. */
@@ -893,9 +925,16 @@ function handleEvent(participantId, event, streamed) {
     const pane = panes.get(participantId);
 
     switch (event.type) {
+        case 'relay':
+            // A chatter turn: no request was written; this is the reply being answered.
+            pane.triggerId = null;
+            pane.relayTrigger = event.message.id;
+            return streamed;
+
         case 'user':
             upsert({ ...event.message });
             pane.triggerId = event.message.id;
+            pane.relayTrigger = null;
             schedulePaint(participantId);
             // The first thing said in an Untitled thread names it (app.js decides whether
             // it is still Untitled — a name given by hand is never overwritten).
@@ -954,7 +993,7 @@ function handleEvent(participantId, event, streamed) {
         case 'blocked':
             upsert({ ...event.message, streaming: false });
             releaseDoors(participantId, 'withheld');
-            pane.retryOf = pane.triggerId;
+            markRetry(pane);
             schedulePaint(participantId);
             flash('The local gate withheld that — nothing was sent.', 7000);
             return event.message.id;
@@ -978,7 +1017,7 @@ function handleEvent(participantId, event, streamed) {
 
         case 'cancelled':
             upsert({ ...event.message, streaming: false });
-            pane.retryOf = pane.triggerId;
+            markRetry(pane);
             schedulePaint(participantId);
             return event.message.id;
 
@@ -986,7 +1025,7 @@ function handleEvent(participantId, event, streamed) {
             if (event.message) upsert({ ...event.message, streaming: false });
             releaseDoors(participantId, 'failed');
             pane.error = event.error;
-            pane.retryOf = pane.triggerId;
+            markRetry(pane);
             schedulePaint(participantId);
             return event.message?.id ?? streamed;
 
@@ -1126,6 +1165,7 @@ function buildPane(who) {
     nodes.retry.onclick = () => {
         const pane = panes.get(who.id);
         if (pane.retryOf) submit(who.id, { retryOf: pane.retryOf });
+        else if (pane.retryRelay) submit(who.id, { relayOf: pane.retryRelay });
     };
 
     nodes.input.addEventListener('keydown', e => {
@@ -1442,6 +1482,7 @@ async function loadDuet(threadId) {
  * already in the log where it can be read later.
  */
 async function onThread(thread) {
+    stopChatter();          // a run belongs to the thread it started in
     teardown();
 
     if (!thread) {
@@ -1459,6 +1500,154 @@ async function onThread(thread) {
     }
     setActive(state.enabled);
 }
+
+// ─────────────────────────── chatter ───────────────────────────
+//
+// The participants answering each other. A chatter turn is a relay: one side replies to the
+// other side's finished reply, and nobody typed a request for it (see resolveRelay in
+// duet-runner.js). Every relay toward a remote side is a crossing like any other — gated,
+// the doors holding while it rules, recorded when it goes.
+//
+// The run lives HERE, in the page, on purpose. Close the tab and it stops: a conversation
+// with a cloud model must not be able to keep spending while nobody is watching it.
+
+const chatter = { running: false, stopping: false, round: 0, cap: 6, threadId: null };
+const chatterEl = {
+    root: $('chatter'), step: $('chatterStep'), auto: $('chatterAuto'),
+    cap: $('chatterCap'), state: $('chatterState')
+};
+
+const anyBusy = () => [...panes.values()].some(p => p.controller);
+const pause = ms => new Promise(r => setTimeout(r, ms));
+
+/** Wait until no side is generating — a turn in flight, or the user's own message. */
+async function idle() {
+    while (anyBusy() && !chatter.stopping && chatter.threadId === state.threadId) await pause(150);
+}
+
+/**
+ * Who speaks next, and to what: the side that did NOT write the newest finished reply,
+ * answering it. Returns { speaker, trigger } or { why } when there is nothing to answer.
+ */
+function nextTurn() {
+    const last = state.messages[state.messages.length - 1];
+    if (!last) return { why: 'Ask one side something first — chatter carries on from the last reply.' };
+    if (last.streaming) return { wait: true };
+    if (last.role === 'user') {
+        return { why: 'The newest message is yours and has no answer yet — send it, or ask again.' };
+    }
+    if (last.status !== 'complete') {
+        return { why: `The last reply was ${STATUS_NOTE[last.status] || last.status} — chatter stops there.` };
+    }
+    if (!String(last.content || '').trim()) {
+        return { why: `${nameOf(last)} finished without saying anything — there is nothing to answer, so chatter stops there.` };
+    }
+
+    const [a, b] = [...state.participants].sort((x, y) => x.slot.localeCompare(y.slot));
+    if (!a || !b) return { why: 'Chatter needs two participants.' };
+    // A reply from before the thread had participants has no author: the left side opens.
+    const speaker = last.authorId === a.id ? b : a;
+    return { speaker, trigger: last };
+}
+
+/** Messages typed into a side while it was busy: in they go, now that it is free. */
+async function sendInterjections() {
+    for (const [id, pane] of panes) {
+        if (!pane.interject || chatter.stopping) continue;
+        pane.interject = false;
+        await submit(id);
+        await idle();
+    }
+}
+
+/** How a turn ended, said plainly — the reason a run stopped. */
+function endedBecause(reply, speakerId) {
+    if (!reply) {
+        const error = panes.get(speakerId)?.error;
+        return error ? `the turn did not start: ${error}` : 'the turn did not start';
+    }
+    if (reply.status === 'blocked') return `the gate withheld ${nameOf(reply)}'s turn — nothing was sent`;
+    if (reply.status === 'cancelled') return 'stopped';
+    return `${nameOf(reply)}'s turn ${STATUS_NOTE[reply.status] || reply.status}`;
+}
+
+async function chatterStep() {
+    if (chatter.running || anyBusy()) return;
+    const turn = nextTurn();
+    if (!turn.speaker) return flash(turn.why || 'Nothing to answer yet.', 6000);
+    chatter.threadId = state.threadId;
+    await submit(turn.speaker.id, { relayOf: turn.trigger.id });
+}
+
+async function chatterAuto() {
+    if (chatter.running) { stopChatter(); return; }
+    if (anyBusy()) return flash('Wait for the current reply to finish, then start the run.', 5000);
+
+    const first = nextTurn();
+    if (!first.speaker) return flash(first.why || 'Nothing to answer yet.', 6000);
+
+    Object.assign(chatter, {
+        running: true, stopping: false, round: 0, threadId: state.threadId,
+        cap: Math.min(20, Math.max(1, Math.round(Number(chatterEl.cap.value) || 6)))
+    });
+    chatterEl.cap.value = chatter.cap;
+    paintChatter();
+
+    let why = null;
+    try {
+        while (chatter.round < chatter.cap && !chatter.stopping) {
+            await idle();
+            if (chatter.stopping || chatter.threadId !== state.threadId) break;
+            await sendInterjections();
+            if (chatter.stopping || chatter.threadId !== state.threadId) break;
+
+            const turn = nextTurn();
+            if (turn.wait) { await pause(150); continue; }
+            if (!turn.speaker) { why = turn.why; break; }
+
+            chatter.round++;
+            paintChatter();
+            const reply = await submit(turn.speaker.id, { relayOf: turn.trigger.id });
+            if (!reply || reply.status !== 'complete') { why = endedBecause(reply, turn.speaker.id); break; }
+            if (!String(reply.content || '').trim()) { why = `${nameOf(reply)} finished without saying anything`; break; }
+        }
+        if (!why) why = chatter.stopping ? 'stopped' : `${chatter.round} turns — the cap`;
+    } finally {
+        // An interjection typed during the last turn still goes in, after the run.
+        if (!chatter.stopping) await sendInterjections().catch(() => {});
+        chatter.running = false;
+        chatter.stopping = false;
+        paintChatter(why);
+    }
+}
+
+/** Stop the run, and the turn in flight with it. */
+function stopChatter() {
+    if (!chatter.running) return;
+    chatter.stopping = true;
+    for (const [, pane] of panes) pane.controller?.abort();
+    paintChatter();
+}
+
+function paintChatter(ended = null) {
+    const { running, stopping, round, cap } = chatter;
+    duetEl.rail.classList.toggle('chattering', running);
+    chatterEl.step.disabled = running;
+    chatterEl.cap.disabled = running;
+    chatterEl.auto.textContent = running ? '■ Stop' : '▶ Auto';
+    chatterEl.auto.classList.toggle('stop', running);
+    chatterEl.auto.title = running ? 'Stop the run, and the reply in progress'
+        : 'Let them talk: one side answers the other, back and forth, up to the cap';
+    chatterEl.state.textContent = stopping ? 'stopping…'
+        : running ? `turn ${round} / ${cap}`
+            : ended ? `run ended: ${ended}` : '';
+    if (ended && !running) flash(`Chatter ended: ${ended}.`, 6000);
+}
+
+// The header collapses the chamber on click; its controls must not.
+chatterEl.root.addEventListener('click', e => e.stopPropagation());
+chatterEl.step.onclick = () => chatterStep();
+chatterEl.auto.onclick = () => chatterAuto();
 
 // ─────────────────────────── the chamber's own controls ───────────────────────────
 
