@@ -1,7 +1,7 @@
 # The local tier
 
 Everything about running a model on your own machine: what Ollama needs, what
-this particular GPU needed, and how the reasoning channel and token counter
+this particular GPU needed, and how the reasoning channel and token spend
 work. None of it is required reading to understand Airlock — see the
 [README](../README.md) for that — but all of it was required to make the local
 half actually run.
@@ -9,7 +9,8 @@ half actually run.
 ## Requirements
 
 - Node (installed), Python + Pillow (only to regenerate icons).
-- Ollama. **0.32.7 is installed and is the newest release — but that is not enough yet.**
+- Ollama. **0.34.1** on this desk at last check (2026-10). The notes below were written
+  against 0.32.x and are kept because the GPU settings they arrived at are still in force.
 
 ### ⚠ Required on this GPU: `OLLAMA_FLASH_ATTENTION=0`
 
@@ -71,6 +72,12 @@ Reserving 3 GiB fixes it. Measured across three cold loads each:
 tok/s figures were measured while a second test Ollama was contending for the GPU — with a
 single server, 3 GiB costs no measurable throughput.)
 
+> ⚠ **As of 2026-09-29, Muse Glimmer 30B does not load at all** on Ollama 0.34.1 here: a
+> direct `ollama` call, with no Airlock involved and nothing else resident, fails with the
+> same `0xc0000409` / "shared object initialization failed" as above. `llama3.2-vision:11b`
+> fails too (`unknown model architecture: 'mllama'`), so this desk currently has no working
+> vision model. The measurements below are from when it loaded.
+
 ## Measured on this machine (RTX 5060 Ti 16 GB, q4_K_M, flash attention off)
 
 | | |
@@ -100,7 +107,7 @@ at all. It persists in `airlock-config.json`.
 Sending `think` to a model without a thinking channel is a hard 400 —
 `"llama3.2:latest" does not support thinking` — and so is sending `tools` to a model without
 tool support. `codellama:13b` has *neither*. Setting either flag from config alone breaks
-every other model in the dropdown, which is exactly what happened once.
+every other model in the pickers, which is exactly what happened once.
 
 So the server reads `POST /api/show` → `capabilities` per model (cached in `capsCache`) and
 only sets a flag the model actually advertises. `think` is **omitted** rather than sent as
@@ -122,23 +129,26 @@ Current roster:
 | `llama3.2-vision:11b` | — | ✅ | ✅ |
 | `codellama:13b` | — | — | — |
 
-## Token counter
+## Token spend
 
-The `Σ` pill beside the Ollama version is a running total of every token this install has
-spent — prompt and generated, across every thread and scratch chat, kept in
-`localStorage` under `airlock.tokens` so it survives reloads. Hover for the split and the
-reply count; click to reset (it asks first).
+The `Σ` pill beside the Ollama version is the total this desk has spent, read from a
+ledger on the server (`token_usage` in `db.js`). Every model call writes a row where it is
+made: a participant's reply (every tool round included, and stopped or failed turns too,
+since the tokens were spent), every gate ruling, and the escalation review. Click the pill
+for one row per model and purpose — replies and gate rulings apart, local green, across the
+boundary amber — with each model's share. `GET /api/usage` (`?threadId=` for one thread)
+returns the same.
 
-The per-reply stats line under each message reports only the **final** Ollama call, which
-undercounts any answer that used tools: each tool round is its own call with its own prompt
-and its own cost, and the server swallows the intermediate `done` chunks so they never
-finalise the message early. `/api/chat` therefore totals every round and emits one
-`{"airlock_usage":{prompt,reply,rounds}}` line — same trick as `airlock_tool`, a key Ollama
-never sends. Measured on a two-round answer: **765 tokens total, 424 in the final round** —
-the other 341 were previously invisible.
+It used to be a counter in the browser's `localStorage`, bumped by replies streamed in that
+window: another window, another browser, or a turn driven any other way counted nothing,
+and the gate's own reading was never counted at all. Replies from before the ledger were
+backfilled from the usage already stored on them; gate rulings from before it were never
+recorded anywhere, and none are invented.
 
-The client prefers that line and falls back to the `done` chunk only if it never arrives, so
-a turn is never counted twice.
+Tool rounds are why the total has to be summed rather than read off the last chunk: each
+round is its own call with its own prompt and cost, and only the final round's `done`
+chunk would otherwise be seen. Measured on a two-round answer: **765 tokens total, 424 in
+the final round** — the other 341 were invisible before.
 
 ## Hardware note (RTX 5060 Ti, 16 GB)
 

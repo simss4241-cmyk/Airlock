@@ -40,23 +40,24 @@ who it was addressed to. A lane is where its author sits.
 
 ## What each participant is shown
 
-`duet-context.js` is pure and has no database, no network and no provider. Three rules
+`duet-context.js` is pure and has no database, no network and no provider. Four rules
 carry it, and each exists because the shortcut is wrong.
 
 **1. Only its own completed replies become `assistant` turns.**
 Another model's output arriving as `assistant` reads, to the receiving model, as
 something it said itself — it will defend positions it never took. Everything that is
-not its own arrives as labelled conversation instead:
+not its own arrives as labelled conversation instead, attributed to the **model** that
+wrote it (the recorded provenance), not to a side or a persona:
 
 ```
-[system]     You are "Ember", one of the AI participants…
-[user]       [User → Lyra] Invent a one-word codename for a teal robot.
+[system]     You are the RIGHT participant in this conversation, running nvidia/…-super…
+[user]       [User → Left] Invent a one-word codename for a teal robot.
 
-             [Lyra → User] Zing
-[user]       [User → Ember] What did Lyra suggest?
+             [nemotron-3-nano:4b → User] Zing
+[user]       [User → Right] What did Left suggest?
 ```
 
-Lyra's answer is *there*, in full, attributed — and it is not in Ember's mouth.
+Left's answer is *there*, in full, attributed — and it is not in Right's mouth.
 
 **2. Instructions live only in the system message.**
 Labels say where each line came from, and the system message says plainly that those
@@ -67,6 +68,21 @@ different vendor's model across the boundary.
 **3. The newest request is never what gets dropped.**
 An oversized history loses its oldest turns, visibly, with a marker. A request too big
 for its own window is truncated with a marker rather than silently binned.
+
+**4. What two models talking to each other need told.** Each of these was measured live
+on two 4B participants (docs/verification.md, 2026-10-01):
+
+- **A role is a role to hold.** ✎ role takes anything, one word included ("Skeptic"). It
+  arrives as *"Your role in this conversation, set by the User: Skeptic"* and is held for
+  the whole conversation, *including toward the other participant, even one that shares
+  it*. Framed as "additional standing instructions", an Optimist drifted to "I remain
+  skeptical" in two turns, and two Skeptics never questioned each other.
+- **No invented sources.** Never cite a file, line, document or figure not actually seen in
+  the conversation or read with a tool, and question an unverified one from the other side
+  rather than repeating it. Two models once invented "model.txt line 45" between them and
+  confirmed it to each other for six turns.
+- **No copied labels.** Write only your own reply; the `[speaker → addressee]` label is
+  added for you. Small models otherwise start their replies with one.
 
 ## The boundary
 
@@ -197,12 +213,15 @@ model.**
 | `complete` | a finished answer — the only kind that becomes context |
 | `cancelled` | stopped by hand; partial text kept, never shown to a model again |
 | `failed` | the provider refused or broke |
-| `blocked` | the local gate withheld the crossing; nothing was sent |
+| `blocked` | the local gate withheld the crossing — nothing was sent; or, mid-turn, the file results it asked for were kept back while the request itself had crossed (`request_meta.withheld` lists them) |
 | `interrupted` | stranded by a shutdown |
 
+A `complete` reply can also be **empty**: a model can finish with reasoning and no text.
+It is shown as "Finished without an answer", and it is never relayed in chatter.
+
 Retries name the triggering request (`retryOf`) and append nothing, so asking again
-never duplicates the question. A resent submission is matched on `client_request_id`,
-which is unique per thread.
+never duplicates the question; a chatter turn that failed retries its relay. A resent
+submission is matched on `client_request_id`, which is unique per thread.
 
 ## Storage
 
@@ -223,7 +242,7 @@ exposure query like anything else.
 Drag a finished message onto a thread in the rail to move it there; hold Alt to fork it.
 When it lands, the server detaches it (`rehome` in `duet-store.js`). Its author and
 addressee were participants of the thread it left, so both are cleared, and it becomes
-shared history in both panes, attributed to the model that wrote it. It is re-sequenced at
+shared history across both lanes, attributed to the model that wrote it. It is re-sequenced at
 the end of its new thread. Tier, status and `request_meta` travel with it, because they
 record how it was produced, not where it is filed. Its crossings stay on the record too:
 provenance belongs to the packet.
@@ -238,13 +257,14 @@ in server order, and a nested message has no place in that order.
 ## Pre-duet threads
 
 A thread that was a plain chat before it became a duet has packets with no author and
-no addressee. Those show in **both** panes, and reach both models labelled
-`[an earlier assistant → User]` or `[User → everyone]`. They are not adopted into either
-participant's voice — quietly claiming them would put words in a model's mouth.
+no addressee. Those span **both** lanes, and reach both models labelled with the model
+that wrote them (`[llama3.2:latest → User]`, or `[an earlier model → User]` if none was
+recorded) or `[User → both sides]`. They are not adopted into either participant's
+voice — quietly claiming them would put words in a model's mouth.
 
-There is no classic chat any more — every thread opens as two panes, and one created
+There is no classic chat any more — every thread opens as two lanes, and one created
 before participants existed is seated when it is first opened. What classic chat wrote
-before stays exactly as above: shared by both panes, owned by neither.
+before stays exactly as above: shared by both lanes, owned by neither.
 
 ## Files
 
@@ -252,13 +272,19 @@ before stays exactly as above: shared by both panes, owned by neither.
 |---|---|
 | `duet-store.js` | schema, participants, the canonical log |
 | `duet-context.js` | pure context assembly — no db, no network, no provider |
-| `duet-runner.js` | orchestration, the queue, the gate, crossings |
-| `public/duet.js` | the two panes, per-pane streaming |
-| `tools/duet_context_test.js` | 29 assertions, offline |
-| `tools/duet_test.js` | 44 assertions over HTTP |
+| `duet-runner.js` | orchestration, relays, tool rounds, the queue, the gate, crossings, the token ledger |
+| `workspace-tools.js` | the file tools, shared with `/api/chat` |
+| `public/duet.js` | the timeline and its lines, the panes, chatter, the chamber and its doors |
+| `tools/duet_context_test.js` | 45 assertions, offline |
+| `tools/duet_test.js` | 50 assertions over HTTP |
+| `tools/duet_tools_test.js` | 33 assertions: files, and every route to the cloud — fakes both sides |
+| `tools/duet_chatter_test.js` | 28 assertions: relays, refusals, interjections, the ledger — fakes both sides |
 
 ## Not built
 
 - **Send to both.** Deliberately deferred until the core was solid.
 - **More than two participants.** The schema has a `slot` and would take a third; the
-  layout and the context labels are what would need thought, not the store.
+  lanes and the context labels are what would need thought, not the store.
+- **A repetition stop.** A small model in chatter can repeat itself word for word; the run
+  only stops on a cap, an empty reply, a withheld turn or a failure.
+- **A retry on an empty reply.** One empty reply ends a run, though it is often a one-off.

@@ -3,8 +3,8 @@
 Run:  python tools/make_icons.py
 Draws at 4x and downsamples, so the seam stays clean at 16px.
 
-The mark is a hatch seal: a heavy ring split by a vertical seam, teal on the inside
-half and violet on the outside half. It is the boundary, which is the thing this app
+The mark is a hatch seal: a heavy ring split by a vertical seam, green on the inside
+half and amber on the outside half. It is the boundary, which is the thing this app
 actually is — and, just as importantly, it is not a sparkle.
 
 ⚠ That matters more than it looks. This file used to draw Glimmer's four-point star,

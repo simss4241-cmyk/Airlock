@@ -3,25 +3,34 @@
 Per-thread, read-only file access for the local model, and the containment
 that keeps it inside the folder you chose.
 
-> **Windows only.** The folder picker shells out to PowerShell and WinForms, so
-> workspaces do not exist on a Linux or macOS host.
+> **The folder picker is Windows only** — it shells out to PowerShell and WinForms. The
+> workspaces themselves work anywhere: paste an absolute path instead. Hosted, roots are
+> limited to `AIRLOCK_WORKSPACE_ROOTS` (see the README's hosting section).
 
 ## Workspace file access
 
-Muse Glimmer is tuned for tool calling, so each saved thread gets its own read-only **workspace
-root**. Select a thread, click the composer's **⛁ files** pill, then use Browse… or paste a
-path and press Enter. Switching threads switches the root automatically; clearing one
-thread's root does not affect any other thread. Scratch chats have no workspace.
+Each thread gets its own read-only **workspace root**. Open the thread, then ⚙ Settings →
+Workspace: Browse… or paste a path and press Enter. Switching threads switches the root
+automatically; clearing one thread's root does not affect any other thread.
 
 New threads start with **no** workspace, and that default is the point: file access is
 handed over deliberately, one thread at a time.
+
+Then each side decides for itself. Every pane has a **⛁ files** switch: **on** by default for
+a side on this machine, **off** by default for a side across the boundary — letting a cloud
+model read your files is something you switch on, never something you find on. It reads
+`⛁ files` when armed, `⛁ files off`, `⛁ no workspace` when the thread has none,
+`⛁ files missing` when the folder has gone, and `⛁ no tools` for a model that cannot call
+them. Switched on for a remote side it shows amber, because every file that side reads is a
+candidate crossing — and is ruled on by the gate before it goes (see
+[duet.md](duet.md#workspace-files)).
 
 The path box takes **absolute paths only**. `path.resolve` would read a bare `CFE` as
 relative to wherever the server was started and quietly root the thread at
 `airlock-ui\CFE` — a real folder, just not the one that was typed.
 
 A root whose folder has since been renamed or deleted is a third state, distinct from
-having one and from having none. The pill shows `⛁ files missing` rather than a confident
+having one and from having none. The switch shows `⛁ files missing` rather than a confident
 `⛁ files`, and the server withholds tools for that request: offering them means every call
 fails and the model spends the whole round budget discovering it. Verified against a live
 thread with its folder renamed away — one round, no tool calls attempted.
@@ -58,6 +67,7 @@ value. `loadConfig` strips it on sight.
 | `tools/files_test.js` | containment, the whole security boundary | nothing |
 | `tools/workspace_test.js` | the store: migration, independence, the spent bridge | nothing |
 | `tools/workspace_http_test.js` | the wiring: which thread resolves to which root | nothing |
+| `tools/duet_tools_test.js` | files in a duet, and every route their contents could take to a cloud model | nothing — fakes both sides |
 
 `workspace_http_test.js` spawns its own server on port 8137 against a throwaway database, so
 it never reads or writes the real `airlock.db` and doesn't need Ollama. It exists because the
@@ -85,10 +95,13 @@ doesn't depend on any dialog.
 | `find_files(query)` | Filename substring search, depth 8, 150 hits max |
 | `read_file(path)` | Reads a text file, 256 KB cap with a truncation note |
 
-The loop runs **server-side** in `/api/chat`: it streams Ollama through, watches for
-`tool_calls`, executes them, injects a `{"airlock_tool":…}` line the UI renders as a card,
-and re-calls with the results. Capped at 5 rounds, and the final round is sent without tools
-so the model is forced to answer rather than looping on an 8 tok/s budget.
+The loop runs **server-side**, in the duet runner (and the older `/api/chat` route), with the
+tools and their runner shared from `workspace-tools.js` so a file is the same thing to the
+kernel and the crossing record whichever path read it. It streams the model through, watches
+for `tool_calls`, executes them, emits a `tool` event the pane renders as a card, and
+re-calls with the results. Capped at 5 rounds, and the final round is sent without tools so
+the model is forced to answer rather than looping on an 8 tok/s budget. Toward a remote
+side, every round after the first is ruled on by the gate before it is sent.
 
 Observed working: *"Read README.md and tell me which port the app listens on"* →
 `list_directory(.)` → `read_file(README.md)` → "port 8100", in 56 s.

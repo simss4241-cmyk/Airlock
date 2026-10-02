@@ -40,8 +40,13 @@ so the board UI will be one client of them rather than the only place they live.
 | `GET /api/packets/:id/provenance` | The full trail, with thread names resolved |
 | `GET /api/search` | `folder` · `thread` · `from` · `to` · `q` · `role` |
 | `GET /api/travelled` | Packets whose origin ≠ current thread — ghost-trail candidates |
-| `GET /api/threads/:id/brief` | Renders the thread as a portable markdown brief (`?actor=`) |
-| `POST /api/threads/:id/handoff` | Records a verdict — one transaction, packet + signatures |
+| `GET /api/threads/:id/brief` | Renders the thread as a markdown brief — a local read; crosses nothing |
+| `POST /api/threads/:id/carry` | ⇱ Carry out: scanner + gate over the brief. Withheld → the ruling only; released → the brief and a one-hour token (`force: true` overrides, recorded as such) |
+| `POST /api/threads/:id/carried` | The brief was copied or saved: records the crossing, with the server's ruling |
+| `POST /api/threads/:id/handoff` | Records a reply carried back — with a token, the ruling and packets come from the server |
+| `GET /api/packets/:id/packet.md` | One message as a `.md` file — refused (403) if it holds a credential |
+| `GET /api/threads/:id/exposure` · `/api/exposure` | What has left this machine, from the provenance log |
+| `GET /api/usage` | Token spend per model and purpose, from the ledger (`?threadId=`) |
 | `GET /api/stats` | Counts, and the db path |
 
 "Everything in Indexing from April" is the query the schema exists to answer:
@@ -57,30 +62,42 @@ packet cascades to its children and its provenance rows.
 
 ## Layout & gestures
 
-300px rail on the left: brand block, status + model picker, scrolling tray
-list, stats, settings pinned at the bottom. Committee lane across the top of the pane.
+300px rail on the left: brand block, status and the Σ token pill (click it for spend per
+model), scrolling tray list, stats, settings pinned at the bottom. The boundary bar runs
+across the top of the pane — the gate model, how much of the open thread has crossed, and
+⇱ Carry out — with the two lanes below it and the chamber under them.
 
 | Gesture | Does |
 |---|---|
-| Drag a **packet** onto a thread | Moves it. Carries its nested children. Logs the hop |
-| **Alt** + drag a packet onto a thread | Forks it. Copy keeps a `forked_from` tether |
-| Drag a **packet** onto another **packet** | Nests it inside — indented on a connector rail |
+| Drag a finished **message** onto a thread | Moves it, detached from the conversation it left (see [duet.md](duet.md#leaving-a-conversation)). Logs the hop |
+| **Alt** + drag a message onto a thread | Forks it. Copy keeps a `forked_from` tether, and its tier |
+| Drag a **message** into another app's text box | Drops it with a provenance header — unless it holds a credential (below) |
 | Drag a **tray header** above/below another tray | Reorders the trays themselves |
 | Drag a **thread** onto a tray's landing strip | Re-files it to the end of that tray |
 | Drag a **thread** above/below another thread | Reorders it. A glowing line shows the slot |
 | Drag a **thread** onto another **tray** | Re-files it at the end. Packets keep their origin |
-| Drag a **thread** onto a committee member | Opens the handoff brief for that member |
-| Drag a **thread** onto your desktop / a folder | Writes a real `.md` file there |
-| Drag a **thread** into another app's text box | Pastes the brief as text |
 | Double-click a thread or tray name | Inline rename. Enter commits, Escape reverts |
 | ✕ on a thread or tray | Deletes it, after a confirm that names what goes with it |
+
+Nesting a packet inside another is a store operation (`POST /api/packets/:id/move` with
+`parentId`) and still tested, but it is not offered in the two-lane view: a duet is one
+conversation in server order, and a nested message has no place in that order. A thread
+no longer drags out of the app at all — see below.
 
 ### Dragging out of the browser
 
 | Drag | Payloads | Where it lands |
 |---|---|---|
-| **plain drag** | internal type + `text/plain` | Trays, committee members, nesting — and any text box: Claude, ChatGPT, an editor |
+| **plain drag** | internal type + `text/plain` | A thread in the rail — and any text box: Claude, ChatGPT, an editor |
 | **Shift + drag** | the above + `DownloadURL` | The OS. Chromium fetches the `.md` endpoint and writes a real file |
+
+**A message holding a known credential carries no text out at all.** The secret scanner
+(`secrets.js`, the same rules the gate runs) checks it at `dragstart`: the drag then holds
+only the internal type, so it can still move between threads but inserts nothing anywhere
+else; ⧉ copy is refused with the reason; and the server answers the `.md` endpoint with 403.
+The message wears a ⚠ credential mark so you can see this before you reach for it. What
+needs judgement rather than a pattern can still leave this way — a drag cannot wait for the
+gate model — and ⇱ Carry out is the route that rules on those.
 
 ### ⚠ `DownloadURL` must stay behind Shift
 
@@ -103,19 +120,18 @@ What the text looks like depends on what you grabbed:
   `[Airlock packet #12 · thread: Indexing · born in Schema · reviewed by Claude]`.
   From `/api/packets/:id/packet.md`.
 
-So dragging a thread into another model hands over the whole case file; dragging one packet
-hands over a single thought.
+A withheld reply says so in that header — *withheld by the local gate, nothing was sent* —
+rather than claiming it "ran off-machine", which is where it was bound, not where it ran.
 
 `DownloadURL` is Chromium-only (`mime:filename:absolute-url`), which is fine for an
-Edge-installed PWA. Because `dragstart` cannot `await`, the brief is prefetched on hover
-into a small cache and invalidated whenever the tree reloads; if you drag faster than the
-prefetch, `text/plain` falls back to a one-line pointer while the `.md` file is unaffected
-(the OS fetches that URL itself).
+Edge-installed PWA. The OS fetches that URL itself, so the `.md` file is checked on the
+server rather than in the page.
 
 ### ⚠ `effectAllowed` must stay `copyMove`
 
-Thread `dragstart` sets `effectAllowed = 'copyMove'`. **Do not narrow it to `'copy'`**, even
-though the desktop drag-out is conceptually a copy.
+Thread and message `dragstart` set `effectAllowed = 'copyMove'` whenever an in-app drop is
+possible. **Do not narrow it to `'copy'`** — a message's drag-out is conceptually a copy,
+but the move onto a thread is not.
 
 The drag model resets `dropEffect` to `none` whenever it isn't permitted by `effectAllowed`,
 and a `none` operation fires no `drop` event at all. Tray and reorder drops set
@@ -149,8 +165,8 @@ The **tray header** is the tray's drag handle, not the whole tray. A tray's body
 threads that are draggable in their own right, and nesting drag sources makes the browser
 pick the innermost one — so the gesture would be ambiguous.
 
-A packet drags by its **label** (`You · #12`, with a `⠿ drag` grip on hover), not by its
-bubble. The bubble was draggable at first and that made its text impossible to select, because
+A message drags by its **label** (the speaker line, with a `⠿ drag` grip on hover), not by
+its bubble. The bubble was draggable at first and that made its text impossible to select, because
 a draggable ancestor swallows `mousedown` — the same trap as the rename input. Anything
 containing text you might want to select must not be a drag source.
 
@@ -158,9 +174,10 @@ Renaming temporarily sets `draggable = false` on the enclosing row or header. A 
 ancestor swallows `mousedown`, so without this you drag the row instead of selecting text in
 the input. Automated tests use `.select()` and never touch a mouse, so they can't catch it.
 
-Every packet shows its id in the label (`You · #12`) so a brief can refer to it by number.
-Badges under a packet read its provenance: `from Schema` when it was born elsewhere, `1 hop`,
-`nested`, `reviewed by Claude`, `oversight verdict`.
+Every packet has an id (`#12`) that the record, briefs and drag headers refer to. In the
+lanes it shows on hover, beside the drag and copy controls; the chamber keeps it on every
+row. Badges read a message's provenance and state: `↗ crossed`, `⚠ credential`, and the
+gate's ruling when it was withheld.
 
 ## The Galactic Oversight Committee
 
@@ -219,10 +236,11 @@ automatically. Making the crossing automatic is what makes the audit worth havin
 
 ## Physics
 
-Ghost trails (a comet from the packet to wherever it's going), mitosis on fork (the bubble
+Ghost trails (a comet from the message to wherever it's going), mitosis on fork (the bubble
 divides and a clone peels off toward the target), a tilted drag chip under the cursor
-instead of the browser's default ghost, a settle-bounce on the row that receives something,
-and connector rails down the left of nested packets.
+instead of the browser's default ghost, and a settle-bounce on the row that receives
+something. The lines between the lanes — from each message to the one it answers — are
+covered in [duet.md](duet.md); the chamber's doors and seals are in the verification log.
 
 ### Cursor trails — colour is the affordance
 
@@ -231,9 +249,9 @@ do *before* you let go:
 
 | Colour | Mode | Gesture |
 |---|---|---|
-| **purple** `#a855f7` | move — the packet leaves and lands there | plain drag |
-| **teal** `#2dd4bf` | fork — a copy, tethered to the original | **Alt** + drag |
-| **amber** `#fbbf24` | export — leaving the app as a `.md` | **Shift** + drag |
+| **green** `#76b900` | move — the message leaves and lands there, still on this desk | plain drag |
+| **steel** `#b9c2cc` | fork — a copy, tethered to the original | **Alt** + drag |
+| **amber** `#ffb020` | export — leaving the app as a `.md` | **Shift** + drag |
 
 The mode is read from the live modifier state on every `drag` event, so the colour changes
 mid-gesture the moment you press or release Alt. The drag chip agrees with it, tagging
@@ -263,7 +281,7 @@ so it can be aimed:
 
 ### Mitosis at the moment of separation
 
-Hold **Alt** mid-drag and the packet visibly tears: the source bubble swells and glows teal
+Hold **Alt** mid-drag and the message visibly tears: the source bubble swells and glows
 while a ghost duplicate peels away from it. Fires **once per gesture** the instant Alt engages
 — not on the drop, which was the old behaviour and meant you found out only after the fact.
 The original stays put, which is the point of a fork, and the animation says so.
@@ -292,29 +310,33 @@ a wall-clock timeout so nothing leaks when no frame ever comes.
 
 ## Attaching files by hand
 
-The 📎 button (and paste, and drag-drop) takes images *and* text files. A text file's
-contents fold straight into the message as a fenced block — no tool round, no workspace
-needed, and it works for files outside the root since you handed it over explicitly. Images
-still go to the perception encoder as base64.
+Each side's 📎 button (and paste, and drag-drop onto its composer) takes images *and* text
+files. A text file's contents fold straight into the message as a fenced block — no tool
+round, no workspace needed, and it works for files outside the root since you handed it
+over explicitly. Images go to that side's model only, and only if it can see (👁); see
+[duet.md](duet.md#images).
 
 ## Palette
 
-Five hexes, and they are the tokens in `styles.css`:
+Colour is **semantic**, not decorative — the one thing you must read at a glance is which
+side of the boundary something is on, so that is what colour is spent on. The tokens live
+at the top of `styles.css`:
 
-| | Hex | Used for |
+| | Hex | Means |
 |---|---|---|
-| ink | `#0b1120` | app background, theme-color |
-| deep teal | `#022c43` | user message bubbles |
-| teal | `#115e59` / `#2dd4bf` | user label, healthy status dot, icon lower arm |
-| violet | `#6d28d9` | focus rings, gradients, icon upper arm |
-| purple | `#a855f7` | assistant label, caret, glow, "needs attention" dot |
+| graphite | `#0b0d10` | the ground — app background, theme-color |
+| steel | `#121519` · `#262c34` · `#8b949e` | panels, edges, muted text — everything that is not a boundary fact |
+| NVIDIA green | `#76b900` | **local** — on this machine, nothing has left; primary actions |
+| amber | `#ffb020` | **across the boundary** — a crossing, or about to be one |
+| red | `#ff5a5f` | refused, withheld, failed |
 
-Buttons deliberately fill with `#5b21b6 → #7c3aed`, not `#a855f7` — white on the bright
-purple is only ~3:1 contrast, which fails AA for text. All pairs now check out: body text
-15.9:1, muted 6.7:1, button label 5.7–9.0:1, teal label 7.8:1, purple label 4.8:1.
+Your own messages are steel on purpose: colour is reserved for the boundary. Buttons on
+green carry near-black text (white on `#76b900` is only 2.4:1); Stop is white on a deepened
+red (`#c62b2e`, 5.6:1).
 
-`tools/make_icons.py` pours the same teal→purple ramp through a star mask, so the icon and
-the CSS can't drift apart. Recolor there and re-run.
+`tools/make_icons.py` draws the hatch seal — a ring split by a seam, green on the inside
+half, amber on the outside — from the same values, so the icon and the CSS can't drift
+apart. Recolor there and re-run.
 
 ---
 

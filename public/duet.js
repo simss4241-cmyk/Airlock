@@ -1318,8 +1318,13 @@ function paintFiles(id) {
     btn.classList.toggle('on', armed);
     btn.classList.toggle('remote', armed && isRemote(id));
     btn.disabled = !canTool;
-    btn.textContent = !canTool ? '⛁ no tools' : armed ? '⛁ files' : on && !root ? '⛁ no workspace' : '⛁ files off';
+    // A root whose folder has gone is its own state — not "off", and not "no workspace" —
+    // because the fix is different: point it at the folder again.
+    const missing = Boolean(root) && !workspace.exists;
+    btn.textContent = !canTool ? '⛁ no tools' : armed ? '⛁ files'
+        : missing ? '⛁ files missing' : on && !root ? '⛁ no workspace' : '⛁ files off';
     btn.title = !canTool ? `${model} can't call tools — attach files with 📎 instead`
+        : missing ? `${root} no longer exists — set the workspace again in ⚙ Settings`
         : !root ? 'This thread has no workspace — set one in ⚙ Settings'
             : on ? `May read files under ${root}${isRemote(id) ? ' — each one ruled on by the local gate before it crosses' : ''}. Click to turn off.`
                 : `Click to let ${participant(id)?.name || 'this side'} read files under ${root}`;

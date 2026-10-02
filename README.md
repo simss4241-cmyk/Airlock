@@ -49,6 +49,9 @@ what leaves it. This table is the honest version — clone it and check.
 | Crossing by a remote participant **and** by hand, both gated and recorded | working |
 | Access token + remote spend cap for hosting | working, 26 assertions |
 | Duet — two addressable participants over one conversation | working, 95 assertions |
+| One timeline in two lanes: each message once, with a line to the one it answers | working |
+| Roles — one word per side ("Skeptic"), held for the whole conversation | working |
+| Images in a duet, for models that can see; never sent across the boundary | working |
 | Chatter — the participants answering each other, step or auto, every turn gated | working, 28 assertions end to end |
 | Token spend on the record — every reply, gate ruling and review, per model, in a server ledger | working |
 | Per-thread consent retired; an old database is cleaned on open | working, 7 assertions |
@@ -75,7 +78,7 @@ node tools/auth_test.js            # access guard, spend cap
 node tools/files_test.js           # workspace containment
 node tools/workspace_test.js       # migrations
 node tools/duet_context_test.js    # what each participant is shown
-node tools/duet_test.js            # two panes, one conversation
+node tools/duet_test.js            # two participants, one conversation
 node tools/duet_tools_test.js      # workspace files in a duet, every route to the cloud (fakes both sides)
 node tools/duet_chatter_test.js    # the participants answering each other (fakes both sides)
 node tools/clearance_test.js       # retired per-thread consent is removed from old databases
@@ -97,8 +100,16 @@ PORT=8126 AIRLOCK_DB=/tmp/airlock-verify.db npm start
 AIRLOCK_URL=http://localhost:8126 node tools/boundary_test.js
 ```
 
-`workspace_http_test.js`, `kernel_http_test.js`, `hosting_test.js` and
-`sandbox_http_test.js` start their own servers and are not affected.
+`workspace_http_test.js`, `kernel_http_test.js`, `hosting_test.js`,
+`sandbox_http_test.js`, `duet_tools_test.js` and `duet_chatter_test.js` start their own
+servers and are not affected. The last two also fake both sides — a remote on localhost
+and a stand-in Ollama — so they need neither a key nor a model, and prove the plumbing
+rather than a model's judgement.
+
+How well a gate *model* judges is a separate question, measured rather than asserted:
+`node tools/gate_bench.js` runs labelled turns through the real gate and reports leaks and
+friction separately; `--set=holdout` runs cases kept apart for checking a change, totals
+only. See [docs/verification.md](docs/verification.md) for the numbers.
 
 The remote suites **skip** rather than fail without a Nebius key, so the tests
 run on a clean clone with no credentials. With a key they *still* skip every call
@@ -111,13 +122,15 @@ machinery itself is covered for free by `kernel_http_test.js`, against a fake re
 withhold a message it should release. That is reported as a failure and the dependent
 assertions are marked `skip` — it no longer silently truncates the run.
 
-Naming a small, quick local model in `AIRLOCK_GATE_MODEL` makes it both faster and
-steadier; **`nemotron-3-nano:4b` is the recommended one** — 2.8 GB, fully resident on a
-modest card, ~117 tok/s on the gate prompt, and NVIDIA's own Nano, so the model deciding
-what may cross is the same lineage as the one receiving it. Without a name the gate
-takes the *smallest* installed model over a floor, because a gate that stalls fails
-closed and reaches you as a refusal of a harmless message — fitting is the thing the
-default can get right, and quality is the thing only you can.
+Which local model gates is set by `AIRLOCK_GATE_MODEL`, and it is a real trade, measured
+with `tools/gate_bench.js`: `nemotron-3-nano:4b` is fast (~0.3 s a ruling, 2.8 GB) but
+**released about a third of what it should have withheld**; `qwen2.5:14b` released
+nothing on either test set but is slower (~0.8 s) and withholds more harmless turns. A
+deterministic secret scanner runs in front of whichever you choose, so known credential
+formats never depend on the model. Without a name the gate takes the *smallest* installed
+model over a floor, because a gate that stalls fails closed and reaches you as a refusal
+of a harmless message — fitting is the thing the default can get right, and quality is
+the thing only you can.
 
 Built for the Nebius × NVIDIA Global AI Hackathon — Personal AI track.
 
@@ -141,14 +154,15 @@ That is enough to run. **Airlock does not require you to download a model.**
   machine and never contacts anything: `nemotron-3-nano:4b` if you have it, otherwise
   the largest model at or under 8 GB. Not simply the largest you have — on an ordinary
   card that is the one that crashes on the first question.
-- **With both**, the saved config wins, and the dropdown offers either tier.
+- **With both**, the saved config wins, and every model picker offers either tier.
 - **With neither**, it starts, says so plainly, and waits.
 
 The default is resolved at boot rather than hardcoded, because a fixed default is
 wrong for somebody — see `pickDefaultModel` in [server.js](server.js).
 
-Whichever model is selected lives in the server's config, and the picker writes
-back to it. There is deliberately no per-browser copy: one used to exist in
+That default lives in the server's config, and the picker in ⚙ Settings writes back to it.
+A new thread seats it on the side it belongs to; each side's own picker can then point
+it anywhere. There is deliberately no per-browser copy: one used to exist in
 `localStorage`, and because it was preferred over the config it outvoted it
 permanently — changing the default did nothing in any browser that had ever
 picked a model, with nothing on screen to explain why.
@@ -165,14 +179,22 @@ For Ollama setup and the GPU archaeology that came with it, see
 
 ## Features
 
-Every thread is one conversation with two participants: a pane on each side, and the
-airlock chamber between them, where every message enters and every crossing is marked.
+Every thread is one conversation with two participants: a lane for each side, and the
+airlock chamber below them, where every message enters and every crossing is marked.
 
 - Two participants per thread, each with its own model, role and composer — a side on
   this machine and a side that can cross, or any mix — reading one shared conversation
+- One timeline in two lanes: each message appears once, in its side's lane, with a line
+  to the message it answers — green if it stayed here, amber if it crossed, red if the
+  gate withheld it
+- Roles: one word per side (✎ role — "Skeptic", "Optimist") is enough, and is held for
+  the whole conversation, including toward the other side
 - The chamber: pressure doors that hold shut while the local gate rules, and a seal on
   every row that crossed (amber) or was withheld (red)
-- Focus mode (⤢) — one side wide, the other folded to a strip — for talking to one model
+- Focus mode (⤢) — one lane wide, the other folded to a track of dots — for talking to
+  one model
+- Σ token spend, from a server ledger: click it for every model, with gate rulings
+  counted separately
 - Workspace files (⛁) per side: on by default here, off by default across the boundary,
   and every file result ruled on before it crosses
 - Images — 📎, paste or drop — for models that can see (👁)
@@ -212,10 +234,20 @@ running *remotely*, and nothing failed, because a remote model answers the gate 
 perfectly well. It just answers it after the content has already crossed.
 
 `runGate` now resolves a local model itself, and **refuses** if it is handed a remote one.
-`AIRLOCK_GATE_MODEL` names which local model does the job; unset, it uses the current
-model when that is local, otherwise the smallest installed one over a floor. Prefer
-something small and quick — the gate is a short yes/no standing between you and your
-first remote reply — and `nemotron-3-nano:4b` is the recommended one.
+`AIRLOCK_GATE_MODEL` names which local model does the job; unset, it uses the default
+model when that is local, otherwise the smallest installed one over a floor. The
+boundary bar at the top of the app names the gate that will actually run. Which model
+to choose is a measured trade — see the gate notes under [Status](#status).
+
+### A scanner before the model
+
+`secrets.js` runs first inside `runGate`, before any model is called: private keys, cloud
+and platform tokens by their published formats, passwords inside URLs, secrets assigned
+in env files, Luhn-valid card numbers, US SSNs. It can only **withhold** — a clean scan
+still goes to the model — and it never repeats a secret beyond a four-character preview.
+The same file runs in the page, so a single message dragged or copied out is checked by
+the same rules (see below). Medical details, a memo marked confidential, anything that
+needs reading rather than matching, stays with the model.
 
 ### It fails closed
 
@@ -332,9 +364,10 @@ connection without a clearance the kernel issued.
 > moves between threads), its ⧉ copy is refused, its `.md` export is refused by the
 > server, and it wears a ⚠ mark. What needs judgement rather than a pattern — a medical
 > note, a memo marked confidential — can still leave this way; ⇱ Carry out is the route
-> that rules on those. And code that opens its own
-> socket: a tool that runs third-party code would have to live in a separate
-> process for any of this to hold, and none does today.
+> that rules on those.
+>
+> Nor can it mediate code that opens its own socket: a tool that ran third-party code
+> would have to live in a separate process for any of this to hold, and none does today.
 
 **Every packet in the request is recorded as crossed**, deduplicated per
 (packet, model). A turn resends the whole conversation, so without dedup the log
@@ -373,13 +406,13 @@ gate first, cross second, record third — and still tested, with no button.
 
 ## Two tiers, one stream
 
-`providers/` is the seam. `/api/chat` pulls one async generator and never branches
-on where a model runs; each provider adapts its API to a single chunk shape.
+`providers/` is the seam. The duet runner (and the older `/api/chat` route) pull one
+async generator and never branch on where a model runs; each provider adapts its API to
+a single chunk shape.
 
 That shape is Ollama's native NDJSON, which is a deliberate choice and not an
-accident of history. `public/app.js` already speaks it and is proven against it,
-so adapting a new provider to the client is strictly less risky than rewriting
-both ends of a working stream.
+accident of history: the server was built and proven against it first, so adapting a
+new provider to it is strictly less risky than rewriting both ends of a working stream.
 
 | | Local | Remote |
 |---|---|---|
@@ -413,7 +446,7 @@ the result is a finite number, on both tiers.
 Two more translations worth knowing about:
 
 - **Usage must be asked for.** Without `stream_options: { include_usage: true }`
-  the final chunk carries no usage at all and the token counter silently reads
+  the final chunk carries no usage at all and the token ledger silently records
   zero for the entire remote turn.
 - **Reasoning arrives on a different channel.** Nemotron 3 reasons heavily —
   "name one metal" produced 855 characters of reasoning for a two-character
@@ -431,8 +464,9 @@ stay home.
 
 ## Settings, and which of them cross
 
-Four sampling controls sit in Settings, and only two of them mean anything
-remotely. The panel says so, because a control that silently does nothing is
+⚙ Settings holds each thread's workspace, the default model for new threads, the
+reasoning switch, the system prompt, and four sampling controls — only two of which
+mean anything remotely. The panel says so, because a control that silently does nothing is
 worse than one that isn't there.
 
 | Setting | Local | Remote |
@@ -567,27 +601,26 @@ on CPU alone, so the host does not need a GPU for the gate.
 
 | File | Role |
 |---|---|
-| `server.js` | Express static host + streaming Ollama proxy, `/api/health`, `/api/config`, packet routes |
-| `db.js` | The packet store — schema, provenance log, move/fork/nest/review, search. One database per `createCore` |
+| `server.js` | Express host: `/api/health`, `/api/config`, duet send, packet routes, Carry out, `/api/usage`, `/api/exposure` |
+| `db.js` | The packet store — schema, provenance log, token ledger, move/fork/nest/review, search. One database per `createCore` |
 | `sandbox.js` | Which store a call belongs to: the desk's one database, or the visitor's sandbox; the sandbox lifecycle |
 | `kernel.js` | Whether content may leave: per-turn clearances bound to the exact words and destination |
-| `boundary.js` | The gate — a local model that rules on a crossing, and fails closed |
+| `boundary.js` | The gate — a local model that rules on a crossing, deterministic, fails closed |
+| `secrets.js` | The credential scanner: in front of the gate on the server, and on drags and copies in the page |
+| `providers/` | One streaming contract, two tiers. `index.js` documents the chunk shape |
 | `providers/registry.js` | Which side of the boundary each model is on, read from the providers' own catalogues |
 | `providers/egress.js` | The only file allowed to reach the network; refuses content without a clearance |
 | `files.js` | Read-only workspace access, containment, and which folders a root may be |
-| `duet-store.js` · `duet-runner.js` · `duet-context.js` | Two participants over one conversation — see [docs/duet.md](docs/duet.md) |
-| `public/index.html` · `app.js` · `styles.css` | Frontend — no dependencies, no CDN, works offline |
+| `workspace-tools.js` | The file tools and their runner, shared by the duet and `/api/chat` |
+| `duet-store.js` · `duet-runner.js` · `duet-context.js` | Two participants over one conversation, chatter included — see [docs/duet.md](docs/duet.md) |
+| `auth.js` | Access token and remote spend cap. Off unless configured |
+| `public/index.html` · `app.js` · `duet.js` · `styles.css` | Frontend — no dependencies, no CDN, works offline. `duet.js` is the timeline, the panes and chatter |
 | `public/manifest.webmanifest` | PWA manifest; what makes the taskbar install possible |
-| `tools/focus_airlock.ps1` | Finds and raises an existing Airlock window; exit code says which |
 | `public/icons/` | Generated PNGs + `airlock.ico` |
 | `tools/make_icons.py` | Redraws the whole icon set — edit colors here, re-run |
-| `providers/` | One streaming contract, two tiers. `index.js` documents the chunk shape |
-| `tools/smoke_test.js` | 89 assertions over the store API. Run it after touching `db.js` |
-| `boundary.js` | The gate. Local-only, deterministic, fails closed |
-| `auth.js` | Access token and remote spend cap. Off unless configured |
-| `tools/provider_test.js` | 61 assertions over the provider contract. Run it after touching `providers/` |
-| `tools/boundary_test.js` | 73 assertions over the gate, both crossing paths and the audit trail |
-| `tools/auth_test.js` | 26 assertions over the access guard and the spend cap |
+| `tools/focus_airlock.ps1` | Finds and raises an existing Airlock window; exit code says which |
+| `tools/*_test.js` | The suites listed under [Status](#status) |
+| `tools/gate_bench.js` · `gate_holdout.js` | Measures a gate model: leaks and friction, with a held-out set kept apart |
 | `airlock-launch.vbs` | Ensures the server is up, then opens app mode. What the icon runs |
 | `tools/install_shortcut.ps1` | Creates the pinnable Start Menu / Desktop shortcut |
 | `tools/install_autostart.ps1` | Startup-folder shortcut (`-Remove` to undo) |
@@ -604,9 +637,23 @@ Launcher paths use `%~dp0` / self-resolving paths, so the folder can be moved.
   brief with the sensitive parts stripped out is not built.
 - **Write access or a shell.** File tools are read-only on purpose. Adding either should
   stay a deliberate decision rather than a convenience.
-- **Tool results as packets.** Tool calls render as cards in the transcript but aren't stored
-  in the packet store, so briefs stay readable. When one crosses to a remote model it is
-  recorded as a crossing, by name, size and content hash — just not kept as a packet.
+- **Tool results as packets.** Tool calls render as cards on the reply, and each reply
+  keeps its calls (name, target, size, hash) in `request_meta.tools`, but the results
+  themselves aren't stored as packets, so briefs stay readable. When one crosses to a
+  remote model it is recorded as a crossing, by name, size and content hash.
+
+## Known issues
+
+- **The 14B gate over-withholds.** `qwen2.5:14b` has refused requests that merely *ask*
+  to read a file, and a brief because it named a model id — both against its own
+  instructions. Retuning it needs fresh held-out cases first; the current held-out set
+  has been used for two decisions and is spent.
+- **Small models in chatter.** A 4B with reasoning on sometimes reasons and then says
+  nothing (the run stops, and says why); with reasoning off it can repeat itself word
+  for word. A repetition stop and one retry on an empty reply are not built yet.
+- **Muse Glimmer 30B does not load** on Ollama 0.34.1 on this desk (CUDA "shared object
+  initialization failed"), with or without Airlock — so image input to a real model is
+  unverified here since August.
 
 ## Further reading
 
@@ -615,10 +662,10 @@ idea.
 
 | | |
 |---|---|
-| [docs/local-tier.md](docs/local-tier.md) | Ollama setup, the Blackwell flash-attention fight, VRAM budgeting, the reasoning channel, the token counter, the taskbar launcher |
+| [docs/local-tier.md](docs/local-tier.md) | Ollama setup, the Blackwell flash-attention fight, VRAM budgeting, the reasoning channel, token spend, the taskbar launcher |
 | [docs/board.md](docs/board.md) | The packet store's schema and rules, every drag gesture, cross-app drag payloads, the motion design, the palette |
-| [docs/workspaces.md](docs/workspaces.md) | Per-thread read-only file access and its containment tests (Windows only) |
-| [docs/duet.md](docs/duet.md) | Two participants over one conversation: what each is shown, why a crossing exposes the other's words, the queue, the lifecycle |
+| [docs/workspaces.md](docs/workspaces.md) | Per-thread read-only file access, the per-side ⛁ switch, and the containment tests |
+| [docs/duet.md](docs/duet.md) | Two participants over one conversation: the timeline, what each is shown, roles, chatter, why a crossing exposes the other's words, the lifecycle |
 | [docs/verification.md](docs/verification.md) | What was verified by hand, when, and what was not |
 
 ## Licence
