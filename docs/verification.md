@@ -244,6 +244,42 @@ relay that delivers nothing, and an empty reply that is not answered. `duet_cont
 **Not yet run live: a chatter run toward a remote side.** It spends credit, and with the 14B
 gate, turns may be withheld for the reasons logged on 2026-09-30.
 
+## Measured 2026-10-01 — one-word roles in chatter
+
+Both sides on nemotron-3-nano:4b, with roles of one word each. The same opening question
+each time ("Will local AI models replace cloud AI for most people within five years?"),
+then up to six chatter turns.
+
+**Before**, with roles framed as "Additional standing instructions":
+- The Optimist drifted to "I remain skeptical" within two turns.
+- Two Skeptics invented "model.txt line 45" between them and confirmed it to each other
+  for six turns. No such file exists and none was read.
+- Replies copied the transcript label (`[nemotron-3-nano:4b → Left]`).
+
+**Fixes, in the participant system message (`duet-context.js`):**
+- The role is framed as one to *hold*, including toward the other participant, even one
+  that shares it.
+- Never cite a source not actually seen in the conversation or read with a tool, and
+  question an unverified one from the other side instead of repeating it.
+- Do not open a reply with a transcript label.
+
+`duet_context_test` 45/45 (5 new).
+
+| | Labels | Invented files | Role held | Empty replies | Loops |
+|---|---|---|---|---|---|
+| Before fixes | 2 | "model.txt line 45" × 6 turns | no | yes | agreeing with each other |
+| Fixes, reasoning on | 0 | 0 | yes (Optimist held) | yes, a run stopped early | "you run the test" |
+| Fixes, reasoning off | 0 | 0 | partly | none | word-for-word repetition |
+
+The fixes did what they target. What remains is mostly the 4B: with reasoning on, it
+sometimes reasons and then says nothing; with it off, it repeats itself verbatim. Two
+Skeptics with reasoning off produced the best exchange of the four runs, challenging each
+other before settling into "the only way to settle it is a benchmark". The default system
+prompt's "say what would settle it… name commands and versions" pushes both sides to hand
+the work to the user. That suits one assistant, not a debate.
+
+Not yet tried: a larger model on both sides; a repetition stop; retrying an empty reply once.
+
 ---
 
 [← back to the README](../README.md)

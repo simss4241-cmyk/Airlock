@@ -48,7 +48,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Tier recorded per packet; "what crossed?" as a query | working |
 | Crossing by a remote participant **and** by hand, both gated and recorded | working |
 | Access token + remote spend cap for hosting | working, 26 assertions |
-| Duet — two addressable participants over one conversation | working, 90 assertions |
+| Duet — two addressable participants over one conversation | working, 95 assertions |
 | Chatter — the participants answering each other, step or auto, every turn gated | working, 23 assertions end to end |
 | Per-thread consent retired; an old database is cleaned on open | working, 7 assertions |
 | Every turn gated, bound to the exact words sent — only what is new is re-read | working |
@@ -63,7 +63,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Per-visitor settings, remote budgets, gate memory and generation slots; a daily cap that survives restarts | working |
 | Hosted deployment on Nebius AI Cloud, with the gate beside the app | not built |
 
-**642 assertions across seventeen suites.** Run them:
+**647 assertions across seventeen suites.** Run them:
 
 ```
 npm start                          # in one terminal

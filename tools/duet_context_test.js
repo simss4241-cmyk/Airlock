@@ -304,5 +304,27 @@ ok(rightTurn.meta.sourceIds.includes(leftOpens.id),
 ok(!/dialogue between the participants/.test(build(LEFT, [RIGHT]).messages[0].content),
     'an ordinary turn carries no dialogue instruction');
 
+// ── 11. what two models talking need told ──
+//
+// Each of these was measured, live, on two 4B participants (docs/verification.md,
+// 2026-10-01): a one-word role that did not hold, a citation invented and then confirmed by
+// the other side for six turns, and replies that opened by copying the transcript label.
+
+const skeptic = { ...RIGHT, instructions: 'Skeptic' };
+const roleSystem = buildContext({
+    participant: skeptic, others: [LEFT], messages: [askRight], trigger: askRight, numCtx: 8192, userName: 'User'
+}).messages[0].content;
+ok(/Your role in this conversation, set by the User: Skeptic/.test(roleSystem),
+    'a one-word role arrives as a role to hold, not a note');
+ok(/including toward the other participant/.test(roleSystem) && /if they share your role/.test(roleSystem),
+    'held toward the other participant too — even one with the same role');
+const anySystem = build(LEFT, [RIGHT]).messages[0].content;
+ok(/Never cite a file, line, document, figure or source you have not actually seen/.test(anySystem)
+    && /do not repeat it as fact/.test(anySystem),
+    'no invented sources, and an unverified one from the other side is questioned, not repeated');
+ok(/Do not begin it with a \[speaker → addressee\] label/.test(anySystem),
+    'and replies do not copy the transcript label');
+ok(!/Your role in this conversation/.test(anySystem), 'a side with no role is not told it has one');
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);
