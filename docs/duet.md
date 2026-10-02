@@ -1,23 +1,32 @@
 # Duet
 
-Two addressable AI participants sharing **one** conversation. Each gets its own pane,
-its own composer, its own name, its own model. Neither gets its own history.
+Two addressable AI participants sharing **one** conversation. Each gets its own lane,
+its own composer, its own model and role. Neither gets its own history.
 
-That last sentence is the whole design. The panes are filtered views over a single
-thread; there is no second log anywhere in the code, so there is nothing to keep in
-step and nothing that can drift.
+That last sentence is the whole design. On screen it is one timeline in two lanes: every
+message appears **once**, in server order, in the lane it belongs to — a reply in its
+author's lane, a request in the lane of the side it was sent to, anything from before the
+thread had two sides across both. A line runs from each message to the one it answers,
+read from what the store recorded (a chatter turn's `relayOf`, an answer's `replyTo`),
+coloured by the answering side: green if it stayed here, amber if it crossed, red dashed
+if the gate withheld it. There is no second log anywhere in the code, so there is nothing
+to keep in step and nothing that can drift.
 
 ```
-                    ┌─────────────── one thread ───────────────┐
-                    │  #1 [User → Lyra]   name a teal robot     │
-                    │  #2 [Lyra → User]   Zing                  │
-                    │  #3 [User → Ember]  what did Lyra say?    │
-                    │  #4 [Ember → User]  Zing                  │
-                    └───────────┬──────────────────┬────────────┘
-                                │                  │
-                    Lyra's pane │                  │ Ember's pane
-                      #1 #2     │                  │   #3 #4
+            LEFT lane                         RIGHT lane
+     #1 [User → Left]  teal robots?
+        │
+     #2 [Left → User]  call it Verdigris ─┐
+                                          └─ #3 [Right → Left]  too on the nose
+     #4 [Left → Right] then Patina ───────┐
+                                          └─ #5 [Right → Left]  better
 ```
+
+(It used to be two panes, each a filter over the log — what was said to or by that side.
+In chatter, where every reply is addressed to the other side, both panes showed every
+message and became copies of each other.) Focus mode (⤢) folds one lane to a track of
+dots, so the back-and-forth still reads; on a narrow screen the tabs show one lane at a
+time. Packet ids show on hover in the lanes; the chamber below keeps them on every row.
 
 ## Why it is not two chats
 
@@ -27,7 +36,7 @@ about something the first said, you have to decide what to send it, and every an
 to that question is a lie unless there was one conversation all along.
 
 So: one thread, one server-assigned order, and each message records who wrote it and
-who it was addressed to. A pane is a `WHERE` clause.
+who it was addressed to. A lane is where its author sits.
 
 ## What each participant is shown
 

@@ -306,6 +306,36 @@ rulings counted, and per-thread reads). smoke 89, duet 50, kernel 34, kernel_htt
 boundary 45, duet_tools 33, sandbox 20, sandbox_http 43, and workspace migrations, all
 against the new server. The ledger is per visitor when hosted, like every other store.
 
+## Verified 2026-10-02 — one timeline, two lanes
+
+**Found by the operator:** in chatter both panes showed every message and read as mirrors.
+A pane showed what was said to or by its side, and every chatter reply is addressed to the
+other side.
+
+**Now** the conversation is one timeline in two lanes. Every message appears once, in its
+author's lane (a request goes in the lane of the side it was sent to; pre-duet history
+spans both). A line runs from each message to the one it answers, using the stored
+`relayOf`/`replyTo`, not position: green local, amber crossed, red dashed withheld. One
+scroller, so the lanes stay aligned. Focus mode folds a lane to dots. Packet ids show on
+hover in the lanes; the chamber keeps them.
+
+Checked in the browser:
+- **A chatter thread:** strict alternation down the timeline, and the interjection landed in
+  Right's lane with a straight line to Right's answer.
+- **"Live crossing":** an amber line into the crossed reply and a red one into the withheld
+  reply.
+- **Focus mode:** folding Left left three dots, with their lines still drawn.
+- **A live Step:** streamed into the right lane with its line attached.
+- **Phone width:** one lane per tab, lines hidden.
+
+Found and fixed while building: CSS grid auto-placement put a right-lane message on the
+same row as the left-lane message before it, which broke the order; each message now
+gets its own row. A line between two consecutive messages in the same lane looped out to
+the gutter; it now drops straight down, and only detours when another message of that
+lane is in between.
+
+Page-only: no server change and no change to what is recorded. The suites are unaffected.
+
 ---
 
 [← back to the README](../README.md)

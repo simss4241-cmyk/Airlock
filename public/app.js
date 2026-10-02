@@ -1460,7 +1460,7 @@ function wireThreadDnd(row) {
         const forking = e.altKey;
         // From the single view or from a duet pane — the rail takes a packet from either.
         const source = document.querySelector(
-            `#messages [data-packet="${packetId}"], .duet-list [data-message="${packetId}"]`);
+            `.duet-timeline [data-message="${packetId}"]`);
 
         // Kick the animation off against the node's current position, then move on.
         // Never awaited — the write must land even if no frame ever renders.

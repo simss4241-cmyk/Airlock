@@ -52,25 +52,11 @@ const state = {
 const panes = new Map();    // participantId -> { nodes, controller, status, error, gate, frame }
 
 
-// ─────────────────────────── filtering ───────────────────────────
-
-/**
- * A packet from before this thread had participants: nobody wrote it as a participant and
- * nobody was addressed. Both the questions and the answers of a plain chat qualify.
- */
-const isShared = message => message.authorId == null && message.recipientId == null;
-
-/**
- * What a pane shows: what was said TO this participant, and what it said back.
- *
- * Pre-duet packets appear in BOTH panes. They are the shared past of a thread that was an
- * ordinary chat before it was a duet, and hiding them would make the conversation look
- * like it started midway — in one pane or, worse, in neither.
- */
-const visibleTo = (message, participantId) =>
-    message.authorId === participantId
-    || message.recipientId === participantId
-    || isShared(message);
+// ─────────────────────────── who is who ───────────────────────────
+//
+// (The panes used to filter the conversation — what was said to or by each side — and in
+// chatter, where every reply is addressed to the other side, both became copies. The
+// conversation is now one timeline in two lanes; see laneOf() below.)
 
 const participant = id => state.participants.find(p => p.id === id) || null;
 
@@ -262,7 +248,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
 
     return `<div class="${classes.join(' ')}" data-message="${message.id}">
                 <span class="who"${portable ? ' draggable="true"' : ''}>${who}${addressed}${
-                    message.id ? ` · #${message.id}` : ''}${crossed}${kept}${note}${handoff}</span>
+                    message.id ? `<span class="msg-id"> · #${message.id}</span>` : ''}${crossed}${kept}${note}${handoff}</span>
                 <div class="bubble${message.streaming && message.content ? ' caret' : ''}">${
                     think}${body}</div>
                 ${message.stats ? `<span class="stats">${escapeHtml(message.stats)}</span>` : ''}
@@ -301,29 +287,141 @@ function gateHtml(gate, withheld = null) {
 /** Was the reader already at the bottom? If so keep them there; if not, leave them be. */
 const pinned = node => node.scrollHeight - node.scrollTop - node.clientHeight < 80;
 
+// ─────────────────────────── the timeline: one conversation, two lanes ───────────────────────────
+//
+// Each message appears ONCE, in the lane it belongs to, in server order: a reply in its
+// author's lane, a request in the lane of the side it was sent to, and anything from before
+// the thread had two sides across both. Lines run from each message to the one it answers —
+// read from what the store recorded (a chatter turn's relayOf, an answer's replyTo), never
+// guessed from position — so a chatter run zig-zags between the lanes, and an interjection
+// shows exactly where it came in.
+//
+// This replaced two panes that each showed everything said to or by their side. In chatter
+// every reply is addressed to the other side, so the two panes became copies of each other.
+
+/** Which lane a message lives in: 'a', 'b', or 'both' for shared, pre-duet history. */
+function laneOf(message) {
+    const slotOf = id => participant(id)?.slot || null;
+    if (message.role === 'user') return slotOf(message.recipientId) || 'both';
+    return slotOf(message.authorId) || 'both';
+}
+
+/** The message this one answers, as recorded — or null. */
+const parentOf = message => message.requestMeta?.relayOf || message.replyTo || null;
+
+let timelineFrame = null;
+
+/** Coalesced to one paint per frame: tokens arrive faster than a markdown tree lays out. */
+function schedulePaint(participantId) {
+    if (participantId != null) paintPaneStatus(participantId);
+    if (timelineFrame) return;
+    timelineFrame = requestAnimationFrame(() => {
+        timelineFrame = null;
+        paintTimeline();
+        paintAirlock();                       // the chamber is always on screen
+    });
+}
+
+/** Kept for the callers that paint after a turn settles: the timeline, and that side's status. */
 function paintPane(participantId) {
-    const pane = panes.get(participantId);
-    if (!pane) return;
-
-    const who = participant(participantId);
-    const list = pane.nodes.list;
-    const wasPinned = pinned(list);
-
-    const mine = state.messages.filter(m => visibleTo(m, participantId));
-
-    list.innerHTML = mine.length
-        ? mine.map(m => messageHtml(m)).join('')
-        : `<div class="empty duet-empty">
-               <h2>${escapeHtml(who?.name || 'This participant')} hasn't been asked anything yet</h2>
-               <p>Whatever you send here goes to ${escapeHtml(who?.name || 'them')} alone —
-                  but it is part of the one shared conversation, and the other participant
-                  can read it when you next ask them something.</p>
-           </div>`;
-
-    wireCopyButtons(list);
-    wireHandoff(list);
+    paintTimeline();
     paintPaneStatus(participantId);
-    if (wasPinned) list.scrollTop = list.scrollHeight;
+}
+
+function paintTimeline() {
+    const scroller = duetEl.timeline;
+    if (!scroller) return;
+    const grid = scroller.querySelector('.tl-grid');
+    const wasPinned = pinned(scroller);
+
+    const folded = state.focus ? (state.focus === 'a' ? 'b' : 'a') : null;
+    // Each message gets a row of its own. Left to auto-placement, a right-lane message
+    // that follows a left-lane one lands BESIDE it, on the same row, and the order breaks.
+    const items = state.messages.map((m, i) => {
+        const lane = laneOf(m);
+        const row = `grid-row: ${i + 1}`;
+        // The folded side's lane is a narrow track: each of its messages is a dot, so the
+        // back-and-forth still reads while the other side is being read in full.
+        if (folded && lane === folded) {
+            const gist = (m.content || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+            return `<div class="tl-item tl-dot ${didCross(m) ? 'crossed' : ''}" data-lane="${lane}" data-id="${m.id}" style="${row}"
+                         title="${escapeHtml(`${nameOf(m)}${gist ? `: ${gist}` : ''}`)}"></div>`;
+        }
+        return `<div class="tl-item" data-lane="${lane}" data-id="${m.id}" style="${row}">${messageHtml(m, { showAddressing: true })}</div>`;
+    });
+
+    grid.innerHTML = (items.length ? items.join('') : `<div class="tl-item tl-empty" data-lane="both">
+            <div class="empty duet-empty">
+                <h2>Nothing said yet</h2>
+                <p>Ask either side something below. Both read the whole conversation; each answers
+                   in its own lane — and with ⇄ Step or ▶ Auto, they answer each other.</p>
+            </div></div>`) + '<svg class="tl-wires" aria-hidden="true"></svg>';
+
+    grid.querySelectorAll('.tl-dot').forEach(dot => { dot.onclick = () => setFocus(null); });
+    wireCopyButtons(grid);
+    wireHandoff(grid);
+    if (wasPinned) scroller.scrollTop = scroller.scrollHeight;
+    drawWires();
+}
+
+/**
+ * The lines. Drawn after layout, from each message's box to the box of the message it
+ * answers: across the gutter when the lanes differ, and out to the gutter and back when the
+ * same side answers twice in a row, so a line never runs through a message between them.
+ * Coloured by the answering message: amber if it crossed, red if it was withheld, green if
+ * it stayed here.
+ */
+function drawWires() {
+    const grid = duetEl.timeline?.querySelector('.tl-grid');
+    const svg = grid?.querySelector('.tl-wires');
+    if (!svg) return;
+
+    const box = grid.getBoundingClientRect();
+    const byId = new Map([...grid.querySelectorAll('.tl-item[data-id]')].map(n => [Number(n.dataset.id), n]));
+    // The gutter's centre, from the columns the grid actually resolved to (lane, gutter, lane).
+    const cols = getComputedStyle(grid).gridTemplateColumns.split(' ').map(parseFloat);
+    const gx = cols.length === 3 ? cols[0] + cols[1] / 2 : box.width / 2;
+
+    svg.setAttribute('width', grid.scrollWidth);
+    svg.setAttribute('height', grid.scrollHeight);
+    let paths = '';
+
+    for (const m of state.messages) {
+        const parentId = parentOf(m);
+        const to = byId.get(m.id), from = parentId && byId.get(parentId);
+        if (!to || !from) continue;
+
+        const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
+        const px = a.left - box.left + a.width / 2, py = a.bottom - box.top;
+        const cx = b.left - box.left + b.width / 2, cy = b.top - box.top;
+        const kind = m.status === 'blocked' ? 'withheld' : didCross(m) ? 'crossed' : 'local';
+
+        // Same lane: straight down, unless another message of that lane sits between the
+        // two — then out to the gutter and back, so the line never runs through it.
+        const sameLane = from.dataset.lane === to.dataset.lane && from.dataset.lane !== 'both';
+        const blocked = sameLane && [...byId.values()].some(n => n !== from && n !== to
+            && n.dataset.lane === from.dataset.lane
+            && n.getBoundingClientRect().top > a.bottom && n.getBoundingClientRect().bottom < b.top);
+        const d = sameLane && blocked
+            ? `M${px},${py} C${px},${py + 14} ${gx},${py + 6} ${gx},${py + 22} L${gx},${cy - 22} C${gx},${cy - 6} ${cx},${cy - 14} ${cx},${cy}`
+            : sameLane
+                ? `M${px},${py} L${cx},${cy}`
+                : `M${px},${py} C${px},${(py + cy) / 2} ${cx},${(py + cy) / 2} ${cx},${cy}`;
+        paths += `<path class="wire ${kind}" d="${d}"/><circle class="wire-end ${kind}" cx="${cx}" cy="${cy}" r="2.6"/>`;
+    }
+    svg.innerHTML = paths;
+}
+
+/** Built once per thread: the scroller, its lane grid, and a probe that marks the gutter. */
+function buildTimeline() {
+    const node = document.createElement('div');
+    node.className = 'duet-timeline';
+    node.innerHTML = '<div class="tl-grid"></div>';
+    duetEl.timeline = node;
+    new ResizeObserver(() => drawWires()).observe(node);
+    // An image that loads after the paint moves everything under it.
+    node.addEventListener('load', () => drawWires(), true);
+    return node;
 }
 
 /**
@@ -708,23 +806,6 @@ function wireHandoff(scope) {
     });
 }
 
-/**
- * Coalesce repaints to one per animation frame.
- *
- * A model can emit tokens faster than the browser lays out a markdown tree, and a
- * synchronous repaint per token makes the *other* pane janky too — which is exactly the
- * kind of cross-talk this design is supposed to rule out.
- */
-function schedulePaint(participantId) {
-    const pane = panes.get(participantId);
-    if (!pane || pane.frame) return;
-    pane.frame = requestAnimationFrame(() => {
-        pane.frame = null;
-        paintPane(participantId);
-        paintAirlock();                       // the chamber is always on screen
-    });
-}
-
 function paintPaneStatus(participantId) {
     const pane = panes.get(participantId);
     if (!pane) return;
@@ -1081,8 +1162,6 @@ function buildPane(who) {
             </div>
         </div>
 
-        <div class="duet-list"></div>
-
         <div class="duet-composer">
             <div class="attached duet-attached" hidden></div>
             <textarea class="duet-input" rows="1"
@@ -1100,7 +1179,6 @@ function buildPane(who) {
 
     const nodes = {
         node,
-        list: node.querySelector('.duet-list'),
         input: node.querySelector('.duet-input'),
         send: node.querySelector('.duet-send'),
         retry: node.querySelector('.duet-retry'),
@@ -1394,6 +1472,7 @@ function setFocus(slot) {
 function paintFocus() {
     if (state.focus) duetEl.root.dataset.focus = state.focus;
     else delete duetEl.root.dataset.focus;
+    if (duetEl.timeline) schedulePaint();
 
     for (const who of state.participants) {
         const pane = panes.get(who.id);
@@ -1411,7 +1490,8 @@ function paintView() {
     duetEl.root.dataset.slot = state.mobileSlot;
     paintFocus();
     paintTabSelection();
-    state.participants.forEach(p => paintPane(p.id));
+    paintTimeline();
+    state.participants.forEach(p => paintPaneStatus(p.id));
     paintAirlock();
 }
 
@@ -1442,7 +1522,9 @@ function teardown() {
         if (pane.frame) cancelAnimationFrame(pane.frame);
     }
     panes.clear();
+    if (timelineFrame) { cancelAnimationFrame(timelineFrame); timelineFrame = null; }
     duetEl.grid.innerHTML = '';
+    duetEl.timeline = null;
     resetDoors();
 }
 
@@ -1472,6 +1554,7 @@ async function loadDuet(threadId) {
 
     await loadModels();
     state.participants.forEach(who => duetEl.grid.appendChild(buildPane(who)));
+    duetEl.grid.appendChild(buildTimeline());
     state.participants.forEach(who => paintPaneTier(who.id));
     paintTabs();
 }
