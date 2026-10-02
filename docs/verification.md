@@ -280,6 +280,32 @@ the work to the user. That suits one assistant, not a debate.
 
 Not yet tried: a larger model on both sides; a repetition stop; retrying an empty reply once.
 
+## Verified 2026-10-02 — token spend, on the record
+
+**Found by the operator:** the Σ pill read 0 after dozens of chatter turns. It was a counter
+in the browser's localStorage, bumped only by replies streamed in that window. A different
+window, a different browser, or a turn driven any other way counted nothing; the gate's own
+reading was never counted at all; and a click reset it.
+
+**Now a ledger** (`token_usage` in `db.js`), written where each call is made:
+- a participant's reply (tool rounds included, and stopped or failed turns, since the
+  tokens were spent anyway);
+- every gate ruling, in `kernel.clear` and in Carry out;
+- the escalation review, and `/api/chat`.
+
+`GET /api/usage` (optionally `?threadId=`) totals it per model and purpose. Σ reads it, and
+a click opens a breakdown per model: replies and gate rulings kept apart, local green, across
+the boundary amber, with each model's share of the total.
+
+**Backfilled once** from the usage already stored on replies: 45 calls, 56,123 tokens since
+2026-09-28 (44 replies from nemotron-3-nano:4b, and 1 crossing to Nemotron Nano 30B: 410
+read, 244 written). Gate rulings before today were never recorded, and none are invented.
+
+`duet_chatter_test` 28/28 (5 new: replies on both sides with the reported counts, gate
+rulings counted, and per-thread reads). smoke 89, duet 50, kernel 34, kernel_http 12,
+boundary 45, duet_tools 33, sandbox 20, sandbox_http 43, and workspace migrations, all
+against the new server. The ledger is per visitor when hosted, like every other store.
+
 ---
 
 [← back to the README](../README.md)

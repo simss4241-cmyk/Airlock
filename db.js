@@ -103,6 +103,23 @@ function createCore(db, file) {
     CREATE INDEX IF NOT EXISTS idx_packets_created   ON packets(created_at);
     CREATE INDEX IF NOT EXISTS idx_prov_packet       ON provenance(packet_id);
     CREATE INDEX IF NOT EXISTS idx_prov_event        ON provenance(event);
+
+    -- Every model call's token cost, as it happened. A ledger, like provenance: rows are
+    -- appended, never edited, so "what has this desk spent, and on which model" is a query.
+    -- purpose: 'reply' (a participant answering), 'gate' (the local gate reading something
+    -- before it may cross), 'review' (a whole-thread escalation verdict).
+    CREATE TABLE IF NOT EXISTS token_usage (
+        id          INTEGER PRIMARY KEY,
+        created_at  TEXT    NOT NULL,
+        purpose     TEXT    NOT NULL,
+        model       TEXT,
+        tier        TEXT,
+        prompt      INTEGER NOT NULL DEFAULT 0,
+        reply       INTEGER NOT NULL DEFAULT 0,
+        thread_id   INTEGER REFERENCES threads(id) ON DELETE SET NULL,
+        packet_id   INTEGER REFERENCES packets(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_usage_model ON token_usage(model);
     `);
 
     /**
@@ -866,6 +883,63 @@ function createCore(db, file) {
      * append-only log rather than any mutable field, so a packet that was moved,
      * forked or renamed since still reports the crossing it actually made.
      */
+    // ─────────────────────────── token usage ───────────────────────────
+
+    /**
+     * One model call's cost, appended to the ledger. Never throws on missing numbers — a
+     * provider that reports nothing is recorded as a call that cost nothing it told us about.
+     */
+    function recordUsage({ purpose, model = null, tier = null, prompt = 0, reply = 0, threadId = null, packetId = null }) {
+        if (!purpose) throw new Error('A usage row needs a purpose.');
+        const p = Math.max(0, Number(prompt) || 0), r = Math.max(0, Number(reply) || 0);
+        db.prepare(`INSERT INTO token_usage (created_at, purpose, model, tier, prompt, reply, thread_id, packet_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(now(), purpose, model, tier, p, r,
+               threadId != null && getThread(threadId) ? Number(threadId) : null,
+               packetId != null && getPacket(packetId) ? Number(packetId) : null);
+    }
+
+    /** Totals, and one row per model and purpose — the whole desk, or one thread. */
+    function getUsage(threadId = null) {
+        const where = threadId ? 'WHERE thread_id = ?' : '';
+        const args = threadId ? [Number(threadId)] : [];
+        const rows = db.prepare(`
+            SELECT model, tier, purpose, COUNT(*) AS calls,
+                   SUM(prompt) AS prompt, SUM(reply) AS reply, MAX(created_at) AS last
+            FROM token_usage ${where}
+            GROUP BY model, tier, purpose
+            ORDER BY SUM(prompt) + SUM(reply) DESC
+        `).all(...args);
+        const total = rows.reduce((t, r) => ({
+            prompt: t.prompt + r.prompt, reply: t.reply + r.reply, calls: t.calls + r.calls
+        }), { prompt: 0, reply: 0, calls: 0 });
+        const since = db.prepare(`SELECT MIN(created_at) AS at FROM token_usage ${where}`).get(...args)?.at || null;
+        return { threadId: threadId ? Number(threadId) : null, total, since, models: rows };
+    }
+
+    // Replies written before the ledger existed already carry their usage in request_meta.
+    // Copied in once, so the history this desk has already spent is not lost — marked as
+    // backfilled by its timestamp being the packet's own, and only replies have it; the
+    // gate's cost before today was never recorded anywhere, and is not invented here.
+    if (!getMeta('token_usage_backfilled')) {
+        const hasMeta = db.prepare('PRAGMA table_info(packets)').all().some(c => c.name === 'request_meta');
+        let copied = 0;
+        if (hasMeta) {
+            const rows = db.prepare(`SELECT id, thread_id, model, tier, request_meta, created_at FROM packets
+                                     WHERE role = 'assistant' AND request_meta IS NOT NULL`).all();
+            const insert = db.prepare(`INSERT INTO token_usage (created_at, purpose, model, tier, prompt, reply, thread_id, packet_id)
+                                       VALUES (?, 'reply', ?, ?, ?, ?, ?, ?)`);
+            for (const r of rows) {
+                let u = null;
+                try { u = JSON.parse(r.request_meta)?.usage; } catch { /* unreadable meta: skip */ }
+                if (!u || (!u.prompt && !u.reply)) continue;
+                insert.run(r.created_at, r.model, r.tier, u.prompt | 0, u.reply | 0, r.thread_id, r.id);
+                copied++;
+            }
+        }
+        setMeta('token_usage_backfilled', `${copied} reply row(s) from request_meta`);
+    }
+
     function getExposure(threadId = null) {
         const rows = db.prepare(`
             SELECT pr.packet_id, pr.actor, pr.note, pr.created_at,
@@ -924,7 +998,8 @@ function createCore(db, file) {
         setThreadWorkspace, migrateWorkspaceRoot, getMeta, setMeta,
         createPacket, getPacket, getThreadPackets, movePacket, forkPacket, deletePacket,
         reviewPacket, getProvenance, getReviews, search, getTravelled, stats, subtreeIds,
-        buildBrief, recordHandoff, recordCarry, getExposure, recordCrossings, recordArtifactCrossing
+        buildBrief, recordHandoff, recordCarry, getExposure, recordCrossings, recordArtifactCrossing,
+        recordUsage, getUsage
     };
 }
 

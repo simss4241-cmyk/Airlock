@@ -249,6 +249,23 @@ async function main() {
         ok((received[n3] || '').includes('what about turquoise'),
             "and the user's interjection is in the next relay's context");
 
+        // ── the token ledger: every call, where it was made ──
+        console.log('\nthe token ledger');
+        const spent = (await api('GET', '/api/usage')).body;
+        const row = (model, purpose) => spent.models.find(r => r.model === model && r.purpose === purpose);
+        ok(row(LOCAL_MODEL, 'reply')?.calls >= 3 && row(LOCAL_MODEL, 'reply').tier === 'local',
+            "Left's replies are on the ledger, as local", JSON.stringify(row(LOCAL_MODEL, 'reply')));
+        ok(row(REMOTE_MODEL, 'reply')?.calls >= 2 && row(REMOTE_MODEL, 'reply').tier === 'remote',
+            "Right's replies are on it, as across the boundary", JSON.stringify(row(REMOTE_MODEL, 'reply')));
+        ok(row(LOCAL_MODEL, 'reply').prompt === 20 * row(LOCAL_MODEL, 'reply').calls,
+            'with the token counts the model reported, call by call');
+        ok(row(LOCAL_MODEL, 'gate')?.calls >= 2,
+            'and the gate reading each relay before it crossed is counted too — it never was before',
+            JSON.stringify(row(LOCAL_MODEL, 'gate')));
+        const here = (await api('GET', `/api/usage?threadId=${thread.id}`)).body;
+        ok(here.threadId === thread.id && here.total.calls > 0 && here.total.calls <= spent.total.calls,
+            'and it can be read for one thread');
+
         // ── 4. refusals: a relay pointed where it should not be ──
         console.log('\n4. a relay pointed anywhere else is refused');
         const own = await send(thread.id, { participantId: left.id, relayOf: leftHeard.id });

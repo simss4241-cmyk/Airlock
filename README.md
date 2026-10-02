@@ -49,7 +49,8 @@ what leaves it. This table is the honest version — clone it and check.
 | Crossing by a remote participant **and** by hand, both gated and recorded | working |
 | Access token + remote spend cap for hosting | working, 26 assertions |
 | Duet — two addressable participants over one conversation | working, 95 assertions |
-| Chatter — the participants answering each other, step or auto, every turn gated | working, 23 assertions end to end |
+| Chatter — the participants answering each other, step or auto, every turn gated | working, 28 assertions end to end |
+| Token spend on the record — every reply, gate ruling and review, per model, in a server ledger | working |
 | Per-thread consent retired; an old database is cleaned on open | working, 7 assertions |
 | Every turn gated, bound to the exact words sent — only what is new is re-read | working |
 | One door: nothing reaches the network without a clearance the kernel issued | working, 34 assertions |
@@ -63,7 +64,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Per-visitor settings, remote budgets, gate memory and generation slots; a daily cap that survives restarts | working |
 | Hosted deployment on Nebius AI Cloud, with the gate beside the app | not built |
 
-**647 assertions across seventeen suites.** Run them:
+**652 assertions across seventeen suites.** Run them:
 
 ```
 npm start                          # in one terminal

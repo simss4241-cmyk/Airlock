@@ -1009,7 +1009,7 @@ function handleEvent(participantId, event, streamed) {
                 : '';
 
             upsert({ ...event.message, streaming: false, stats, thinking: event.thinking || null });
-            if (usage) countTokens(usage.prompt, usage.reply);
+            refreshUsage();          // the ledger has the new row; the pill reads it
             pane.status = 'idle';
             schedulePaint(participantId);
             return event.message.id;

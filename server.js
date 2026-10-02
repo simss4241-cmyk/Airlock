@@ -471,6 +471,13 @@ app.post('/api/chat', async (req, res) => {
         if (usageSent) return;
         usageSent = true;
         send({ airlock_usage: usage });
+        // The one place every /api/chat turn's total passes through: on the ledger too.
+        if (usage.prompt || usage.reply) {
+            try {
+                store.recordUsage({ purpose: 'reply', model: chosen, tier: providers.tierOf(chosen),
+                    prompt: usage.prompt, reply: usage.reply, threadId: threadId || null });
+            } catch (err) { console.error('chat usage not recorded:', err.message); }
+        }
     };
 
     // ── the boundary ──
@@ -494,7 +501,7 @@ app.post('/api/chat', async (req, res) => {
     let clearance = null;
 
     if (crosses) {
-        const first = await kernel.clear({ model: chosen, messages: convo, config });
+        const first = await kernel.clear({ model: chosen, messages: convo, config, threadId: threadId || null });
         if (!first.ok) {
             // Nothing has been sent. 200, because the request succeeded and the
             // answer was no — the client renders the reason rather than an error.
@@ -522,7 +529,7 @@ app.post('/api/chat', async (req, res) => {
                 // rules on just what is new; a refusal stops the turn here, before any of
                 // it is sent, and says which results were withheld.
                 if (round > 0) {
-                    const next = await kernel.clear({ model: chosen, messages: convo, config });
+                    const next = await kernel.clear({ model: chosen, messages: convo, config, threadId: threadId || null });
                     if (!next.ok) {
                         send({
                             airlock_blocked: {
@@ -1118,6 +1125,10 @@ app.get('/api/threads/:id/brief.md', (req, res) => {
 
 /** What has crossed: one thread, or the whole desk. */
 app.get('/api/exposure', ok(() => store.getExposure()));
+
+// What this desk has spent, in tokens, per model and purpose — from the ledger, which every
+// model call writes to (reply, gate, review). ?threadId= narrows it to one thread.
+app.get('/api/usage', ok(req => store.getUsage(req.query.threadId ? Number(req.query.threadId) : null)));
 app.get('/api/threads/:id/exposure', ok(req => store.getExposure(id(req))));
 
 /** The gate's ruling on a thread, without sending anything anywhere. */
@@ -1171,7 +1182,7 @@ app.post('/api/threads/:id/escalate', async (req, res) => {
             // once claimed a gate model that never ran — on a keyed machine a REMOTE id,
             // implying a remote model had approved its own crossing.
             ? kernel.override({ model, messages, actor: 'the operator' })
-            : await kernel.clear({ model, messages, config });
+            : await kernel.clear({ model, messages, config, threadId });
         const gate = cleared.ruling;
 
         if (!gate.release) {
@@ -1185,6 +1196,10 @@ app.post('/api/threads/:id/escalate', async (req, res) => {
         if (over) return res.status(429).json({ error: over, gate });
 
         const verdict = await providers.complete({ model, messages, config, clearance: cleared.token });
+        try {
+            store.recordUsage({ purpose: 'review', model, tier: 'remote',
+                prompt: verdict.usage?.prompt, reply: verdict.usage?.reply, threadId });
+        } catch (err) { console.error('review usage not recorded:', err.message); }
 
         if (!verdict.content) {
             throw new Error(`${model} returned no verdict text.`);
@@ -1267,6 +1282,12 @@ app.post('/api/threads/:id/carry', async (req, res) => {
             ? { release: true, reason: 'Carried by hand over the gate: the operator decided.',
                 concerns: [], model: null, forced: true }
             : await runGate(brief.markdown, { config });
+        if (gate.usage && gate.model) {
+            try {
+                store.recordUsage({ purpose: 'gate', model: gate.model, tier: 'local',
+                    prompt: gate.usage.prompt, reply: gate.usage.reply, threadId });
+            } catch (err) { console.error('carry gate usage not recorded:', err.message); }
+        }
 
         if (!gate.release) {
             return res.json({ released: false, gate, packets: brief.packetIds.length });

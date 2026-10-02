@@ -212,6 +212,9 @@ async function runGate(markdown, { model, config } = {}) {
             ...(caps.includes('thinking') ? { think: false } : {})
         });
 
+        // What reading this cost, carried on the ruling so the caller can put it on the
+        // record: the gate's own spend was never counted anywhere before.
+        const usage = result.usage || null;
         const decision = readDecision(result.content);
         if (!decision) {
             return {
@@ -219,11 +222,12 @@ async function runGate(markdown, { model, config } = {}) {
                 reason: 'The gate did not return a decision that could be read, so nothing was sent.',
                 concerns: [],
                 model,
+                usage,
                 unparsed: result.content.slice(0, 400)
             };
         }
 
-        return { ...decision, model };
+        return { ...decision, model, usage };
     } catch (err) {
         return {
             release: false,

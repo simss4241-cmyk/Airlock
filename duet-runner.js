@@ -129,11 +129,11 @@ function queueFor(tier, limit) {
  *
  * Returns { ok, ruling, token }.
  */
-async function clearCrossing({ model, wire, config }) {
+async function clearCrossing({ model, wire, config, threadId = null }) {
     // The gate reads exactly what would be sent — system prompt, both participants' words,
     // the lot — minus what it has already ruled on. No model is named: boundary.js
     // resolves a LOCAL one itself, and refuses outright if handed a remote id.
-    return kernel.clear({ model, messages: wire, config });
+    return kernel.clear({ model, messages: wire, config, threadId });
 }
 
 // ─────────────────────────── generation ───────────────────────────
@@ -327,8 +327,19 @@ async function generate({
 
     emit({ type: 'start', message: reply, context: meta, tier });
 
-    const settle = (status, content, extra = {}) =>
-        duet.finishMessage(reply.id, { content, status, requestMeta: { ...requestMeta, ...extra } });
+    // Every settled generation that actually ran goes on the token ledger — complete,
+    // stopped, failed or withheld mid-turn alike: the tokens were spent either way.
+    const settle = (status, content, extra = {}) => {
+        const settled = duet.finishMessage(reply.id, { content, status, requestMeta: { ...requestMeta, ...extra } });
+        const u = extra.usage;
+        if (u && (u.prompt || u.reply)) {
+            try {
+                store.recordUsage({ purpose: 'reply', model, tier, prompt: u.prompt, reply: u.reply,
+                    threadId, packetId: reply.id });
+            } catch (err) { console.error('reply usage not recorded:', err.message); }
+        }
+        return settled;
+    };
 
     // ── 4. the boundary ──
     let gateRuling = null;
@@ -343,7 +354,7 @@ async function generate({
         emit({ type: 'gating', messageId: reply.id });
 
         try {
-            const cleared = await clearCrossing({ model, wire, config });
+            const cleared = await clearCrossing({ model, wire, config, threadId });
             gateRuling = cleared.ruling;
             clearance = cleared.token;
         } catch (err) {
@@ -430,7 +441,7 @@ async function generate({
                     // exactly as /api/chat rules on them, and a refusal ends the turn here.
                     if (round > 0) {
                         emit({ type: 'gating', messageId: reply.id });
-                        const next = await kernel.clear({ model, messages: convo, config });
+                        const next = await kernel.clear({ model, messages: convo, config, threadId });
                         if (!next.ok) {
                             gateRuling = next.ruling;
                             withheld = pendingArtifacts.map(a => a.label);
@@ -568,6 +579,7 @@ async function generate({
         const status = aborted ? STATUS.CANCELLED : STATUS.FAILED;
 
         reply = settle(status, content, {
+            usage: usage.rounds ? { prompt: usage.prompt, reply: usage.reply, evalDuration: usage.evalDuration } : null,
             error: aborted ? null : err.message,
             crossed: crossingRecorded || undefined,
             ...(toolTrace.length ? { tools: toolTrace } : {})

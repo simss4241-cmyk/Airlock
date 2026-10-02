@@ -33,8 +33,11 @@
 
         <div class="pill-row">
             <span class="pill" id="status"><span class="dot" id="dot"></span><span id="statusText">checking…</span></span>
-            <button class="pill pill-btn" id="tokenPill">Σ 0</button>
+            <button class="pill pill-btn" id="tokenPill" aria-expanded="false" aria-controls="usagePanel">Σ 0</button>
         </div>
+        <!-- Token spend, per model, from the server's ledger — every reply, every gate
+             ruling, every review, recorded where the call was made. -->
+        <div class="usage-panel" id="usagePanel" hidden></div>
     </div>
 
     <div class="rail-head">

@@ -116,6 +116,21 @@ function describe(m) {
     return parts.join('\n');
 }
 
+/**
+ * The gate's reading, on the token ledger. Looked up at call time, like runGate, so the
+ * offline kernel tests (which stub the gate and point AIRLOCK_DB at a scratch file) never
+ * touch a real store. A ledger hiccup never blocks a ruling.
+ */
+function recordGateUsage(ruling, threadId = null) {
+    if (!ruling?.usage || !ruling.model) return;
+    try {
+        require('./db').recordUsage({
+            purpose: 'gate', model: ruling.model, tier: 'local',
+            prompt: ruling.usage.prompt, reply: ruling.usage.reply, threadId
+        });
+    } catch (err) { console.error('gate usage not recorded:', err.message); }
+}
+
 function issue(model, hashes, ruling) {
     // Bound to the scope it was issued in, as well as to the model and the words: a
     // clearance ruled in one visitor's sandbox opens nothing in another's.
@@ -138,7 +153,7 @@ const COVERED = Object.freeze({
  * Returns { ok: true, token, ruling, fresh } or { ok: false, ruling, fresh }.
  * A local destination needs no clearance and gets { ok: true, token: null, local: true }.
  */
-async function clear({ model, messages = [], config = {} }) {
+async function clear({ model, messages = [], config = {}, threadId = null }) {
     if (providers.tierOf(model) === 'local') return { ok: true, token: null, local: true, fresh: 0 };
 
     const units = messages.map(m => ({ m, h: unitHash(m) }));
@@ -163,6 +178,7 @@ async function clear({ model, messages = [], config = {} }) {
     if (fresh.length) {
         // Looked up at call time so a test can stand a stub in for the real gate.
         ruling = await require('./boundary').runGate(fresh.map(u => describe(u.m)).join('\n\n'), { config });
+        recordGateUsage(ruling, threadId);
         if (!ruling.release) return { ok: false, ruling, fresh: fresh.length };
         for (const u of fresh) remember(u.h, 'gate', ruling.model || null);
     }

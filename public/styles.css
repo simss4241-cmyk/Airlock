@@ -214,6 +214,46 @@ select, input, textarea, button {
 }
 
 .pill-btn:hover { border-color: var(--ok); color: var(--text); }
+.pill-btn.on { border-color: var(--accent-dim); color: var(--text); }
+
+/* ── Token spend, per model ── */
+.usage-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: linear-gradient(180deg, #151a20, var(--panel));
+    box-shadow: var(--hi), var(--lift);
+    max-height: 46vh;
+    overflow-y: auto;
+    animation: fade-up .22s var(--ease);
+}
+.usage-head { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.usage-head b { color: var(--text); font-size: 14px; font-variant-numeric: tabular-nums; }
+.usage-split { font-size: 10.5px; }
+
+.usage-row {
+    display: grid;
+    grid-template-columns: 8px 1fr auto;
+    column-gap: 7px;
+    row-gap: 2px;
+    align-items: center;
+    padding: 5px 6px;
+    border-radius: 7px;
+    cursor: default;
+}
+.usage-row:hover { background: var(--panel-2); }
+.usage-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.usage-row.crossed .usage-dot { background: var(--cross); }
+.usage-model { font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-total { font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--text); }
+.usage-what { grid-column: 2 / 4; font-size: 10px; color: var(--muted); }
+.usage-bar { grid-column: 2 / 4; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.usage-bar span { display: block; height: 100%; background: var(--accent-dim); border-radius: 2px; }
+.usage-row.crossed .usage-bar span { background: var(--cross-dim); }
+.usage-panel .note { font-size: 10.5px; line-height: 1.45; }
 
 .dot {
     width: 7px;

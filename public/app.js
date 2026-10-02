@@ -20,7 +20,7 @@ const el = {
     carryAnyway: $('carryAnyway'), carryOut: $('carryOut'),
     thinkToggle: $('thinkToggle'),
     wsRoot: $('wsRoot'), wsBrowse: $('wsBrowse'), wsClear: $('wsClear'), wsHint: $('wsHint'),
-    wsThread: $('wsThread'), tokenPill: $('tokenPill')
+    wsThread: $('wsThread'), tokenPill: $('tokenPill'), usagePanel: $('usagePanel')
 };
 
 // ─────────────────────────── access ───────────────────────────
@@ -475,13 +475,18 @@ el.thinkToggle.onchange = async () => {
         : 'Reasoning on — slower, but models that can think first will', 5000);
 };
 
-// ─────────────────────────── token counter ───────────────────────────
-// Running total of everything this install has spent — prompt and generated, across every
-// thread and scratch chat, surviving reloads. Ollama reports real counts per call, so the
-// tool rounds behind an answer are included here even though the per-reply stats line
-// under each message only ever showed the final round.
+// ─────────────────────────── token spend ───────────────────────────
+//
+// What this desk has spent, from the server's ledger (token_usage in db.js). Every model
+// call writes a row where it is made — a participant's reply (tool rounds included), the
+// local gate reading something before it may cross, a whole-thread review — so the total
+// is a record, not a tally.
+//
+// It used to be a counter in this browser's localStorage, bumped by replies streamed in
+// this window: a different window, a different browser, or a turn driven any other way
+// counted nothing, the gate's own reading was never counted at all, and a click reset it.
 
-let tokens = { prompt: 0, reply: 0, turns: 0 };
+let usage = { total: { prompt: 0, reply: 0, calls: 0 }, models: [], since: null };
 
 // 900 · 4.2k · 128k · 1.4M — narrow enough to sit beside the Ollama version.
 const compactTokens = n =>
@@ -490,47 +495,64 @@ const compactTokens = n =>
             : n < 1e6 ? Math.round(n / 1000) + 'k'
                 : (n / 1e6).toFixed(1) + 'M';
 
-function paintTokens() {
-    const total = tokens.prompt + tokens.reply;
+const PURPOSE = { reply: ['reply', 'replies'], gate: ['gate ruling', 'gate rulings'], review: ['review', 'reviews'] };
+const purposeOf = (purpose, n) => (PURPOSE[purpose] || [purpose, purpose])[n === 1 ? 0 : 1];
+
+function paintUsage() {
+    const total = usage.total.prompt + usage.total.reply;
     el.tokenPill.textContent = `Σ ${compactTokens(total)}`;
     el.tokenPill.title = total
-        ? `${total.toLocaleString()} tokens over ${tokens.turns} `
-            + `${tokens.turns === 1 ? 'reply' : 'replies'}\n`
-            + `${tokens.prompt.toLocaleString()} prompt · `
-            + `${tokens.reply.toLocaleString()} generated\n\nClick to reset.`
-        : 'Total tokens spent. Nothing counted yet.';
+        ? `${total.toLocaleString()} tokens over ${usage.total.calls.toLocaleString()} model calls — click for each model`
+        : 'Tokens spent by this desk. Nothing recorded yet.';
+    if (!el.usagePanel.hidden) paintUsagePanel();
 }
 
-function loadTokens() {
+function paintUsagePanel() {
+    const rows = usage.models;
+    const since = usage.since ? new Date(usage.since).toLocaleDateString() : null;
+    const total = usage.total.prompt + usage.total.reply;
+
+    el.usagePanel.innerHTML = `
+        <div class="usage-head">
+            <b>${total.toLocaleString()}</b> tokens${since ? ` since ${escapeHtml(since)}` : ''}
+            <span class="usage-split">${compactTokens(usage.total.prompt)} read · ${compactTokens(usage.total.reply)} written</span>
+        </div>
+        ${rows.length ? rows.map(r => {
+            const side = crossedTier(r.tier) ? 'crossed' : 'local';
+            const t = r.prompt + r.reply;
+            const share = total ? Math.max(2, Math.round(100 * t / total)) : 0;
+            return `<div class="usage-row ${side}" title="${escapeHtml(`${r.model || 'unknown model'} — ${r.calls} ${purposeOf(r.purpose, r.calls)}
+${r.prompt.toLocaleString()} read · ${r.reply.toLocaleString()} written`)}">
+                <span class="usage-dot"></span>
+                <span class="usage-model">${escapeHtml(r.model || 'unknown model')}</span>
+                <span class="usage-total">${compactTokens(t)}</span>
+                <span class="usage-what">${r.calls} ${escapeHtml(purposeOf(r.purpose, r.calls))} ·
+                    ${side === 'crossed' ? '↗ across the boundary' : 'on this machine'}</span>
+                <span class="usage-bar"><span style="width:${share}%"></span></span>
+            </div>`;
+        }).join('') : '<p class="note">Nothing recorded yet.</p>'}
+        <p class="note">Recorded on the server, one row per model call. <b>Gate rulings</b> are
+            the local gate reading content before it may cross — a cost that was never counted
+            before.</p>`;
+}
+
+async function refreshUsage() {
     try {
-        const saved = JSON.parse(localStorage.getItem('airlock.tokens') || 'null');
-        if (saved) tokens = {
-            prompt: saved.prompt | 0, reply: saved.reply | 0, turns: saved.turns | 0
-        };
-    } catch { /* unreadable entry — start the count over rather than dying on load */ }
-    paintTokens();
-}
-
-function countTokens(prompt, reply) {
-    if (!prompt && !reply) return;
-    tokens.prompt += prompt || 0;
-    tokens.reply += reply || 0;
-    tokens.turns++;
-    localStorage.setItem('airlock.tokens', JSON.stringify(tokens));
-    paintTokens();
+        const u = await (await fetch('/api/usage')).json();
+        if (u && u.total) { usage = u; paintUsage(); }
+    } catch { /* keep the last figures; the next poll will try again */ }
 }
 
 el.tokenPill.onclick = () => {
-    const total = tokens.prompt + tokens.reply;
-    if (!total) return;
-    if (!confirm(`Reset the token counter?\n\n${total.toLocaleString()} tokens `
-        + `over ${tokens.turns} ${tokens.turns === 1 ? 'reply' : 'replies'}.`)) return;
-
-    tokens = { prompt: 0, reply: 0, turns: 0 };
-    localStorage.removeItem('airlock.tokens');
-    paintTokens();
-    flash('Token counter reset', 4000);
+    const open = el.usagePanel.hidden;
+    el.usagePanel.hidden = !open;
+    el.tokenPill.setAttribute('aria-expanded', String(open));
+    el.tokenPill.classList.toggle('on', open);
+    if (open) { paintUsagePanel(); refreshUsage(); }
 };
+
+// The old per-browser counter is retired; its saved figure would only mislead.
+try { localStorage.removeItem('airlock.tokens'); } catch { /* fine */ }
 
 // ─────────────────────────── workspace ───────────────────────────
 
@@ -1754,7 +1776,7 @@ el.model.onchange = async () => {
 
 (async () => {
     renderLanding();
-    loadTokens();
+    refreshUsage();
     await loadConfig();
     await loadWorkspace();
     refreshHealth();
@@ -1769,4 +1791,5 @@ el.model.onchange = async () => {
     }
 
     setInterval(refreshHealth, 15000);
+    setInterval(refreshUsage, 15000);
 })();
