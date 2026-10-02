@@ -326,5 +326,25 @@ ok(/Do not begin it with a \[speaker → addressee\] label/.test(anySystem),
     'and replies do not copy the transcript label');
 ok(!/Your role in this conversation/.test(anySystem), 'a side with no role is not told it has one');
 
+// ── 12. a side saying the same thing again ──
+//
+// The lines are from the same 2026-10-01 runs: a 4B with reasoning off restating itself
+// word for word. Agreeing with the other side, or staying on topic, is not a repeat.
+
+const echo = require('../public/echo.js');
+const loop = 'The user is right that the claim needs a source. Without a cited study we cannot treat the figure as established, and we should ask where it came from before relying on it.';
+ok(echo.repeats(loop, ['Something else entirely about the weather today, nothing more to add.', loop]) === 1,
+    'a reply said again word for word is a repeat, and the one it repeats is named');
+ok(echo.repeats(loop.replace('established', 'settled'), [loop]) === 0, 'one word changed is still a repeat');
+ok(echo.repeats('Yes, the user is right, and I would add that the sample was small, which matters here.',
+    ['Yes, that is correct. The figure needs checking against the original paper before we go further.']) === -1,
+    'agreeing in different words is not a repeat');
+ok(echo.repeats('On the cost side, running it locally means no credit is spent on the turns at all.', [loop]) === -1,
+    'same conversation, a new point: not a repeat');
+ok(echo.repeats('I agree.', ['I agree.']) === 0 && echo.repeats('I agree.', ['Agreed, go on.']) === -1,
+    'a short reply counts only when exact');
+ok(echo.repeats('', [loop]) === -1 && echo.repeats(loop, []) === -1, 'nothing to compare is never a repeat');
+ok(Object.isFrozen(echo), 'the rule is frozen: the page cannot be talked out of it');
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

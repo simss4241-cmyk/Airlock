@@ -48,11 +48,12 @@ what leaves it. This table is the honest version — clone it and check.
 | Tier recorded per packet; "what crossed?" as a query | working |
 | Crossing by a remote participant **and** by hand, both gated and recorded | working |
 | Access token + remote spend cap for hosting | working, 26 assertions |
-| Duet — two addressable participants over one conversation | working, 95 assertions |
+| Duet — two addressable participants over one conversation | working, 102 assertions |
 | One timeline in two lanes: each message once, with a line to the one it answers | working |
 | Roles — one word per side ("Skeptic"), held for the whole conversation | working |
 | Images in a duet, for models that can see; never sent across the boundary | working |
 | Chatter — the participants answering each other, step or auto, every turn gated | working, 28 assertions end to end |
+| Chatter stops when a side repeats itself, and asks once more after an empty reply | working |
 | Token spend on the record — every reply, gate ruling and review, per model, in a server ledger | working |
 | Per-thread consent retired; an old database is cleaned on open | working, 7 assertions |
 | Every turn gated, bound to the exact words sent — only what is new is re-read | working |
@@ -67,7 +68,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Per-visitor settings, remote budgets, gate memory and generation slots; a daily cap that survives restarts | working |
 | Hosted deployment on Nebius AI Cloud, with the gate beside the app | not built |
 
-**652 assertions across seventeen suites.** Run them:
+**659 assertions across seventeen suites.** Run them:
 
 ```
 npm start                          # in one terminal
@@ -650,7 +651,8 @@ Launcher paths use `%~dp0` / self-resolving paths, so the folder can be moved.
   has been used for two decisions and is spent.
 - **Small models in chatter.** A 4B with reasoning on sometimes reasons and then says
   nothing (the run stops, and says why); with reasoning off it can repeat itself word
-  for word. A repetition stop and one retry on an empty reply are not built yet.
+  for word. A run now asks once more after an empty reply, and stops when a side repeats
+  itself — so these end a run early instead of spending it.
 - **Muse Glimmer 30B does not load** on Ollama 0.34.1 on this desk (CUDA "shared object
   initialization failed"), with or without Airlock — so image input to a real model is
   unverified here since August.

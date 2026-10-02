@@ -138,6 +138,27 @@ const messageById = id => state.messages.find(m => m.id === id);
  * reply streams, and re-running every pattern over every message each frame is waste —
  * but a message's content only changes while it streams, so id + length is a sound key.
  */
+/**
+ * The earlier reply of the SAME side that this one repeats, or null — by the rule in
+ * public/echo.js. Only a side repeating itself counts: echoing the other side is agreement.
+ * Looks back over that side's last six finished replies. Cached like the credential scan:
+ * earlier replies do not change once finished, and this one only while it streams.
+ */
+const echoCache = new Map();
+function repeatOf(message) {
+    if (message.role === 'user' || !message.authorId || message.streaming || !message.content || !window.AirlockEcho) return null;
+    const key = `${message.id}:${message.content.length}`;
+    if (echoCache.has(key)) return echoCache.get(key);
+    const at = state.messages.findIndex(m => m.id === message.id);
+    const earlier = state.messages.slice(0, at === -1 ? state.messages.length : at)
+        .filter(m => m.authorId === message.authorId && m.status === 'complete' && (m.content || '').trim())
+        .slice(-6);
+    const i = window.AirlockEcho.repeats(message.content, earlier.map(m => m.content));
+    const hit = i === -1 ? null : earlier[i];
+    echoCache.set(key, hit);
+    return hit;
+}
+
 const credentialCache = new Map();
 function credentialsCached(message) {
     const key = `${message.id}:${(message.content || '').length}`;
@@ -168,6 +189,12 @@ function messageHtml(message, { showAddressing = false } = {}) {
     // Only one that DID — see didCross().
     const crossed = didCross(message)
         ? ' <span class="badge travel">↗ crossed</span>' : '';
+
+    // Nearly the same as an earlier reply from this side: where a loop started is visible.
+    const echoed = mine ? null : repeatOf(message);
+    const echoMark = echoed
+        ? ` <span class="badge repeat" title="Nearly word for word an earlier reply from this side (#${echoed.id})">↻ repeat of #${echoed.id}</span>`
+        : '';
 
     // Holding a known credential: said on the message, before anyone reaches for the drag.
     const secret = message.streaming ? [] : credentialsCached(message);
@@ -248,7 +275,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
 
     return `<div class="${classes.join(' ')}" data-message="${message.id}">
                 <span class="who"${portable ? ' draggable="true"' : ''}>${who}${addressed}${
-                    message.id ? `<span class="msg-id"> · #${message.id}</span>` : ''}${crossed}${kept}${note}${handoff}</span>
+                    message.id ? `<span class="msg-id"> · #${message.id}</span>` : ''}${crossed}${echoMark}${kept}${note}${handoff}</span>
                 <div class="bubble${message.streaming && message.content ? ' caret' : ''}">${
                     think}${body}</div>
                 ${message.stats ? `<span class="stats">${escapeHtml(message.stats)}</span>` : ''}
@@ -1695,9 +1722,26 @@ async function chatterAuto() {
 
             chatter.round++;
             paintChatter();
-            const reply = await submit(turn.speaker.id, { relayOf: turn.trigger.id });
+            let reply = await submit(turn.speaker.id, { relayOf: turn.trigger.id });
+
+            // A model that reasons and then says nothing often does it once, not twice: ask
+            // the same turn again before ending the run. The empty reply stays in the log —
+            // it happened — and the retry answers the same message it did.
+            if (reply?.status === 'complete' && !String(reply.content || '').trim() && !chatter.stopping) {
+                flash(`${nameOf(reply)} came back empty — asking once more.`, 4000);
+                await idle();
+                reply = await submit(turn.speaker.id, { relayOf: turn.trigger.id });
+            }
+
             if (!reply || reply.status !== 'complete') { why = endedBecause(reply, turn.speaker.id); break; }
-            if (!String(reply.content || '').trim()) { why = `${nameOf(reply)} finished without saying anything`; break; }
+            if (!String(reply.content || '').trim()) {
+                why = `${nameOf(reply)} finished without saying anything, twice`; break;
+            }
+            // A side saying, near enough word for word, what it already said: a loop, not a
+            // conversation. Every further turn would spend tokens — and across the boundary,
+            // credit — on the same two sentences.
+            const echoed = repeatOf(reply);
+            if (echoed) { why = `${nameOf(reply)} is repeating itself — this turn nearly matches #${echoed.id}`; break; }
         }
         if (!why) why = chatter.stopping ? 'stopped' : `${chatter.round} turns — the cap`;
     } finally {

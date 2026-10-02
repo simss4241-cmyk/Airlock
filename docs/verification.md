@@ -278,7 +278,7 @@ other before settling into "the only way to settle it is a benchmark". The defau
 prompt's "say what would settle it… name commands and versions" pushes both sides to hand
 the work to the user. That suits one assistant, not a debate.
 
-Not yet tried: a larger model on both sides; a repetition stop; retrying an empty reply once.
+Not yet tried: a larger model on both sides. (A repetition stop and one retry on an empty reply were built 2026-10-02 — below.)
 
 ## Verified 2026-10-02 — token spend, on the record
 
@@ -339,3 +339,20 @@ Page-only: no server change and no change to what is recorded. The suites are un
 ---
 
 [← back to the README](../README.md)
+
+## Verified 2026-10-02 — a repetition stop, and once more after an empty reply
+
+Built for what the role runs showed: a 4B with reasoning on that finishes empty, and with
+reasoning off restates itself word for word until the cap.
+
+- `public/echo.js` is the one rule: word sets overlapping 85% or more (Jaccard), or an exact
+  match under six distinct words, against the same side's last six finished replies.
+  Measured on the 2026-10-01 lines: word for word 1.00, one word changed 0.90, agreeing in
+  different words 0.26, a new point on the same topic 0.07, the skeptic's reworded loop
+  0.55 (not stopped — reworded is still saying something).
+- `duet_context_test` 52/52 (7 new): repeats named, one-word changes caught, agreement and
+  new points not, short replies only when exact, the rule frozen.
+- In the page, on port 8110 against a scripted stand-in model (no network): Right came back
+  empty, was asked once more and answered; Left then restated its earlier reply, and the
+  run ended — "stand-in:4b is repeating itself — this turn nearly matches #5" — with
+  **↻ repeat of #5** on the message. The empty reply stays in the log.

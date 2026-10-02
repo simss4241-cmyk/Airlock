@@ -161,7 +161,7 @@ and the pane shows them as cards.
 The participants can answer each other. **⇄ Step**, in the chamber header, hands the floor
 to the side that did not write the newest reply, for one turn. **▶ Auto** runs Steps until
 the cap (×6 by default, at most 20), until you press **■ Stop**, until the gate withholds a
-turn, or until a turn fails or comes back empty. While it runs, the seam over the chamber
+turn, until a turn fails, or until a side repeats itself. While it runs, the seam over the chamber
 sweeps green to amber and back, and the header counts the turns.
 
 A chatter turn is a **relay**: `POST /api/duet/:id/send` with `relayOf`, the id of the
@@ -179,6 +179,18 @@ any other: it is gated, the doors hold, and it is recorded.
 goes straight in and it answers you. If it is busy, your message waits in the composer and
 goes in as soon as that turn ends; Enter does not act as Stop mid-run. The run then carries
 on from the answer, with your message in everyone's context.
+
+**Empty, then once more.** A reply that finishes with nothing in it is asked for again,
+once, with the same relay; the empty one stays in the log. A second empty reply ends the
+run: "Left finished without saying anything, twice".
+
+**A side repeating itself ends the run.** Each reply is compared with that side's own last
+six finished replies (`public/echo.js`, shared with the tests). Word sets overlapping 85%
+or more — or, under six distinct words, an exact match — is a repeat: the run stops with
+"Left is repeating itself — this turn nearly matches #N", and the reply carries a
+**↻ repeat of #N** mark, in or out of a run. Echoing the *other* side is agreement, not a
+repeat, and is never counted. Measured on the loop it was built for: word for word 1.00, one
+word changed 0.90, two replies agreeing in different words 0.26.
 
 **The run lives in the page.** Close the tab, or switch threads, and it stops, so a
 conversation with a cloud model cannot keep spending with nobody watching.
@@ -274,8 +286,9 @@ before stays exactly as above: shared by both lanes, owned by neither.
 | `duet-context.js` | pure context assembly — no db, no network, no provider |
 | `duet-runner.js` | orchestration, relays, tool rounds, the queue, the gate, crossings, the token ledger |
 | `workspace-tools.js` | the file tools, shared with `/api/chat` |
+| `public/echo.js` | what counts as a repeat — one rule for the run, the mark and the tests |
 | `public/duet.js` | the timeline and its lines, the panes, chatter, the chamber and its doors |
-| `tools/duet_context_test.js` | 45 assertions, offline |
+| `tools/duet_context_test.js` | 52 assertions, offline: context, and what counts as a repeat |
 | `tools/duet_test.js` | 50 assertions over HTTP |
 | `tools/duet_tools_test.js` | 33 assertions: files, and every route to the cloud — fakes both sides |
 | `tools/duet_chatter_test.js` | 28 assertions: relays, refusals, interjections, the ledger — fakes both sides |
@@ -285,6 +298,3 @@ before stays exactly as above: shared by both lanes, owned by neither.
 - **Send to both.** Deliberately deferred until the core was solid.
 - **More than two participants.** The schema has a `slot` and would take a third; the
   lanes and the context labels are what would need thought, not the store.
-- **A repetition stop.** A small model in chatter can repeat itself word for word; the run
-  only stops on a cap, an empty reply, a withheld turn or a failure.
-- **A retry on an empty reply.** One empty reply ends a run, though it is often a one-off.
