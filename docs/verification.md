@@ -489,3 +489,13 @@ crossing from the start.
   on, with its notice; ↗ web_search and ↗ fetch_url as amber cards; the bar's crossed
   count rising for a local side's search.
 - Not yet run against the real Tavily service.
+
+**Live, 2026-10-03 — one real search.** qwen2.5:7b on the left, web on, asked whether
+industrial robots come in particular colours. It wrote its own query — "industrial robots
+color usage" — the 14B gate released it (227 tokens), Tavily returned five results, and the
+search is on the record (`Tavily (web search) · gate=released`) and the ledger (one call).
+25 s end to end. The plumbing held; the answer did not: the query's "color usage" pulled
+results about *painting* robots and a colour-coding page, and the model reported robots
+that "handle up to 16 colors" and pipe-safety codes as robot colours — FANUC's and ABB's
+pages were in the results, their yellow and white never mentioned, and it fetched nothing.
+A search is evidence to weigh, not an answer; the record shows exactly what it was given.
