@@ -247,6 +247,9 @@ async function main() {
             'the search is on the crossing record, with the query and the ruling', notes.join(' ;; '));
         ok(notes.some(x => /web \(127\.0\.0\.1:8195\)/.test(x) && /fetch_url\(http:\/\/127\.0\.0\.1:8195\/robots\)/.test(x)),
             'and so is the fetch, with where it went');
+        const kinds = (await api('GET', `/api/threads/${thread.id}/exposure`)).body?.kinds || {};
+        ok(kinds.search?.crossings === 1 && kinds.fetch?.crossings === 1 && !kinds.model,
+            'and each is counted as its own kind: a search, a page — not "sent to a model"', JSON.stringify(Object.keys(kinds)));
         const usage = (await api('GET', `/api/usage?threadId=${thread.id}`)).body;
         ok(usage.models.some(r => r.model === 'tavily' && r.purpose === 'web search' && r.calls === 1),
             'the search is on the ledger as a call', JSON.stringify(usage.models));

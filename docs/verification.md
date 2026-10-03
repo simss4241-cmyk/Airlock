@@ -499,3 +499,20 @@ results about *painting* robots and a colour-coding page, and the model reported
 that "handle up to 16 colors" and pipe-safety codes as robot colours — FANUC's and ABB's
 pages were in the results, their yellow and white never mentioned, and it fetched nothing.
 A search is evidence to weigh, not an answer; the record shows exactly what it was given.
+
+## Verified 2026-10-03 — one count of what has left this machine
+
+Two numbers were both called "crossed": the bar's (every packet on the crossing record) and
+the chamber's (replies a cloud model wrote). With a web search on the record, a local-only
+thread showed "↗ 1 crossed" over "0 crossed".
+
+Now one place: the boundary bar's pill, by kind, opening a panel. The exposure query
+classifies each record (`kind`: model, results, search, fetch, carried, review) and sums
+them (`kinds`). `duet_tools_test` 36/36 (2 new: messages and tool results to a cloud
+model counted as such; a carry counted as carried, not as sent to a model). `web_test`
+32/32 (1 new: a search and a page counted as their own kinds). Seen in the page against
+fakes (a fake cloud model, search, fetch and a withheld turn): "↗ 3 to cloud · 1 search ·
++1", and the panel's rows — 3 messages to fake/cloud-model, 1 search with its query, 1 page
+and its host, 1 turn withheld, 1 reply from a cloud model. The first draft hung the panel
+from the bar, which scrolls sideways and cropped it; it now sits outside the bar, placed
+under the pill.

@@ -287,6 +287,10 @@ async function main() {
             const notes1 = await exposureNotes(t1.id);
             ok(notes1.some(n => /read_file\(benign\.md\).*sha:[0-9a-f]{12}/.test(n)),
                 '"what has crossed" names the file, with its size and hash', notes1.join(' | '));
+            const kinds1 = (await api('GET', `/api/threads/${t1.id}/exposure`)).body?.kinds || {};
+            ok(kinds1.model?.packets >= 1 && kinds1.results?.crossings >= 1 && kinds1.model.to.includes(FAKE_MODEL),
+                'the record says what kind each crossing was: messages to the model, and the tool results it read',
+                JSON.stringify(Object.keys(kinds1)));
         }
 
         // Its reply read the file. Asked again, that reply is context crossing again — and
@@ -380,6 +384,9 @@ async function main() {
             const notes4 = await exposureNotes(t4.id);
             ok(notes4.some(n => /^hand · a web chat · gate=released/.test(n)),
                 'by hand, to where, and that the gate released it', notes4.join(' | '));
+            const kinds4 = (await api('GET', `/api/threads/${t4.id}/exposure`)).body?.kinds || {};
+            ok(JSON.stringify(Object.keys(kinds4)) === '["carried"]' && kinds4.carried.to[0] === 'a web chat',
+                'a carry is counted as carried by hand — not as sent to a model', JSON.stringify(kinds4));
             const again = await api('POST', `/api/threads/${t4.id}/carried`, { token: c4.body.token });
             ok(again.body?.crossed === 0, 'copying the same brief twice is one crossing, not two');
         }

@@ -516,12 +516,12 @@ function paintAirlock() {
     if (!duetEl.rail) return;
 
     const messages = state.messages;
-    const crossed = messages.filter(didCross).length;
     const fresh = noteArrivals(messages);
 
+    // No crossing count here: what has left this machine is counted in one place, the
+    // boundary bar's pill (paintCrossed in app.js). The rows below carry the ↗ marks.
     duetEl.railSub.textContent = messages.length
         ? `one conversation · ${messages.length} message${messages.length === 1 ? '' : 's'}`
-          + ` · ${crossed} crossed`
         : 'one conversation · nothing said yet';
 
     if (duetEl.rail.classList.contains('collapsed')) return;

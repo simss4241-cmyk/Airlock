@@ -586,6 +586,38 @@ body.dragging-thread .tray.drop-target .tray-tail {
 .gate-chip.bad .gate-dot, .gate-chip.bad .lane-label { background: var(--danger); color: var(--danger); }
 
 .crossed-pill { color: var(--muted); }
+.crossed-pill.on { box-shadow: var(--glow-cross); }
+
+/* What has left this machine: one panel, under the pill, each kind named. */
+.crossing-panel {
+    position: fixed; z-index: 60;
+    width: min(380px, calc(100vw - 32px));
+    display: flex; flex-direction: column; gap: 8px; padding: 12px;
+    border-radius: 10px; border: 1px solid var(--line);
+    background: linear-gradient(180deg, #151a20, var(--panel));
+    box-shadow: var(--hi), var(--lift);
+    max-height: 60vh; overflow-y: auto;
+    animation: fade-up .22s var(--ease);
+    font-size: 12px;
+}
+.cross-head { color: var(--text); font-size: 12px; }
+.cross-head.sub { margin-top: 4px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.cross-row {
+    display: grid; grid-template-columns: 18px 1fr auto; column-gap: 8px; row-gap: 2px;
+    padding: 7px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2);
+}
+.cross-mark { grid-row: span 3; color: var(--muted); }
+.cross-title { color: var(--text); }
+.cross-count { color: var(--text); font-variant-numeric: tabular-nums; }
+.cross-about, .cross-to { grid-column: 2 / 4; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.cross-to { color: var(--user-text); overflow-wrap: anywhere; }
+.cross-row.out { border-color: var(--cross-dim); }
+.cross-row.out .cross-mark, .cross-row.out .cross-count { color: var(--cross); }
+.cross-row.hand .cross-mark { color: var(--cross); }
+.cross-row.held { border-color: #4a1f22; }
+.cross-row.held .cross-count { color: var(--danger); }
+.cross-row.in .cross-mark, .cross-row.in .cross-count { color: var(--cross); }
+.crossing-panel .note { font-size: 10.5px; line-height: 1.45; color: var(--muted); margin: 0; }
 .crossed-pill.some { color: var(--cross); border-color: var(--cross-dim); }
 
 /* Mid-ruling, the dialog breathes rather than sitting still. */

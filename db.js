@@ -940,6 +940,20 @@ function createCore(db, file) {
         setMeta('token_usage_backfilled', `${copied} reply row(s) from request_meta`);
     }
 
+    /**
+     * What kind of crossing a record is, from how it was written (crossingNote: transport
+     * first). Five ways out, which the page names separately rather than adding together.
+     */
+    function crossingKind(note, actor) {
+        const transport = String(note || '').split(' · ')[0];
+        if (transport === 'web') return /^Tavily/.test(actor || '') ? 'search' : 'fetch';
+        if (transport === 'hand') return 'carried';
+        if (transport === 'duet' || transport === 'chat') {
+            return / · carried \d+ tool result/.test(note || '') ? 'results' : 'model';
+        }
+        return 'review';
+    }
+
     function getExposure(threadId = null) {
         const rows = db.prepare(`
             SELECT pr.packet_id, pr.actor, pr.note, pr.created_at,
@@ -962,12 +976,31 @@ function createCore(db, file) {
                 preview: (r.content || '').slice(0, 120),
                 crossings: []
             };
-            entry.crossings.push({ actor: r.actor, note: r.note, at: r.created_at });
+            entry.crossings.push({ actor: r.actor, note: r.note, at: r.created_at, kind: crossingKind(r.note, r.actor) });
             packets.set(r.packet_id, entry);
         }
 
         const exposed = [...packets.values()];
+
+        // Per kind: how many records, how many distinct packets, and where they went.
+        const kinds = {};
+        for (const p of exposed) {
+            for (const c of p.crossings) {
+                const k = kinds[c.kind] ||= { crossings: 0, packets: new Set(), to: new Set(), notes: [] };
+                k.crossings++;
+                k.packets.add(p.packetId);
+                k.to.add(c.actor);
+                k.notes.push(c.note);
+            }
+        }
+        for (const k of Object.values(kinds)) {
+            k.packets = k.packets.size;
+            k.to = [...k.to].sort();
+            k.notes = k.notes.slice(-5);
+        }
+
         return {
+            kinds,
             threadId: threadId ? Number(threadId) : null,
             packets: exposed,
             packetCount: exposed.length,

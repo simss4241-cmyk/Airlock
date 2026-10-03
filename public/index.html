@@ -77,11 +77,14 @@
         </span>
         <span class="spacer"></span>
         <span class="pill" id="threadPill" hidden><span id="threadName"></span></span>
-        <span class="pill crossed-pill" id="crossedPill" hidden
-              title="Packets in this thread recorded as having left this machine"></span>
+        <button class="pill pill-btn crossed-pill" id="crossedPill" hidden aria-expanded="false"
+                aria-controls="crossingPanel"></button>
         <button class="pill pill-btn carry-btn" id="carryOut" hidden
                 title="Carry this thread out by hand — ruled on by the local gate first, recorded when it leaves">⇱ Carry out</button>
     </div>
+    <!-- Outside the bar on purpose: the bar scrolls sideways on a narrow window, and would
+         crop a panel hanging from it. Placed under the pill when it opens (app.js). -->
+    <div class="crossing-panel" id="crossingPanel" hidden></div>
 
     <!-- Every message used to be written into .lane-hint, which lives at the right
          end of a horizontally scrolling bar — so on a narrow window all feedback

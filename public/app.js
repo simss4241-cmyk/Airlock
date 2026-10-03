@@ -7,6 +7,7 @@ const el = {
     messages: $('messages'), main: $('main'),
     model: $('model'), dot: $('dot'), statusText: $('statusText'),
     gateModel: $('gateModel'), gateChip: $('gateChip'), crossedPill: $('crossedPill'),
+    crossingPanel: $('crossingPanel'),
     settings: $('settings'), newChat: $('newChat'), openSettings: $('openSettings'),
     sys: $('sys'), temp: $('temp'), topp: $('topp'), topk: $('topk'), ctx: $('ctx'),
     saveSettings: $('saveSettings'), trays: $('trays'), storeStats: $('storeStats'),
@@ -440,16 +441,128 @@ function paintGate(gate) {
 }
 
 /** How much of the open thread has left this machine — from the record, not the screen. */
+// ─────────────────────────── crossings ───────────────────────────
+//
+// Every figure about the boundary, in one place: the pill in the boundary bar, and the panel
+// it opens. There used to be two counts both called "crossed" — this pill counted every
+// packet on the crossing record, the chamber counted replies a cloud model wrote — and with
+// web searches on the record they disagreed on screen. They measure different things, so
+// they are named separately here, and nowhere else adds them up.
+
+let exposure = null;
+
+/** Each kind of crossing: its name, how to count it, and what it means. */
+const CROSSING_KINDS = [
+    ['model',   '↗', 'Sent to a cloud model',
+        k => `${k.packets} message${k.packets === 1 ? '' : 's'}`,
+        'Context a cloud participant read — your messages and the other side\'s replies. Each was ruled on by the local gate first.'],
+    ['results', '↗', 'Tool results sent to a cloud model',
+        k => `${k.crossings} round${k.crossings === 1 ? '' : 's'}`,
+        'Files, or web results, a cloud participant asked for — each round ruled on before it went.'],
+    ['search',  '↗', 'Web searches',
+        k => `${k.crossings}`,
+        'Queries a model wrote, sent to the search service — each ruled on by the gate before it left, from either side.'],
+    ['fetch',   '↗', 'Pages fetched',
+        k => `${k.crossings}`,
+        'Links from a search result or from you, opened on the web. Never a link a model made up.'],
+    ['carried', '⇱', 'Carried out by hand',
+        k => `${k.crossings}`,
+        'A brief you carried out yourself, after the gate ruled on it.'],
+    ['review',  '↗', 'Sent for review',
+        k => `${k.crossings}`,
+        'Packets sent to a reviewer across the boundary.']
+];
+
+const duetMessages = () => window.duetUI?.state?.messages || [];
+
+function crossingSummary() {
+    const kinds = exposure?.kinds || {};
+    const parts = [];
+    if (kinds.model) parts.push(`${kinds.model.packets} to cloud`);
+    if (kinds.search) parts.push(`${kinds.search.crossings} search${kinds.search.crossings === 1 ? '' : 'es'}`);
+    if (kinds.fetch) parts.push(`${kinds.fetch.crossings} page${kinds.fetch.crossings === 1 ? '' : 's'}`);
+    if (kinds.carried) parts.push(`${kinds.carried.crossings} carried`);
+    if (kinds.results && !kinds.model) parts.push(`${kinds.results.crossings} results`);
+    if (kinds.review) parts.push(`${kinds.review.crossings} reviewed`);
+    return parts;
+}
+
+function paintCrossingPill() {
+    const parts = crossingSummary();
+    const withheld = duetMessages().filter(m => m.status === 'blocked').length;
+    el.crossedPill.hidden = false;
+    el.crossedPill.textContent = parts.length
+        ? `↗ ${parts.slice(0, 2).join(' · ')}${parts.length > 2 ? ` · +${parts.length - 2}` : ''}`
+        : withheld ? `nothing left · ${withheld} withheld` : 'nothing has left';
+    el.crossedPill.classList.toggle('some', parts.length > 0);
+    el.crossedPill.title = parts.length
+        ? 'What has left this machine from this thread — click for each kind, and where it went'
+        : 'Nothing from this thread has left this machine. Click for details.';
+}
+
+function paintCrossingPanel() {
+    const kinds = exposure?.kinds || {};
+    const messages = duetMessages();
+    const withheld = messages.filter(m => m.status === 'blocked').length;
+    const fromCloud = messages.filter(m => m.role !== 'user' && m.requestMeta?.crossed === true).length;
+    const rows = CROSSING_KINDS.filter(([key]) => kinds[key]).map(([key, mark, title, count, about]) => {
+        const k = kinds[key];
+        const to = key === 'search' ? [] : k.to;
+        const queries = key === 'search'
+            ? k.notes.map(n => /web_search\("(.*)"\)/.exec(n)?.[1]).filter(Boolean) : [];
+        return `<div class="cross-row ${key === 'carried' ? 'hand' : 'out'}">
+            <span class="cross-mark">${mark}</span>
+            <span class="cross-title">${escapeHtml(title)}</span>
+            <span class="cross-count">${escapeHtml(count(k))}</span>
+            <span class="cross-about">${escapeHtml(about)}</span>
+            ${to.length ? `<span class="cross-to">to ${to.map(escapeHtml).join(', ')}</span>` : ''}
+            ${queries.length ? `<span class="cross-to">${queries.slice(-3).map(q => `“${escapeHtml(q)}”`).join(' · ')}</span>` : ''}
+        </div>`;
+    });
+
+    el.crossingPanel.innerHTML = `
+        <div class="cross-head"><b>Left this machine</b> · this thread</div>
+        ${rows.length ? rows.join('') : '<p class="note">Nothing from this thread has left this machine.</p>'}
+        ${withheld || fromCloud ? `<div class="cross-head sub">Stopped, and came back</div>` : ''}
+        ${withheld ? `<div class="cross-row held">
+            <span class="cross-mark">⛔</span><span class="cross-title">Withheld by the gate</span>
+            <span class="cross-count">${withheld} turn${withheld === 1 ? '' : 's'}</span>
+            <span class="cross-about">Ruled on and stopped. Nothing was sent.</span></div>` : ''}
+        ${fromCloud ? `<div class="cross-row in">
+            <span class="cross-mark">↙</span><span class="cross-title">Replies written by a cloud model</span>
+            <span class="cross-count">${fromCloud}</span>
+            <span class="cross-about">Came back across the boundary. Marked ↗ crossed in the timeline and the chamber.</span></div>` : ''}
+        <p class="note">From the crossing record, which the server writes as each thing leaves. Per
+            message, the ↗ marks in the timeline and the chamber.</p>`;
+}
+
 async function paintCrossed() {
-    if (!activeThread) { el.crossedPill.hidden = true; return; }
+    if (!activeThread) { el.crossedPill.hidden = true; el.crossingPanel.hidden = true; return; }
     try {
-        const exposure = await (await fetch(`/api/threads/${activeThread.id}/exposure`)).json();
-        const n = exposure.packetCount || 0;
-        el.crossedPill.hidden = false;
-        el.crossedPill.textContent = n ? `↗ ${n} crossed` : 'nothing crossed';
-        el.crossedPill.classList.toggle('some', n > 0);
+        exposure = await (await fetch(`/api/threads/${activeThread.id}/exposure`)).json();
+        paintCrossingPill();
+        if (!el.crossingPanel.hidden) paintCrossingPanel();
     } catch { el.crossedPill.hidden = true; }
 }
+
+el.crossedPill.onclick = () => {
+    const open = el.crossingPanel.hidden;
+    el.crossingPanel.hidden = !open;
+    el.crossedPill.setAttribute('aria-expanded', String(open));
+    el.crossedPill.classList.toggle('on', open);
+    if (open) { placeCrossingPanel(); paintCrossingPanel(); paintCrossed(); }
+};
+
+/** Under the pill, right edges aligned, kept on screen. */
+function placeCrossingPanel() {
+    const r = el.crossedPill.getBoundingClientRect();
+    el.crossingPanel.style.top = `${Math.round(r.bottom + 8)}px`;
+    el.crossingPanel.style.right = `${Math.max(16, Math.round(window.innerWidth - r.right))}px`;
+}
+window.addEventListener('resize', () => { if (!el.crossingPanel.hidden) placeCrossingPanel(); });
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !el.crossingPanel.hidden) el.crossedPill.click();
+});
 
 async function loadConfig() {
     config = await (await fetch('/api/config')).json();
@@ -867,6 +980,7 @@ function leaveThread() {
     el.threadPill.hidden = true;
     el.carryOut.hidden = true;
     el.crossedPill.hidden = true;
+    el.crossingPanel.hidden = true;
     paintWorkspace();
     renderRail();
     paintPaneMode();

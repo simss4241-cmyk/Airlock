@@ -86,6 +86,17 @@ on two 4B participants (docs/verification.md, 2026-10-01):
 
 ## The boundary
 
+**What has left this machine is counted in one place**: the pill in the boundary bar,
+beside the gate. It sums up by kind ("↗ 3 to cloud · 1 search"), and opens a panel naming
+each kind, where it went, and what it means — messages sent to a cloud model, tool results
+sent to one, web searches (with their queries), pages fetched, briefs carried out by hand,
+reviews — then what was stopped and what came back: turns the gate withheld, and replies a
+cloud model wrote. The server says which kind each record is (`kind` on every crossing in
+`/api/threads/:id/exposure`, and a `kinds` summary); nothing adds different kinds
+together. The chamber no longer keeps a count of its own — there were two numbers both
+called "crossed", measuring different things, and once web searches were on the record
+they disagreed on screen. Per message, the ↗ marks in the timeline and the chamber.
+
 ⚠ **A duet crossing exposes more than the message you typed.**
 
 Sending to a remote participant sends it the shared conversation — which includes what
@@ -196,7 +207,7 @@ query is words a model wrote, and can carry whatever is in that model's context,
 
 On a cloud side, the results then go to that model in the next tool round, and are ruled
 on like a file result. Web cards are amber (↗) on the reply; a withheld or refused call is
-marked and says why. `tools/web_test.js`, 31 assertions, against a fake search service,
+marked and says why. `tools/web_test.js`, 32 assertions, against a fake search service,
 a fake page and a fake model.
 
 ## Asking you for a result
@@ -368,8 +379,8 @@ before stays exactly as above: shared by both lanes, owned by neither.
 | `public/duet.js` | the timeline and its lines, the panes, chatter, the chamber and its doors |
 | `tools/duet_context_test.js` | 61 assertions, offline: context, what counts as a repeat, what counts as a path |
 | `tools/duet_test.js` | 50 assertions over HTTP |
-| `tools/duet_tools_test.js` | 34 assertions: files, and every route to the cloud — fakes both sides |
-| `tools/web_test.js` | 31 assertions: search and fetch, the gate on queries, given links only, the door, private addresses |
+| `tools/duet_tools_test.js` | 36 assertions: files, and every route to the cloud — fakes both sides |
+| `tools/web_test.js` | 32 assertions: search and fetch, the gate on queries, given links only, the door, private addresses |
 | `tools/duet_request_test.js` | 22 assertions: asking you for a result, answers, search and line ranges — fake model |
 | `tools/duet_chatter_test.js` | 28 assertions: relays, refusals, interjections, the ledger — fakes both sides |
 
