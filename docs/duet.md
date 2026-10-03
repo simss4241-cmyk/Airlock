@@ -192,6 +192,17 @@ or more — or, under six distinct words, an exact match — is a repeat: the ru
 repeat, and is never counted. Measured on the loop it was built for: word for word 1.00, one
 word changed 0.90, two replies agreeing in different words 0.26.
 
+**A file nobody has seen is marked.** A reply that names a file — `/log/nav_01.txt`,
+`policy_enforcer.py`, `log/sequence_01` — that no tool read in this thread, and that you
+did not write or attach, carries **⚠ unseen file** (the names are in its tooltip). Either
+side's reads count, since a reply can quote what the other side read; a name another reply
+made up does not, so an invented file stays marked when the other side repeats it. A
+listing is not a read. The rule is `public/evidence.js`, shared with the tests; prose with
+slashes ("and/or", "10/12/14", "km/s") and URLs are not paths. Over every message on this
+desk on 2026-10-02 it marked eleven replies — nine invented logs in one role-play, plus
+"`model.txt` line 45" and "[policy_enforcer.py] v2.4.1" from the role runs, all made up —
+and one command offered for the user to run (`python run.py`). It is a mark, not a stop.
+
 **The run lives in the page.** Close the tab, or switch threads, and it stops, so a
 conversation with a cloud model cannot keep spending with nobody watching.
 
@@ -286,9 +297,10 @@ before stays exactly as above: shared by both lanes, owned by neither.
 | `duet-context.js` | pure context assembly — no db, no network, no provider |
 | `duet-runner.js` | orchestration, relays, tool rounds, the queue, the gate, crossings, the token ledger |
 | `workspace-tools.js` | the file tools, shared with `/api/chat` |
+| `public/evidence.js` | what counts as a file reference, and whether anyone in the thread has seen it |
 | `public/echo.js` | what counts as a repeat — one rule for the run, the mark and the tests |
 | `public/duet.js` | the timeline and its lines, the panes, chatter, the chamber and its doors |
-| `tools/duet_context_test.js` | 52 assertions, offline: context, and what counts as a repeat |
+| `tools/duet_context_test.js` | 61 assertions, offline: context, what counts as a repeat, what counts as a path |
 | `tools/duet_test.js` | 50 assertions over HTTP |
 | `tools/duet_tools_test.js` | 33 assertions: files, and every route to the cloud — fakes both sides |
 | `tools/duet_chatter_test.js` | 28 assertions: relays, refusals, interjections, the ledger — fakes both sides |

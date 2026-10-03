@@ -356,3 +356,44 @@ reasoning off restates itself word for word until the cap.
   empty, was asked once more and answered; Left then restated its earlier reply, and the
   run ended — "stand-in:4b is repeating itself — this turn nearly matches #5" — with
   **↻ repeat of #5** on the message. The empty reply stays in the log.
+
+## Measured 2026-10-02 — "The Reactor Answered": evidence, not just crossings
+
+A 42-message role-play on the desk: qwen2.5:7b as a ship's engineer, nemotron-3-nano:4b as
+an alien scientist, the user as captain supplying every test result. Read in full. Every
+correction in it came from the user; neither model caught one of the other's. Three
+failures, none of which the repetition stop could see (the "agree and restate" turns score
+0.43–0.56 against their own earlier replies):
+
+- **Certainty without evidence.** "May be mimicking… likely feeding" (#79) became "the
+  reactor feeds on the field" (#81) with no test between; later tests were planned to
+  "confirm" the idea, after the user had said repeated matches would support, not prove.
+- **Numbers drift through agreement.** Right proposed a marker "a half-second longer…
+  0.5 s" (#99); Left agreed and wrote 1.5 s (#100).
+- **Invented evidence.** Told twice that no files existed, Right kept naming logs it was
+  writing — `/log/nav_01.txt`, `/log/communication_test_01.csv` — and, after "propose only",
+  reported "Starting the sequence… Logging all events to log/sequence_01" (#103).
+
+**Built: the unseen-file mark** (`public/evidence.js`, `duet_context_test` 61/61, 9 new).
+Over every message on the desk it marks the nine invented logs in this thread, the two
+invented sources in the 2026-10-01 role runs, and one command offered for the user to run
+— no prose. Seen in the page on a copy of the desk database (port 8110): the nine marks, on
+exactly those replies.
+
+**Tried and not shipped: a prompt rule.** Two system-message lines — keep each claim as
+strong as its evidence (support or weaken, never confirm; agreement is not evidence; copy
+numbers exactly; use the corrected record) and you can only talk (propose; never describe
+doing it). Replayed through the server's own relay route on a copy of the database, at the
+five moments above, six samples each at the desk's settings (temperature 1, reasoning on):
+
+| Six samples per moment | Without | With |
+|---|---|---|
+| A planned test "will confirm" the idea (#96, #97, #100) | 12/18 | 13/18 |
+| A wrong pulse length at #100 (1.5 s, or 16.5 s) | 4/6 | 5/6 |
+| Right says it is doing the test itself (#81, #96) | 8/12 | 10/12 |
+| Right invents a log file (#81, #96) | 4/12 | 3/12 |
+
+No measurable effect. Left reproduced its own earlier template ("**Outcome to Support
+Hypothesis:** … it will confirm…") in every sample, rule or not: mid-conversation, the
+transcript's habits outweigh the system message on these models. Untested: the same rule
+from the first turn of a fresh conversation, before the habit forms.

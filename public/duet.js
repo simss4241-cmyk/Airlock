@@ -159,6 +159,32 @@ function repeatOf(message) {
     return hit;
 }
 
+/**
+ * The files a reply names that nobody in this thread has seen — by the rule in
+ * public/evidence.js. Seen means: a tool read it (either side; its words may be quoted
+ * across), or the user wrote or attached it, at or before this message. A name another
+ * reply made up does not count as seen, so an invented file stays marked when the other
+ * side repeats it. A listing is not a read: a file only listed was not seen.
+ */
+const unseenCache = new Map();
+function unseenFiles(message) {
+    if (message.role === 'user' || message.streaming || !message.content || !window.AirlockEvidence) return [];
+    const at = state.messages.findIndex(m => m.id === message.id);
+    const upTo = state.messages.slice(0, at === -1 ? state.messages.length : at + 1);
+    const key = `${message.id}:${message.content.length}:${upTo.length}`;
+    if (unseenCache.has(key)) return unseenCache.get(key);
+    const seen = [];
+    for (const m of upTo) {
+        if (m.role === 'user') seen.push(...window.AirlockEvidence.pathsIn(m.content));
+        for (const t of m.requestMeta?.tools || []) {
+            if ((t.tool || t.name) === 'read_file' && t.ok && t.target) seen.push(t.target);
+        }
+    }
+    const names = window.AirlockEvidence.unseen(message.content, seen);
+    unseenCache.set(key, names);
+    return names;
+}
+
 const credentialCache = new Map();
 function credentialsCached(message) {
     const key = `${message.id}:${(message.content || '').length}`;
@@ -194,6 +220,12 @@ function messageHtml(message, { showAddressing = false } = {}) {
     const echoed = mine ? null : repeatOf(message);
     const echoMark = echoed
         ? ` <span class="badge repeat" title="Nearly word for word an earlier reply from this side (#${echoed.id})">↻ repeat of #${echoed.id}</span>`
+        : '';
+
+    // Names a file nobody here has read or given: evidence that may not exist.
+    const unseenNames = mine ? [] : unseenFiles(message);
+    const unseenMark = unseenNames.length
+        ? ` <span class="badge unseen" title="${escapeHtml(`Named here, but no tool read ${unseenNames.length === 1 ? 'it' : 'them'} and you did not give ${unseenNames.length === 1 ? 'it' : 'them'} in this thread: ${unseenNames.join(', ')}`)}">⚠ unseen file${unseenNames.length === 1 ? '' : ` ×${unseenNames.length}`}</span>`
         : '';
 
     // Holding a known credential: said on the message, before anyone reaches for the drag.
@@ -275,7 +307,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
 
     return `<div class="${classes.join(' ')}" data-message="${message.id}">
                 <span class="who"${portable ? ' draggable="true"' : ''}>${who}${addressed}${
-                    message.id ? `<span class="msg-id"> · #${message.id}</span>` : ''}${crossed}${echoMark}${kept}${note}${handoff}</span>
+                    message.id ? `<span class="msg-id"> · #${message.id}</span>` : ''}${crossed}${echoMark}${unseenMark}${kept}${note}${handoff}</span>
                 <div class="bubble${message.streaming && message.content ? ' caret' : ''}">${
                     think}${body}</div>
                 ${message.stats ? `<span class="stats">${escapeHtml(message.stats)}</span>` : ''}

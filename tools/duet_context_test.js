@@ -346,5 +346,30 @@ ok(echo.repeats('I agree.', ['I agree.']) === 0 && echo.repeats('I agree.', ['Ag
 ok(echo.repeats('', [loop]) === -1 && echo.repeats(loop, []) === -1, 'nothing to compare is never a repeat');
 ok(Object.isFrozen(echo), 'the rule is frozen: the page cannot be talked out of it');
 
+// ── 13. a file nobody has seen ──
+//
+// From "The Reactor Answered" (2026-10-02): told twice that no files existed, a 4B kept
+// naming logs it had "written", and the other side agreed to compare against them. And from
+// the role runs: "[policy_enforcer.py] v2.4.1", "my read of `model.txt` line 45" — with no
+// tool call behind either.
+
+const ev = require('../public/evidence.js');
+const same = (a, b) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+ok(same(ev.pathsIn("I'll log the draw to `/log/power_01.csv`. Compare that to the baseline in `/data/power_baseline_003.csv`."),
+    ['/log/power_01.csv', '/data/power_baseline_003.csv']), 'rooted paths with extensions are found');
+ok(same(ev.pathsIn('Logging all events to log/sequence_01. Awaiting results.'), ['log/sequence_01']),
+    'an unrooted path with no extension counts when a part of it looks like a file name');
+ok(same(ev.pathsIn('as implemented in [policy_enforcer.py] v2.4.1, and my read of `model.txt` line 45'),
+    ['policy_enforcer.py', 'model.txt']), 'a bare file name counts by its extension');
+ok(ev.pathsIn('Send pulses at 10/12/14/16 s, input/output and/or TCP/IP, 3 km/s, e.g. version 2.4.1, 0.5 s.').length === 0,
+    'prose with slashes, numbers and abbreviations is not a path');
+ok(ev.pathsIn('See https://example.com/docs/setup_guide.md for more.').length === 0, 'a URL is not a file');
+ok(same(ev.unseen('Compare /data/power_baseline_003.csv with /log/nav_01.txt', ['data/power_baseline_003.csv']), ['/log/nav_01.txt']),
+    'a file a tool read is seen; one never read is not');
+ok(ev.unseen('The README.md says so, and so does C:\\proj\\docs\\notes.md', ['docs/README.md', 'notes.md']).length === 0,
+    'matched by trailing segments either way, slashes and drive letters ignored');
+ok(same(ev.unseen('see src/main.js', ['main.js.bak']), ['src/main.js']), 'a different file with a similar name is not a match');
+ok(Object.isFrozen(ev), 'the rule is frozen');
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);
