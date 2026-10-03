@@ -397,3 +397,31 @@ No measurable effect. Left reproduced its own earlier template ("**Outcome to Su
 Hypothesis:** … it will confirm…") in every sample, rule or not: mid-conversation, the
 transcript's habits outweigh the system message on these models. Untested: the same rule
 from the first turn of a fresh conversation, before the habit forms.
+
+## Measured 2026-10-02 — the same rule from the first turn, on a scripted run
+
+The open question above: does the rule work before a habit forms? A scripted version of the
+Wayfarer scenario (same roles, same models), where the captain picks the tests and reports
+fixed results, so runs are comparable: four captain messages, eleven chatter turns between.
+Three fresh threads without the rule, three with it, on a fresh database through the
+server's own routes. All local. Read in full; tallied by hand.
+
+| From turn one | No rule | With rule |
+|---|---|---|
+| Replies claiming to do something ("I'll isolate…", "Proceeding now: issuing…") | 11 | 10 |
+| Runs with invented readings or results | 2/3 | 1/3 |
+| Replies naming an invented file | 6 (2 runs) | 0 |
+| The closing "what we know for certain" correct | 0/3 | 0/3 |
+
+Again nothing to ship. Claimed actions and certainty do not move; the closing summary is
+wrong in all six (hypotheses listed as known, the transmitter's pulses credited to the
+reactor, "an 18-second gap yields a 23-second recovery"). The invented-file count falls to
+zero, but three runs a side cannot separate that from chance, and the mark catches those
+anyway.
+
+What the no-rule runs added: **invented data, not just invented files.** Asked for
+diagnostics, the engineer supplied them — "Pressure value (reactor_pressure_log, line 22):
+500 kPa", "Seal strength: 75% of nominal", three valve states — and two turns later both
+sides listed those numbers under "Know for certain". The unseen-file mark catches
+`reactor_containment_system.py` in that run but not a bare `reactor_pressure_log`, and not
+the figures, which no file rule can see.
