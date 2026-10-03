@@ -16,6 +16,11 @@ const MAX_BYTES = 256 * 1024;      // per file; larger reads get truncated with 
 const MAX_ENTRIES = 400;           // per directory listing
 const MAX_FIND = 150;              // per find
 const MAX_DEPTH = 8;               // find recursion depth
+const MAX_RANGE = 400;             // lines per ranged read
+const MAX_HITS = 60;               // per search
+const MAX_HITS_PER_FILE = 8;       // so one noisy file cannot fill a search
+const MAX_SEARCH_FILES = 2000;     // files opened per search
+const MAX_LINE_CHARS = 240;        // a matching line is shown, not a minified bundle
 
 // Text-ish only. Reading a 3D model or a PNG into a prompt wastes the context window.
 const TEXT_EXT = new Set([
@@ -168,7 +173,11 @@ async function listDirectory(root, rel = '.') {
     };
 }
 
-async function readTextFile(root, rel) {
+/**
+ * Read a text file. Given a line range, returns only those lines, each prefixed with its
+ * number ("45: …") — so a model that cites a line can be checked against what it was shown.
+ */
+async function readTextFile(root, rel, { startLine = null, endLine = null } = {}) {
     if (!rel) throw new Error('read_file needs a path.');
 
     const file = await resolveInside(root, rel);
@@ -186,6 +195,17 @@ async function readTextFile(root, rel) {
     // NUL bytes in the first chunk means binary regardless of the extension.
     if (buf.subarray(0, 4096).includes(0)) {
         throw new Error(`Looks binary, refusing to read: ${rel}`);
+    }
+
+    if (startLine != null || endLine != null) {
+        const lines = buf.toString('utf8').split(/\r?\n/);
+        const from = Math.max(1, Math.floor(Number(startLine) || 1));
+        if (from > lines.length) throw new Error(`${rel} has only ${lines.length} lines.`);
+        const asked = Math.floor(Number(endLine) || from + MAX_RANGE - 1);
+        const to = Math.min(lines.length, Math.max(from, asked), from + MAX_RANGE - 1);
+        const content = lines.slice(from - 1, to).map((l, i) => `${from + i}: ${l}`).join('\n')
+            + (to < Math.min(lines.length, asked) ? `\n[range capped at ${MAX_RANGE} lines — ask for more from line ${to + 1}]` : '');
+        return { path: display(root, file), bytes: buf.length, lines: lines.length, startLine: from, endLine: to, truncated: false, content };
     }
 
     const truncated = buf.length > MAX_BYTES;
@@ -240,8 +260,63 @@ async function findFiles(root, query) {
     return { query, count: hits.length, truncated: hits.length >= MAX_FIND, matches: hits };
 }
 
+/**
+ * Search the contents of the workspace's text files for a phrase (case-insensitive, plain
+ * text — not a regular expression, so a model cannot write a pathological one). Returns
+ * where it occurs, line by line. Capped in files opened, hits, hits per file and line
+ * length; a capped search says so, so "not found" is never claimed from a partial look.
+ */
+async function searchText(root, query, rel = '.') {
+    if (!query || !query.trim()) throw new Error('search_text needs a query.');
+
+    const base = await resolveInside(root, rel || '.');
+    const baseStat = await fs.stat(base).catch(() => null);
+    if (!baseStat) throw new Error(`No such folder: ${rel}`);
+    if (!baseStat.isDirectory()) throw new Error(`Not a folder: ${rel}`);
+
+    const needle = query.trim().toLowerCase();
+    const matches = [];
+    let opened = 0, capped = false;
+
+    const scan = async full => {
+        const s = await fs.stat(full).catch(() => null);
+        if (!s || s.size > MAX_BYTES * 4) return;
+        const buf = await fs.readFile(full).catch(() => null);
+        if (!buf || buf.subarray(0, 4096).includes(0)) return;
+        opened++;
+        const lines = buf.toString('utf8').split(/\r?\n/);
+        let inFile = 0;
+        for (let i = 0; i < lines.length; i++) {
+            if (!lines[i].toLowerCase().includes(needle)) continue;
+            if (matches.length >= MAX_HITS || inFile >= MAX_HITS_PER_FILE) { capped = true; break; }
+            const text = lines[i].trim();
+            matches.push({ path: display(root, full), line: i + 1,
+                text: text.length > MAX_LINE_CHARS ? text.slice(0, MAX_LINE_CHARS) + '…' : text });
+            inFile++;
+        }
+    };
+
+    const walk = async (dir, depth) => {
+        if (depth > MAX_DEPTH) return;
+        const raw = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+        raw.sort((a, b) => a.name.localeCompare(b.name));
+        for (const e of raw) {
+            if (matches.length >= MAX_HITS || opened >= MAX_SEARCH_FILES) { capped = true; return; }
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) {
+                if (!SKIP_DIRS.has(e.name)) await walk(full, depth + 1);
+            } else if (e.isFile() && isTextFile(e.name)) {
+                await scan(full);
+            }
+        }
+    };
+
+    await walk(base, 0);
+    return { query, in: display(root, base), count: matches.length, truncated: capped, matches };
+}
+
 module.exports = {
-    resolveInside, listDirectory, readTextFile, findFiles, isTextFile,
+    resolveInside, listDirectory, readTextFile, findFiles, searchText, isTextFile,
     workspacePolicy, permitRoot,
     MAX_BYTES, TEXT_EXT, SKIP_DIRS
 };

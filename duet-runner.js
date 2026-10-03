@@ -197,7 +197,21 @@ function resolveRelay({ threadId, participant, relayOf }) {
     return trigger;
 }
 
-function resolveTrigger({ threadId, participant, text, images = [], clientRequestId, retryOf }) {
+/**
+ * The reply a user's answer is answering, checked: in this thread, finished, written by the
+ * participant the answer is addressed to, and holding a request. Its request is copied onto
+ * the answer, so the answer still says what it answers if the reply is later moved away.
+ */
+function resolveAnswer({ threadId, participant, answers }) {
+    const asked = duet.getMessage(answers);
+    if (!asked || asked.threadId !== Number(threadId)) throw new Error('That request is not in this conversation.');
+    if (asked.authorId !== participant.id) throw new Error(`That request was not made by ${participant.name}.`);
+    const requests = asked.requestMeta?.requests || [];
+    if (asked.status !== STATUS.COMPLETE || !requests.length) throw new Error('That message did not ask for a result.');
+    return { id: asked.id, by: participant.name, request: requests.map(r => r.text).join(' / ') };
+}
+
+function resolveTrigger({ threadId, participant, text, images = [], clientRequestId, retryOf, answers = null }) {
     if (retryOf) {
         const existing = duet.getMessage(retryOf);
         if (!existing) throw new Error(`No message ${retryOf} to retry.`);
@@ -211,6 +225,8 @@ function resolveTrigger({ threadId, participant, text, images = [], clientReques
 
     if ((!text || !text.trim()) && !images.length) throw new Error('Nothing to send.');
 
+    const answering = answers ? resolveAnswer({ threadId, participant, answers }) : null;
+
     const trigger = duet.appendMessage({
         threadId,
         role: 'user',
@@ -221,7 +237,9 @@ function resolveTrigger({ threadId, participant, text, images = [], clientReques
         status: STATUS.COMPLETE,
         // Written on this machine. Whether it later crosses is a separate fact, recorded
         // as a `crossed` provenance event rather than by rewriting the tier.
-        tier: 'local'
+        tier: 'local',
+        // An answer to a request: linked to the reply that asked, which the timeline draws.
+        ...(answering ? { replyTo: answering.id, requestMeta: { answers: answering } } : {})
     });
 
     return { trigger, created: true };
@@ -242,7 +260,7 @@ function resolveTrigger({ threadId, participant, text, images = [], clientReques
  */
 async function generate({
     threadId, participantId, text, images, tools: wantTools = false, clientRequestId, retryOf,
-    relayOf = null, config, signal, emit
+    relayOf = null, answers = null, config, signal, emit
 }) {
     const participant = duet.getParticipant(participantId);
     if (!participant) throw new Error(`No participant ${participantId}`);
@@ -280,7 +298,7 @@ async function generate({
         emit({ type: 'relay', message: trigger });
     } else {
         ({ trigger, created } = resolveTrigger({
-            threadId, participant, text, images: attached, clientRequestId, retryOf
+            threadId, participant, text, images: attached, clientRequestId, retryOf, answers
         }));
         emit({ type: 'user', message: trigger, created });
     }
@@ -385,13 +403,18 @@ async function generate({
     const capsNow = await providers.capabilities(model).catch(() => []);
     const useTools = Boolean(root) && capsNow.includes('tools') && await workspace.usableRoot(root);
 
+    // Asking the user for a result is offered to any model that can call tools, files or
+    // not: a participant that cannot measure something should ask, not pretend.
+    const canRequest = capsNow.includes('tools');
+    const offered = [...(useTools ? workspace.TOOLS : []), ...(canRequest ? [workspace.REQUEST_TOOL] : [])];
+
     // Which of the context's own messages were written after reading the workspace. When
     // they cross now, as someone else's context, the record says which files were behind
     // them — the raw tool results never enter another context, but their words may quote.
     const reads = {};
     if (crosses) {
         for (const m of snapshot) {
-            const files = (m.requestMeta?.tools || []).filter(t => t.ok && t.name === 'read_file');
+            const files = (m.requestMeta?.tools || []).filter(t => t.ok && (t.name === 'read_file' || t.name === 'search_text'));
             if (files.length && meta.sourceIds.includes(m.id)) reads[m.id] = files.map(t => t.label);
         }
     }
@@ -410,6 +433,7 @@ async function generate({
     let crossingRecorded = false;
     const usage = { prompt: 0, reply: 0, evalDuration: 0, rounds: 0 };
     const toolTrace = [];           // every call this reply made — stored on it, shown on it
+    const requests = [];            // what this reply asked the user for (request_result)
     let withheld = null;            // a mid-turn refusal: the tool results the gate kept back
 
     try {
@@ -466,7 +490,8 @@ async function generate({
                     // Omitted entirely when unsupported: sending `false` is still a request to
                     // a model that has no thinking channel, and that is a hard 400.
                     ...(canThink ? { think: config.think !== false } : {}),
-                    tools: useTools && !lastRound ? workspace.TOOLS : undefined,
+                    // Once it has asked the user for something, the turn is for saying so.
+                    tools: offered.length && !lastRound && !requests.length ? offered : undefined,
                     signal,
                     clearance
                 });
@@ -529,7 +554,36 @@ async function generate({
                 // ruling judges the file contents, not the far side's own words.
                 if (crosses) kernel.acknowledge([asked]);
 
-                for (const { message, card, artifact } of await workspace.runCalls(toolCalls, root)) {
+                // A request to the user is not run: it is recorded, and the model is told it
+                // went and that the answer is unknown until the user gives it.
+                const asks = toolCalls.filter(c => c.function?.name === 'request_result');
+                for (const call of asks) {
+                    let args = call.function?.arguments ?? {};
+                    if (typeof args === 'string') { try { args = JSON.parse(args); } catch { args = {}; } }
+                    const text = String(args.request || '').trim().slice(0, 1000);
+                    const card = text
+                        ? { name: 'request_result', args: { request: text }, ok: true, summary: text }
+                        : { name: 'request_result', args: {}, ok: false, summary: 'request_result needs a request' };
+                    if (text) requests.push({ text });
+                    convo.push({ role: 'tool', tool_name: 'request_result',
+                        content: text ? workspace.REQUEST_SENT : 'request_result needs a request: say exactly what you need.' });
+                    toolTrace.push({ name: 'request_result', tool: 'request_result', target: text, ok: Boolean(text), summary: card.summary });
+                    emit({ type: 'tool', messageId: reply.id, ...card });
+                }
+                // ⚠ Only what was offered runs. A model can name any tool it likes; one asking
+                // for files on a turn where files were not offered gets told so, and nothing
+                // on disk is touched — not even a failed lookup.
+                const fileCalls = toolCalls.filter(c => c.function?.name !== 'request_result');
+                const allowed = useTools ? fileCalls : [];
+                for (const call of useTools ? [] : fileCalls) {
+                    const name = String(call.function?.name || 'tool');
+                    convo.push({ role: 'tool', tool_name: name,
+                        content: `${name} is not available on this turn: no workspace files were offered.` });
+                    toolTrace.push({ name, tool: name, target: '', ok: false, summary: `${name} not offered — not run` });
+                    emit({ type: 'tool', messageId: reply.id, name, args: {}, ok: false, summary: `${name} not offered — not run` });
+                }
+
+                for (const { message, card, artifact } of await workspace.runCalls(allowed, root)) {
                     convo.push(message);
                     toolTrace.push({ ...artifact, summary: card.summary, name: card.name });
                     emit({ type: 'tool', messageId: reply.id, ...card });
@@ -547,7 +601,10 @@ async function generate({
             ...(usage.rounds > 1 ? { rounds: usage.rounds } : {})
         } : null;
 
-        const trace = toolTrace.length ? { tools: toolTrace } : {};
+        const trace = {
+            ...(toolTrace.length ? { tools: toolTrace } : {}),
+            ...(requests.length ? { requests } : {})
+        };
 
         if (withheld) {
             // The gate kept the file results back mid-turn. The request itself had crossed

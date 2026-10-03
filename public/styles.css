@@ -1063,6 +1063,16 @@ main {
 /* Said again, near enough word for word: steel, not a boundary colour — a quality note. */
 /* Evidence nobody has seen: a quality note like the repeat, so steel — not a boundary colour. */
 .badge.unseen { border-color: var(--user-line); color: var(--user-text); background: var(--panel-2); cursor: help; }
+/* A participant asking the user for a result: steel like the other quality notes, with the
+   Answer button the only call to action in it. */
+.ask { margin-top: 8px; padding: 8px 10px; border: 1px dashed var(--user-line); border-radius: 8px; background: var(--panel-2); display: flex; flex-direction: column; gap: 6px; }
+.ask-text { color: var(--user-text); font-size: 0.92em; }
+.ask-label { display: inline-block; margin-right: 8px; font-size: 0.75em; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.75; }
+.ask-answer { align-self: flex-start; font: inherit; font-size: 0.85em; padding: 3px 12px; border-radius: 6px; border: 1px solid var(--user-line); background: transparent; color: var(--user-text); cursor: pointer; }
+.ask-answer:hover { border-color: var(--user-text); }
+.ask-done { font-size: 0.8em; opacity: 0.7; }
+.ask-quote { font-size: 0.8em; opacity: 0.75; margin-bottom: 4px; border-left: 2px solid var(--user-line); padding-left: 8px; }
+.answer-chip span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32em; }
 .badge.repeat { border-color: var(--user-line); color: var(--user-text); background: var(--panel-2); cursor: help; }
 .badge.secret { border-color: #4a1d1f; color: #ffb3b5; background: rgba(255, 90, 95, .08); cursor: help; }
 .badge.review { border-color: var(--accent-dim); color: var(--accent); background: rgba(118, 185, 0, .07); }

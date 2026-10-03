@@ -254,8 +254,15 @@ async function main() {
         const { thread: t0, right: r0 } = await duetThread(folderId, 'opt-in');
         const n0 = received.length;
         const s0 = await send(t0.id, { participantId: r0.id, text: 'Please check the notes.', clientRequestId: 'optin-1' });
-        const offered = received.slice(n0).some(b => JSON.parse(b).tools?.length);
-        ok(!offered, 'a remote side not switched to files is never offered the tools', `events: ${s0.events.map(e => e.type)}`);
+        // Asking the user for a result is offered to every tool-capable side; the FILE tools
+        // only when switched on. The fake calls read_file whenever it sees any tools at all —
+        // exactly the model that names a tool it was not given.
+        const offeredNames = received.slice(n0).flatMap(b => (JSON.parse(b).tools || []).map(t => t.function?.name));
+        ok(!offeredNames.some(n => n !== 'request_result'),
+            'a remote side not switched to files is never offered the file tools', offeredNames.join(', '));
+        const notRun = s0.events.find(e => e.type === 'tool');
+        ok(notRun && !notRun.ok && /not offered/.test(notRun.summary),
+            'and a file tool it calls anyway is refused, not run', JSON.stringify(notRun));
 
         // ── 1. directly: a remote participant reads a file ──
         console.log('\n1. a remote participant reads a file for itself');

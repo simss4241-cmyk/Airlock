@@ -50,23 +50,75 @@ const TOOLS = [
         function: {
             name: 'read_file',
             description: 'Read a text file from the workspace (.md, .txt, .json, source code, etc). '
-                + 'Returns the file contents, truncated if very large.',
+                + 'Returns the file contents, truncated if very large. Give start_line (and '
+                + 'optionally end_line) to read only those lines, numbered — use that before '
+                + 'quoting or citing a specific line.',
             parameters: {
                 type: 'object',
                 properties: {
-                    path: { type: 'string', description: 'File path relative to the workspace root.' }
+                    path: { type: 'string', description: 'File path relative to the workspace root.' },
+                    start_line: { type: 'integer', description: 'First line to read (1-based). Optional.' },
+                    end_line: { type: 'integer', description: 'Last line to read. Optional; at most 400 lines per read.' }
                 },
                 required: ['path']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'search_text',
+            description: 'Search inside the text files in the workspace for a word or phrase (case-insensitive, '
+                + 'plain text). Returns each matching line with its file and line number. Use this to '
+                + 'find where something is said; then read_file with start_line to see it in context.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: { type: 'string', description: 'The word or phrase to look for.' },
+                    path: { type: 'string', description: 'Folder to search in, relative to the workspace root. Optional; defaults to all of it.' }
+                },
+                required: ['query']
             }
         }
     }
 ];
 
+/**
+ * Not a workspace tool: a participant asking the user for a result it cannot get itself —
+ * a measurement, a test, a fact only the user has. Offered in a duet to any model that can
+ * call tools, workspace or not. The runner handles it (duet-runner.js): the request is
+ * recorded on the reply, the turn ends with the model saying what it asked, and the user's
+ * answer comes back as a message linked to it. It exists because models without it PRETEND:
+ * measured, they reported running tests and supplied readings ("500 kPa") nobody took.
+ */
+const REQUEST_TOOL = {
+    type: 'function',
+    function: {
+        name: 'request_result',
+        description: 'Ask the User for a result you cannot get yourself: a measurement, the outcome '
+            + 'of a test or action, or a fact only they have. Use this instead of guessing a result '
+            + 'or describing yourself doing something. The User answers in a later message.',
+        parameters: {
+            type: 'object',
+            properties: {
+                request: { type: 'string', description: 'Exactly what you need: what to do or measure, and what to report back.' }
+            },
+            required: ['request']
+        }
+    }
+};
+
+/** What the model is told after asking — then it finishes its turn without tools. */
+const REQUEST_SENT = 'Request sent to the User. The result is unknown until they answer in a later message: '
+    + 'do not guess it or continue as though you have it. Finish your turn now, briefly: say what you asked for and why.';
+
 async function runTool(name, args, root) {
     switch (name) {
         case 'list_directory': return files.listDirectory(root, args.path || '.');
         case 'find_files':     return files.findFiles(root, args.query);
-        case 'read_file':      return files.readTextFile(root, args.path);
+        case 'search_text':    return files.searchText(root, args.query, args.path || '.');
+        case 'read_file':      return files.readTextFile(root, args.path,
+                                   { startLine: args.start_line ?? null, endLine: args.end_line ?? null });
         default: throw new Error(`Unknown tool: ${name}`);
     }
 }
@@ -77,8 +129,11 @@ function summarise(name, args, result, ok) {
     switch (name) {
         case 'list_directory': return `${result.path} — ${result.entries.length} entries`;
         case 'find_files':     return `"${result.query}" — ${result.count} match(es)`;
-        case 'read_file':      return `${result.path} — ${result.bytes.toLocaleString()} bytes`
-                                    + (result.truncated ? ' (truncated)' : '');
+        case 'search_text':    return `"${result.query}" — ${result.count} line(s)${result.truncated ? ', capped' : ''}`;
+        case 'read_file':      return result.startLine
+                                    ? `${result.path} — lines ${result.startLine}–${result.endLine} of ${result.lines}`
+                                    : `${result.path} — ${result.bytes.toLocaleString()} bytes`
+                                      + (result.truncated ? ' (truncated)' : '');
         default: return name;
     }
 }
@@ -133,6 +188,9 @@ async function runCalls(toolCalls, root) {
                 tool: name,
                 target,
                 ok,
+                // What the model was shown, for the evidence marks: files, and for a ranged
+                // read or a search, which lines. Paths only — never contents.
+                ...(ok ? { seen: seenBy(name, result) } : {}),
                 chars: message.content.length,
                 sha
             }
@@ -141,4 +199,17 @@ async function runCalls(toolCalls, root) {
     return out;
 }
 
-module.exports = { MAX_TOOL_ROUNDS, TOOLS, runTool, summarise, usableRoot, runCalls };
+/** Files (and lines) a successful call showed the model. */
+function seenBy(name, result) {
+    if (name === 'read_file') {
+        return [{ path: result.path, ...(result.startLine ? { lines: [result.startLine, result.endLine] } : {}) }];
+    }
+    if (name === 'search_text') {
+        const byPath = new Map();
+        for (const m of result.matches) (byPath.get(m.path) || byPath.set(m.path, []).get(m.path)).push(m.line);
+        return [...byPath].map(([p, lines]) => ({ path: p, hits: lines }));
+    }
+    return undefined;
+}
+
+module.exports = { MAX_TOOL_ROUNDS, TOOLS, REQUEST_TOOL, REQUEST_SENT, runTool, summarise, usableRoot, runCalls };

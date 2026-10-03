@@ -178,6 +178,7 @@ function unseenFiles(message) {
         if (m.role === 'user') seen.push(...window.AirlockEvidence.pathsIn(m.content));
         for (const t of m.requestMeta?.tools || []) {
             if ((t.tool || t.name) === 'read_file' && t.ok && t.target) seen.push(t.target);
+            for (const s of t.seen || []) seen.push(s.path);
         }
     }
     const names = window.AirlockEvidence.unseen(message.content, seen);
@@ -269,7 +270,8 @@ function messageHtml(message, { showAddressing = false } = {}) {
         : '';
     // What the model touched on disk, one card per call — live from 'tool' events, and
     // from the stored trace once the reply has settled.
-    const calls = message.tools || message.requestMeta?.tools || [];
+    const calls = (message.tools || message.requestMeta?.tools || [])
+        .filter(t => (t.name || t.tool) !== 'request_result');
     const toolCards = calls.length
         ? `<div class="tools">${calls.map(t => `
                <div class="tool${t.ok ? '' : ' bad'}">
@@ -278,12 +280,28 @@ function messageHtml(message, { showAddressing = false } = {}) {
                </div>`).join('')}</div>`
         : '';
 
+    // What this reply asked the user for (request_result): a card, answered or waiting. Live
+    // from 'tool' events while it streams, from the stored record once it has settled.
+    const requests = message.requestMeta?.requests
+        || (message.tools || []).filter(t => t.name === 'request_result' && t.ok).map(t => ({ text: t.summary }));
+    const answeredBy = requests.length ? state.messages.find(m => m.requestMeta?.answers?.id === message.id) : null;
+    const askCard = requests.length && !mine
+        ? `<div class="ask">${requests.map(r => `<div class="ask-text"><span class="ask-label">asked you</span>${escapeHtml(r.text)}</div>`).join('')}
+               ${answeredBy ? '<div class="ask-done">answered</div>'
+                 : message.status === 'complete' && !message.streaming
+                   ? `<button type="button" class="ask-answer" data-answer="${message.id}">Answer</button>` : ''}</div>`
+        : '';
+    // An answer says what it answers, so the thread reads without following the line.
+    const answering = mine && message.requestMeta?.answers;
+    const answerQuote = answering
+        ? `<div class="ask-quote">re ${escapeHtml(answering.by)}: ${escapeHtml(answering.request)}</div>` : '';
+
     // A blocked reply can have text now (a turn stopped mid-way at a file result), so the
     // gate's ruling is shown under whatever was said, not only in place of it.
     const body = mine
-        ? thumbs + (message.content ? renderProse(message.content) : '')
-        : toolCards + (message.content ? renderMarkdown(message.content) : '')
-          + (message.status === 'blocked' ? gate : (message.content ? '' : empty));
+        ? answerQuote + thumbs + (message.content ? renderProse(message.content) : '')
+        : toolCards + (message.content ? renderMarkdown(message.content) : '') + askCard
+          + (message.status === 'blocked' ? gate : (message.content || askCard ? '' : empty));
 
     const classes = ['msg', mine ? 'user' : 'assistant'];
     // Same tier marking the classic view uses, so a reply produced across the boundary
@@ -419,6 +437,7 @@ function paintTimeline() {
     grid.querySelectorAll('.tl-dot').forEach(dot => { dot.onclick = () => setFocus(null); });
     wireCopyButtons(grid);
     wireHandoff(grid);
+    grid.querySelectorAll('.ask-answer').forEach(b => { b.onclick = () => startAnswer(Number(b.dataset.answer)); });
     if (wasPinned) scroller.scrollTop = scroller.scrollHeight;
     drawWires();
 }
@@ -951,6 +970,7 @@ async function submit(participantId, { retryOf = null, relayOf = null } = {}) {
     }
 
     const staged = automatic ? [] : pane.pending;
+    const answering = automatic ? null : pane.answering;
     if (!automatic && !text && !staged.length) return null;
 
     pane.interject = false;
@@ -968,6 +988,7 @@ async function submit(participantId, { retryOf = null, relayOf = null } = {}) {
         box.value = '';
         box.style.height = 'auto';
         pane.pending = [];
+        pane.answering = null;
         paintAttachments(participantId);
     }
 
@@ -985,7 +1006,8 @@ async function submit(participantId, { retryOf = null, relayOf = null } = {}) {
                 tools: filesWanted(participantId),
                 clientRequestId: automatic ? undefined : requestId,
                 retryOf,
-                relayOf
+                relayOf,
+                answers: answering ? answering.id : undefined
             }),
             signal: pane.controller.signal
         });
@@ -1031,6 +1053,10 @@ async function submit(participantId, { retryOf = null, relayOf = null } = {}) {
             if (!streamed && !automatic && !box.value.trim()) box.value = text;
             if (!streamed && !automatic && !pane.pending.length && staged.length) {
                 pane.pending = staged;
+                paintAttachments(participantId);
+            }
+            if (!streamed && answering && !pane.answering) {
+                pane.answering = answering;
                 paintAttachments(participantId);
             }
             markRetry(pane);
@@ -1274,7 +1300,8 @@ function buildPane(who) {
     panes.set(who.id, {
         nodes, controller: null, status: 'idle', error: null,
         queuePosition: 0, retryOf: null, triggerId: null, requestId: null, frame: null,
-        pending: []             // images staged for this pane's next message
+        pending: [],            // images staged for this pane's next message
+        answering: null         // { id, request }: the next message answers that request
     });
 
     nodes.attach.onclick = () => nodes.file.click();
@@ -1453,14 +1480,34 @@ function paintAttachments(participantId) {
     if (!pane) return;
     const box = pane.nodes.attached;
 
-    box.hidden = !pane.pending.length;
-    box.innerHTML = pane.pending.map((p, i) =>
+    box.hidden = !pane.pending.length && !pane.answering;
+    box.innerHTML = (pane.answering
+        ? `<span class="chip answer-chip"><span>Answering: ${escapeHtml(pane.answering.request.slice(0, 90))}</span>
+           <button type="button" data-unanswer title="Send as an ordinary message instead">✕</button></span>` : '')
+        + pane.pending.map((p, i) =>
         `<span class="chip"><img src="${p.dataUrl}" alt=""><span>${escapeHtml(p.name)}</span>
          <button type="button" data-i="${i}" title="Remove">✕</button></span>`).join('');
 
-    box.querySelectorAll('button').forEach(b => {
+    box.querySelectorAll('button[data-i]').forEach(b => {
         b.onclick = () => { pane.pending.splice(+b.dataset.i, 1); paintAttachments(participantId); };
     });
+    const unanswer = box.querySelector('button[data-unanswer]');
+    if (unanswer) unanswer.onclick = () => { pane.answering = null; paintAttachments(participantId); };
+}
+
+/**
+ * Answer a participant's request: the next message typed into ITS composer goes in linked
+ * to the reply that asked, so the result is on the record as the user's, answering that.
+ */
+function startAnswer(replyId) {
+    const asked = messageById(replyId);
+    const pane = asked && panes.get(asked.authorId);
+    if (!pane) return;
+    const requests = asked.requestMeta?.requests || [];
+    pane.answering = { id: asked.id, request: requests.map(r => r.text).join(' / ') };
+    if (state.focus) setFocus(null);
+    paintAttachments(asked.authorId);
+    pane.nodes.input.focus();
 }
 
 async function patchParticipant(id, patch) {
@@ -1755,6 +1802,12 @@ async function chatterAuto() {
             chatter.round++;
             paintChatter();
             let reply = await submit(turn.speaker.id, { relayOf: turn.trigger.id });
+
+            // Only the user can answer a request. Going on without the answer is how a run
+            // ends up building on a result nobody took — so the run waits for the user.
+            if (reply?.status === 'complete' && reply.requestMeta?.requests?.length) {
+                why = `${nameOf(reply)} asked you for a result — answer it, then carry on`; break;
+            }
 
             // A model that reasons and then says nothing often does it once, not twice: ask
             // the same turn again before ending the run. The empty reply stays in the log —

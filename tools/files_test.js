@@ -145,6 +145,25 @@ async function throws(label, fn, expect) {
     await throws('find on a file-as-root errors',
         () => files.findFiles(path.join(root, 'README.md'), 'readme'), 'not a directory');
 
+    // ── search inside files, and ranged reads ──
+    console.log('\nsearch_text and line ranges');
+    const s = await files.searchText(root, 'BRACKET');
+    check('search finds a phrase inside a file, case-insensitively, with its line',
+        s.count === 1 && s.matches[0].path === 'docs/spec.md' && s.matches[0].line === 2, JSON.stringify(s.matches));
+    const noisy = await files.searchText(root, 'noise');
+    check('search skips node_modules', noisy.count === 0, JSON.stringify(noisy.matches));
+    const leak = await files.searchText(root, 'hunter2');
+    check('search never reads outside the workspace', leak.count === 0, JSON.stringify(leak.matches));
+    await throws('a search folder outside the workspace is refused',
+        () => files.searchText(root, 'hunter2', '../workspace-secret'), 'escapes');
+    const scoped = await files.searchText(root, 'v', 'docs');
+    check('a search can be limited to a folder', scoped.matches.every(m => m.path.startsWith('docs/')), JSON.stringify(scoped.matches));
+    const ranged = await files.readTextFile(root, 'README.md', { startLine: 2, endLine: 2 });
+    check('a ranged read returns just those lines, numbered',
+        ranged.content === '2: Widget v13 open, v24 closed.' && ranged.startLine === 2 && ranged.endLine === 2, ranged.content);
+    await throws('a range past the end of the file says how long it is',
+        () => files.readTextFile(root, 'README.md', { startLine: 50 }), 'only 3 lines');
+
     // ── cleanup ──
     await fs.rm(tmp, { recursive: true, force: true });
     check('fixture cleaned up', !(await fs.access(tmp).then(() => true).catch(() => false)));

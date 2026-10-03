@@ -425,3 +425,43 @@ diagnostics, the engineer supplied them — "Pressure value (reactor_pressure_lo
 sides listed those numbers under "Know for certain". The unseen-file mark catches
 `reactor_containment_system.py` in that run but not a bare `reactor_pressure_log`, and not
 the figures, which no file rule can see.
+
+## Verified 2026-10-03 — search, line ranges, and asking you for a result
+
+Built from the Wayfarer runs: models with no way to get a result pretended to have one.
+
+- `search_text` and ranged `read_file`: `files_test` 53/53 (7 new — case-insensitive hits
+  with lines, node_modules skipped, nothing read outside the workspace, a search folder
+  outside it refused, numbered ranges, a range past the end refused).
+- `request_result`: `duet_request_test` 22/22, new, against a fake model — what is offered
+  with files on and off and to a model without tools; the request recorded, the finishing
+  round offered no tools; answers to the wrong side, to a reply that asked nothing, or to
+  nothing refused and nothing written; the answer linked and quoted in both contexts;
+  search then a ranged read, the trace recording files and lines, never text.
+- Found while testing: with `request_result` always offered, a fake that calls `read_file`
+  whenever it sees any tool reached the file layer on a turn where files were off (it
+  failed for want of a root, but it should never have been run). Only offered tools run
+  now; `duet_tools_test` 34/34 (1 new). The older `/api/chat` route has the same shape and
+  is flagged separately; the page no longer calls it.
+- In the page, against a scripted fake (port 8110): the request card, **Answer**, the
+  "Answering: …" chip, the answer quoting what it answers with its line to the request,
+  the card turning to *answered*; and an Auto run ending with "stand-in:7b asked you for a
+  result — answer it, then carry on".
+
+**Measured with the real models**, the scripted Wayfarer scenario, three fresh runs, all
+local, against the three no-rule runs of 2026-10-02:
+
+| Three runs each | Before | With request_result |
+|---|---|---|
+| Requests made | — | 6, by both models |
+| Replies claiming to do something | 11 | ~5 |
+| Replies naming an invented file | 6 | 0 |
+| Runs with invented readings | 2/3 | 1/3 |
+| The closing "known for certain" correct | 0/3 | 0/3 |
+
+Both models used it unprompted. Asked again with the result still missing, the alien said
+"I don't have the voltage/current or seal status measurements. We need these." The one
+invented reading came two turns after an unanswered request — the engineer supplied
+"234.2 V, 5.6 A, sealed" itself, and both sides then listed it as known. The script kept
+relaying past the request; the page's Auto run stops there. Claimed actions halve but do
+not go ("Reactor pulses have been stopped"). Three runs a side: direction, not proof.

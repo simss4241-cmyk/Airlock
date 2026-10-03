@@ -984,6 +984,8 @@ app.post('/api/duet/:id/send', async (req, res) => {
             retryOf: req.body.retryOf ? Number(req.body.retryOf) : null,
             // A chatter turn: answer the other participant's reply with this id.
             relayOf: req.body.relayOf ? Number(req.body.relayOf) : null,
+            // The user answering a participant's request_result: the reply that asked.
+            answers: req.body.answers ? Number(req.body.answers) : null,
             config,
             signal: controller.signal,
             emit

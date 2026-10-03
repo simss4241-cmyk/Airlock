@@ -153,7 +153,12 @@ function transcriptLine(message, opts, { attached = false } = {}) {
     const note = count && !attached
         ? ` [${count} image${count > 1 ? 's' : ''} attached here — not included in this context]`
         : '';
-    return `${label(message, opts)} ${message.content}${note}`;
+    // A reply that asked the user for a result says what it asked; an answer says what it
+    // answers. Data, like the label: the words are the participant's and the user's own.
+    const asked = (message.requestMeta?.requests || []).map(r => ` [asked the ${opts.userName}: "${r.text}"]`).join('');
+    const answering = message.requestMeta?.answers;
+    const prefix = answering ? `(answering ${String(answering.by).toUpperCase()}'s request: "${answering.request}") ` : '';
+    return `${label(message, opts)} ${prefix}${message.content}${note}${asked}`;
 }
 
 /** Ollama and the remote tier both take bare base64; the store keeps data URLs. */

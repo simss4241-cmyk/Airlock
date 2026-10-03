@@ -156,6 +156,37 @@ scanner's on that route (`tools/duet_tools_test.js`):
 Each reply records the calls it made in `request_meta.tools` (name, target, size, hash),
 and the pane shows them as cards.
 
+**The tools.** `list_directory`, `find_files` (by name), `search_text` (inside files:
+plain text, case-insensitive, each hit with its file and line; capped in files opened and
+hits, and a capped search says so), and `read_file` — whole, or with `start_line`/`end_line`
+for up to 400 numbered lines, so a quoted line can be checked against what was shown. A
+successful read or search also records what it showed — files, and for a range or a
+search which lines — as `seen` on the trace: paths and line numbers, never contents.
+The ⚠ unseen file mark reads it. Only offered tools run: a model that names a file tool
+on a turn where files were not offered is told so, and nothing on disk is touched.
+
+## Asking you for a result
+
+A participant can call `request_result`: "measure the silence after the next pulse",
+"what did the log say". It is offered to every model that can call tools, workspace or
+not, because the alternative was measured: models with no way to ask *pretend* — they
+reported tests they were running and readings ("500 kPa") nobody took.
+
+The request is not run. It is recorded on the reply (`request_meta.requests`), the model is
+told the result is unknown until you answer, and it gets one last round, with no tools, to
+say what it asked. The reply shows the request as a card with **Answer**. Answer puts
+"Answering: …" on that side's composer; what you send goes in linked to the request
+(`request_meta.answers`, and `replyTo`, so the timeline draws the line), quoting what it
+answers. The server refuses an answer aimed at the wrong side, at a reply that asked
+nothing, or at another thread, and writes nothing when it does. Both sides' contexts say
+what was asked (`[asked the User: "…"]`) and what answers it (`(answering LEFT's request:
+"…")`).
+
+**An Auto run stops on a request**: "Left asked you for a result — answer it, then carry
+on". Measured on the scripted Wayfarer run, a request left unanswered for two more turns
+was filled in by the model itself — invented readings, then listed as known. Only you can
+answer it, so the run waits for you. Step still works if you choose to go on without.
+
 ## Chatter
 
 The participants can answer each other. **⇄ Step**, in the chamber header, hands the floor
@@ -302,7 +333,8 @@ before stays exactly as above: shared by both lanes, owned by neither.
 | `public/duet.js` | the timeline and its lines, the panes, chatter, the chamber and its doors |
 | `tools/duet_context_test.js` | 61 assertions, offline: context, what counts as a repeat, what counts as a path |
 | `tools/duet_test.js` | 50 assertions over HTTP |
-| `tools/duet_tools_test.js` | 33 assertions: files, and every route to the cloud — fakes both sides |
+| `tools/duet_tools_test.js` | 34 assertions: files, and every route to the cloud — fakes both sides |
+| `tools/duet_request_test.js` | 22 assertions: asking you for a result, answers, search and line ranges — fake model |
 | `tools/duet_chatter_test.js` | 28 assertions: relays, refusals, interjections, the ledger — fakes both sides |
 
 ## Not built
