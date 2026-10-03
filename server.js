@@ -393,6 +393,8 @@ app.get('/api/health', async (req, res) => {
             // matters beyond the dot: with nothing local installed there is no gate, and
             // every crossing is refused.
             localModelInstalled: providers.localModels().length > 0,
+            // What a duet side's 🌐 switch can offer: search needs a key, fetch does not.
+            web: require('./web').available(),
             activeModel: config.model,
             // Which local model rules on crossings right now — the same resolution runGate
             // makes, so the boundary bar names the gate that will actually run. null means
@@ -980,6 +982,8 @@ app.post('/api/duet/:id/send', async (req, res) => {
             images: req.body.images,
             // Files are opt-in per request, and only an explicit true opts in.
             tools: req.body.tools === true,
+            // The web is opt-in per request too, and off unless asked for.
+            web: req.body.web === true,
             clientRequestId: req.body.clientRequestId,
             retryOf: req.body.retryOf ? Number(req.body.retryOf) : null,
             // A chatter turn: answer the other participant's reply with this id.

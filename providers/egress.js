@@ -25,6 +25,12 @@
  *       Anything that carries content off the machine. Refused unless the kernel issued
  *       `clearance` for this model.
  *
+ *   web(url, init, { destination, content, clearance })
+ *       A web search or a page fetch (web.js). Refused unless the kernel issued
+ *       `clearance` for that destination AND that exact content — the query, or the link —
+ *       so a cleared search cannot carry a different query. A fetch may follow redirects;
+ *       each hop is a URL the page chose, and the clearance is for the link that was given.
+ *
  * This is the second lock. providers.chat() is the first: it will not hand a request to
  * a provider without a clearance, and it runs the gate itself if the caller did not.
  * This file exists so that a provider path which somehow skipped that step still cannot
@@ -73,4 +79,12 @@ function remote(url, init = {}, { model, clearance } = {}) {
     return fetch(url, init);
 }
 
-module.exports = { OLLAMA, local, catalogue, remote, EgressRefused };
+function web(url, init = {}, { destination, content, clearance } = {}) {
+    if (!/^web:/.test(String(destination || ''))) throw new EgressRefused('web() is for web requests only.');
+    if (!kernel().covers(clearance, destination, [kernel().outboundUnit(destination, content)])) {
+        throw new EgressRefused('No clearance was issued for this web request, so nothing was sent.');
+    }
+    return fetch(url, init);
+}
+
+module.exports = { OLLAMA, local, catalogue, remote, web, EgressRefused };

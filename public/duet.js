@@ -274,7 +274,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
         .filter(t => (t.name || t.tool) !== 'request_result');
     const toolCards = calls.length
         ? `<div class="tools">${calls.map(t => `
-               <div class="tool${t.ok ? '' : ' bad'}">
+               <div class="tool${t.ok ? '' : ' bad'}${t.crossed ? ' web-out' : ''}">
                    <span class="tool-name">${escapeHtml(t.name || t.tool || 'tool')}</span>
                    <span class="tool-sum">${escapeHtml(t.summary || t.label || '')}</span>
                </div>`).join('')}</div>`
@@ -1004,6 +1004,7 @@ async function submit(participantId, { retryOf = null, relayOf = null } = {}) {
                 text: automatic ? undefined : text,
                 images: staged.length ? staged.map(p => p.dataUrl) : undefined,
                 tools: filesWanted(participantId),
+                web: webWanted(participantId),
                 clientRequestId: automatic ? undefined : requestId,
                 retryOf,
                 relayOf,
@@ -1151,7 +1152,7 @@ function handleEvent(participantId, event, streamed) {
 
         case 'tool': {
             const message = messageById(event.messageId);
-            if (message) (message.tools ||= []).push({ name: event.name, ok: event.ok, summary: event.summary });
+            if (message) (message.tools ||= []).push({ name: event.name, ok: event.ok, summary: event.summary, crossed: event.crossed });
             schedulePaint(participantId);
             return streamed;
         }
@@ -1254,6 +1255,7 @@ function buildPane(who) {
             <div class="row">
                 <button class="icon-btn sm duet-attach" title="Attach an image (needs a 👁 model) or a text file">📎</button>
                 <button class="icon-btn sm toggle duet-files" type="button">⛁ files</button>
+                <button class="icon-btn sm toggle duet-web" type="button">🌐 web off</button>
                 <input type="file" class="duet-file" multiple hidden
                        accept="image/*,.md,.markdown,.txt,.text,.json,.csv,.log,.yml,.yaml,.js,.ts,.py,.ps1,.scad,.html,.css">
                 <button class="icon-btn sm duet-retry" hidden title="Ask again — the original request is reused, not repeated">↻ retry</button>
@@ -1280,7 +1282,19 @@ function buildPane(who) {
         file: node.querySelector('.duet-file'),
         focus: node.querySelector('.duet-focus'),
         fold: node.querySelector('.duet-fold'),
-        files: node.querySelector('.duet-files')
+        files: node.querySelector('.duet-files'),
+        web: node.querySelector('.duet-web')
+    };
+
+    nodes.web.onclick = () => {
+        const on = !webWanted(who.id);
+        try { localStorage.setItem(webKey(who.id), on ? '1' : '0'); } catch { /* session only */ }
+        paintWeb(who.id);
+        if (on) {
+            flash(`${participant(who.id)?.name || 'This side'} may now use the web. Every search query leaves this machine, `
+                + 'so the local gate rules on each one first — from either side. A fetch opens only a link from a '
+                + 'search result or from you, never one the model made up. Each one is on the record.', 10000);
+        }
     };
 
     nodes.files.onclick = () => {
@@ -1391,7 +1405,35 @@ function filesWanted(id) {
     return stored === null ? !isRemote(id) : stored === '1';
 }
 
+/**
+ * The web is off until switched on, on BOTH sides — unlike files, which a local side reads
+ * without anything leaving. A search sends words a model wrote off this machine, whichever
+ * side wrote them.
+ */
+const webKey = id => `airlock.duet.web.${id}`;
+function webWanted(id) {
+    try { return localStorage.getItem(webKey(id)) === '1'; } catch { return false; }
+}
+
+function paintWeb(id) {
+    const pane = panes.get(id);
+    if (!pane?.nodes.web) return;
+    const model = participant(id)?.model;
+    const canTool = Boolean(state.models.find(m => m.name === model)?.caps?.includes('tools'));
+    const on = webWanted(id) && canTool;
+    const btn = pane.nodes.web;
+    btn.classList.toggle('on', on);
+    btn.classList.toggle('remote', on);
+    btn.disabled = !canTool;
+    btn.textContent = !canTool ? '🌐 no tools' : on ? '🌐 web' : '🌐 web off';
+    const search = state.web?.search;
+    btn.title = !canTool ? `${model} can't call tools`
+        : on ? `May ${search ? 'search the web and ' : ''}open links. Queries are ruled on by the local gate before they leave. Click to turn off.`
+            : `Click to let ${participant(id)?.name || 'this side'} ${search ? 'search the web and ' : ''}open links${search ? '' : ' (search needs TAVILY_API_KEY)'}`;
+}
+
 function paintFiles(id) {
+    paintWeb(id);
     const pane = panes.get(id);
     if (!pane) return;
     const model = participant(id)?.model;
@@ -1624,6 +1666,7 @@ async function loadModels() {
     try {
         const h = await (await fetch('/api/health')).json();
         if (Array.isArray(h.models)) state.models = h.models;
+        state.web = h.web || null;
     } catch { /* the picker degrades to whatever is already selected */ }
 }
 

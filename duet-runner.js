@@ -46,6 +46,7 @@ const kernel = require('./kernel');
 const sandbox = require('./sandbox');
 const { buildContext } = require('./duet-context');
 const workspace = require('./workspace-tools');
+const web = require('./web');
 
 const { STATUS } = duet;
 
@@ -260,7 +261,7 @@ function resolveTrigger({ threadId, participant, text, images = [], clientReques
  */
 async function generate({
     threadId, participantId, text, images, tools: wantTools = false, clientRequestId, retryOf,
-    relayOf = null, answers = null, config, signal, emit
+    relayOf = null, answers = null, web: wantWeb = false, config, signal, emit
 }) {
     const participant = duet.getParticipant(participantId);
     if (!participant) throw new Error(`No participant ${participantId}`);
@@ -406,7 +407,24 @@ async function generate({
     // Asking the user for a result is offered to any model that can call tools, files or
     // not: a participant that cannot measure something should ask, not pretend.
     const canRequest = capsNow.includes('tools');
-    const offered = [...(useTools ? workspace.TOOLS : []), ...(canRequest ? [workspace.REQUEST_TOOL] : [])];
+    const useWeb = Boolean(wantWeb) && capsNow.includes('tools');
+    const offered = [
+        ...(useTools ? workspace.TOOLS : []),
+        ...(useWeb ? web.toolsFor() : []),
+        ...(canRequest ? [workspace.REQUEST_TOOL] : [])
+    ];
+
+    // The links a fetch may open: ones someone other than the model wrote — the user, in
+    // this conversation, or a search result an earlier call returned. Never one the model
+    // composed: a URL is the easiest place to hide what a model has read.
+    const fetchable = new Set();
+    if (useWeb) {
+        for (const m of snapshot) {
+            if (m.role === 'user') web.urlsIn(m.content).forEach(u => fetchable.add(web.normalizeUrl(u)));
+            for (const t of m.requestMeta?.tools || []) (t.urls || []).forEach(u => fetchable.add(web.normalizeUrl(u)));
+        }
+        fetchable.delete(null);
+    }
 
     // Which of the context's own messages were written after reading the workspace. When
     // they cross now, as someone else's context, the record says which files were behind
@@ -573,7 +591,22 @@ async function generate({
                 // ⚠ Only what was offered runs. A model can name any tool it likes; one asking
                 // for files on a turn where files were not offered gets told so, and nothing
                 // on disk is touched — not even a failed lookup.
-                const fileCalls = toolCalls.filter(c => c.function?.name !== 'request_result');
+                // The web: every call is a crossing, from either side. A query is ruled on by
+                // the gate before it leaves; a fetch opens only a link someone else wrote.
+                const webCalls = toolCalls.filter(c => c.function?.name === 'web_search' || c.function?.name === 'fetch_url');
+                for (const call of webCalls) {
+                    const name = call.function.name;
+                    let args = call.function?.arguments ?? {};
+                    if (typeof args === 'string') { try { args = JSON.parse(args); } catch { args = {}; } }
+                    const out = await runWeb({ name, args, offered: useWeb, fetchable, config, threadId, reply, signal });
+                    convo.push({ role: 'tool', tool_name: name, content: JSON.stringify(out.result).slice(0, 60000) });
+                    toolTrace.push(out.trace);
+                    emit({ type: 'tool', messageId: reply.id, name, args: out.trace.args, ok: out.trace.ok,
+                        summary: out.trace.summary, web: true, crossed: Boolean(out.trace.crossed) });
+                    if (crosses && out.trace.ok) pendingArtifacts.push({ label: out.trace.label });
+                }
+
+                const fileCalls = toolCalls.filter(c => !['request_result', 'web_search', 'fetch_url'].includes(c.function?.name));
                 const allowed = useTools ? fileCalls : [];
                 for (const call of useTools ? [] : fileCalls) {
                     const name = String(call.function?.name || 'tool');
@@ -648,6 +681,86 @@ async function generate({
 
         return reply;
     }
+}
+
+/**
+ * One web call: refused, withheld, failed or done — and what goes back to the model, and on
+ * the reply's record. Never throws: a web failure is a tool result the model can read.
+ */
+async function runWeb({ name, args, offered, fetchable, config, threadId, reply, signal }) {
+    const fail = (summary, error, extra = {}) => ({
+        result: { error },
+        trace: { name, tool: name, target: extra.target || '', ok: false, summary, args: extra.args || {}, ...extra }
+    });
+    if (!offered) return fail(`${name} not offered — not run`, `${name} is not available on this turn: the web was not offered.`);
+
+    const over = auth.spendRemote();
+    if (over) return fail(`${name} — over the remote allowance`, over);
+
+    if (name === 'web_search') {
+        const query = String(args.query || '').trim().slice(0, 400);
+        if (!query) return fail('web_search needs a query', 'web_search needs a query.');
+        let cleared;
+        try {
+            cleared = await kernel.clearOutbound({ destination: 'web:search', label: 'Tavily web search', text: query, config, threadId });
+        } catch (err) {
+            cleared = { ok: false, ruling: { release: false, reason: `The gate could not be reached (${err.message}), so nothing was sent.` } };
+        }
+        if (!cleared.ok) {
+            return fail(`search withheld by the gate — ${cleared.ruling.reason}`,
+                `The local gate withheld this search, and nothing was sent: ${cleared.ruling.reason}`,
+                { target: query, args: { query }, withheld: true });
+        }
+        let found;
+        try { found = await web.search(query, { signal, clearance: cleared.token }); }
+        catch (err) { return fail(`search failed — ${err.message}`, err.message, { target: query, args: { query }, crossed: true }); }
+        recordWebCrossing(reply.id, threadId, { actor: 'Tavily (web search)', label: `web_search("${query}")`, gate: cleared.ruling });
+        try { store.recordUsage({ purpose: 'web search', model: 'tavily', tier: 'remote', threadId, packetId: reply.id }); }
+        catch (err) { console.error('search usage not recorded:', err.message); }
+        found.results.forEach(r => fetchable.add(web.normalizeUrl(r.url)));
+        return {
+            result: found,
+            trace: { name, tool: name, target: query, ok: true, crossed: true, args: { query },
+                label: `web_search("${query}") ${found.results.length} result(s)`,
+                summary: `"${query}" — ${found.results.length} result(s)`,
+                urls: found.results.map(r => r.url) }
+        };
+    }
+
+    // fetch_url
+    const raw = String(args.url || '').trim();
+    const url = web.normalizeUrl(raw);
+    if (!url) return fail('fetch_url needs a URL', 'fetch_url needs a valid URL.', { args: { url: raw } });
+    if (!fetchable.has(url)) {
+        return fail('link not given — not fetched',
+            'fetch_url only opens a link you were given — from a web_search result or a message from the User. That URL was not one of them, so nothing was fetched.',
+            { target: url, args: { url } });
+    }
+    // The model did not write this URL, so there is nothing of its context to rule on. The
+    // kernel's scanner still reads it: a link pasted with a token in it is a credential leaving.
+    const link = kernel.clearLink({ url });
+    if (!link.ok) {
+        return fail('link carries a credential — not fetched', 'That link appears to carry a credential, so it was not fetched.',
+            { target: url, args: { url }, withheld: true });
+    }
+    let page;
+    try { page = await web.fetchPage(url, { signal, clearance: link.token }); }
+    catch (err) { return fail(`fetch failed — ${err.message}`, err.message, { target: url, args: { url } }); }
+    const host = new URL(page.url).host;
+    recordWebCrossing(reply.id, threadId, { actor: `web (${host})`, label: `fetch_url(${page.url})`, gate: null });
+    return {
+        result: page,
+        trace: { name, tool: name, target: page.url, ok: true, crossed: true, args: { url },
+            label: `fetch_url(${page.url}) ${page.chars} chars`,
+            summary: `${host} — ${page.chars.toLocaleString()} chars${page.truncated ? ' (truncated)' : ''}` }
+    };
+}
+
+/** A web request left: on the reply's record, so "what has crossed" includes it. */
+function recordWebCrossing(packetId, threadId, { actor, label, gate }) {
+    try {
+        store.recordArtifactCrossing(packetId, { actor, transport: 'web', gate, artifacts: [{ label }] });
+    } catch (err) { console.error('web crossing not recorded:', err.message); }
 }
 
 /** Queue depth per tier, for the status line. */

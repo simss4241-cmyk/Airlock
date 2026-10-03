@@ -1073,6 +1073,10 @@ main {
 .ask-done { font-size: 0.8em; opacity: 0.7; }
 .ask-quote { font-size: 0.8em; opacity: 0.75; margin-bottom: 4px; border-left: 2px solid var(--user-line); padding-left: 8px; }
 .answer-chip span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32em; }
+/* A web request that left this machine: amber, the crossing colour, like any crossing. */
+.tool.web-out { border-color: var(--cross-dim); }
+.tool.web-out .tool-name { color: var(--cross); }
+.tool.web-out .tool-name::before { content: '↗ '; }
 .badge.repeat { border-color: var(--user-line); color: var(--user-text); background: var(--panel-2); cursor: help; }
 .badge.secret { border-color: #4a1d1f; color: #ffb3b5; background: rgba(255, 90, 95, .08); cursor: help; }
 .badge.review { border-color: var(--accent-dim); color: var(--accent); background: rgba(118, 185, 0, .07); }
@@ -1648,7 +1652,9 @@ main::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
 
 /* Files switched on for a side across the boundary: amber, because every file it reads is a
    candidate crossing. */
-.icon-btn.toggle.duet-files.on.remote {
+/* The web on, either side: amber always — every search leaves the machine. */
+.icon-btn.toggle.duet-files.on.remote,
+.icon-btn.toggle.duet-web.on {
     color: var(--cross);
     border-color: var(--cross-dim);
     background: linear-gradient(180deg, #2a2010, #1d170c);

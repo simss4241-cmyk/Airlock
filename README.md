@@ -58,11 +58,12 @@ what leaves it. This table is the honest version — clone it and check.
 | Token spend on the record — every reply, gate ruling and review, per model, in a server ledger | working |
 | Per-thread consent retired; an old database is cleaned on open | working, 7 assertions |
 | Every turn gated, bound to the exact words sent — only what is new is re-read | working |
-| One door: nothing reaches the network without a clearance the kernel issued | working, 34 assertions |
+| One door: nothing reaches the network without a clearance the kernel issued — the web included | working, 34 assertions |
 | Tool results a remote model reads are gated, and recorded as crossed | working, 12 assertions end to end |
 | Workspace files in a duet, ruled on by every route to a cloud model: directly, through shared history, after a move, by hand | working, 34 assertions end to end |
 | Search inside workspace files; read a numbered line range | working |
 | A participant can ask you for a result instead of inventing one; your answer is linked to the request | working, 22 assertions end to end |
+| The web: search (Tavily) and fetch, off by default; every query gated from either side, only given links opened, all on the record | working, 31 assertions |
 | A single message dragged or copied out is scanned on the way; a credential does not leave | working |
 | Carry out by hand: the brief is gated before it is shown, and recorded when it leaves | working |
 | Redaction — crossing a brief with the sensitive parts stripped | not built |
@@ -71,7 +72,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Per-visitor settings, remote budgets, gate memory and generation slots; a daily cap that survives restarts | working |
 | Hosted deployment on Nebius AI Cloud, with the gate beside the app | not built |
 
-**698 assertions across eighteen suites.** Run them:
+**729 assertions across nineteen suites.** Run them:
 
 ```
 npm start                          # in one terminal
@@ -86,6 +87,7 @@ node tools/duet_test.js            # two participants, one conversation
 node tools/duet_tools_test.js      # workspace files in a duet, every route to the cloud (fakes both sides)
 node tools/duet_chatter_test.js    # the participants answering each other (fakes both sides)
 node tools/duet_request_test.js    # asking you for a result; search and line ranges (fake model)
+node tools/web_test.js             # web search and fetch: the gate, given links only, the door (fakes)
 node tools/clearance_test.js       # retired per-thread consent is removed from old databases
 node tools/secrets_test.js         # the credential scanner in front of the gate (offline)
 node tools/kernel_test.js          # the kernel, both locks, one door

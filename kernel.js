@@ -186,6 +186,46 @@ async function clear({ model, messages = [], config = {}, threadId = null }) {
     return { ok: true, token: issue(model, units.map(u => u.h), ruling), ruling, fresh: fresh.length };
 }
 
+/** The unit a web clearance is bound to: the destination and the exact text sent. */
+const outboundUnit = (destination, text) => ({ role: 'outbound', content: `to ${destination}: ${text}` });
+
+/**
+ * Rule on a web search query before it leaves. Unlike clear(), no destination skips it: a
+ * query a LOCAL model wrote leaves this machine just as surely as one a cloud model wrote,
+ * and may carry whatever was in that model's context. Same gate, same scanner in front of
+ * it, same memory — a query already released is not ruled on twice.
+ *
+ * Returns { ok, ruling, token }: the token is what egress.web() demands, bound to this
+ * exact query, so the second lock holds for the web as it does for models.
+ */
+async function clearOutbound({ destination = 'web:search', label = 'a web search', text, config = {}, threadId = null }) {
+    const unit = outboundUnit(destination, text);
+    const h = unitHash(unit);
+    let ruling = COVERED;
+    if (!released().has(h)) {
+        ruling = await require('./boundary').runGate(
+            `outbound request (it leaves this machine for ${label}):\n${text}`, { config });
+        recordGateUsage(ruling, threadId);
+        if (!ruling.release) return { ok: false, ruling };
+        remember(h, 'gate', ruling.model || null);
+    }
+    return { ok: true, ruling, token: issue(destination, [h], ruling) };
+}
+
+/**
+ * Clear a link to be fetched. The model did not write it — the caller has already checked
+ * it came from the user or a search result — so there is none of its context to rule on;
+ * the scanner still reads it, because a link pasted with a token in it is a credential
+ * leaving. Returns { ok, ruling, token } like clearOutbound.
+ */
+function clearLink({ url }) {
+    if (require('./secrets').scan(url).length) {
+        return { ok: false, ruling: { release: false, reason: 'That link appears to carry a credential.', concerns: ['credential'] } };
+    }
+    const ruling = { release: true, reason: 'A link the model did not write; scanned for credentials.', concerns: [] };
+    return { ok: true, ruling, token: issue('web:fetch', [unitHash(outboundUnit('web:fetch', url))], ruling) };
+}
+
 /**
  * An operator overrode the gate. The content goes, and the record says who decided.
  *
@@ -231,6 +271,7 @@ const isIssuedFor = (token, model) => Boolean(token) && issued.has(token) && tok
     && token.scope === sandbox.scopeKey();
 
 module.exports = {
+    clearOutbound, clearLink, outboundUnit,
     clear, override, acknowledge, covers, isIssuedFor, unitHash,
     // Tests reach in to simulate a restart: the CURRENT scope's record.
     get _released() { return released(); }

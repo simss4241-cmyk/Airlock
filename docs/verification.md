@@ -465,3 +465,27 @@ invented reading came two turns after an unanswered request — the engineer sup
 "234.2 V, 5.6 A, sealed" itself, and both sides then listed it as known. The script kept
 relaying past the request; the page's Auto run stops there. Claimed actions halve but do
 not go ("Reactor pulses have been stopped"). Three runs a side: direction, not proof.
+
+## Verified 2026-10-03 — the web: Tavily search and page fetch
+
+The first way for a LOCAL participant to send anything off this machine, so built as a
+crossing from the start.
+
+- `web_test` 31/31, new, against a fake search service, a fake page and a fake model:
+  nine address refusals in-process (loopback, localhost, ::1, private, metadata, hex
+  loopback, IPv6-mapped loopback, file:, a URL with a password); HTML to text; the door
+  (no clearance refused, a clearance for one link does not open another or a search); web
+  off offers nothing; a local side's query reaching the service once with the key in the
+  header; a non-web result dropped; a result's link opened; the page read without its
+  scripts and marked untrusted, its injected "ignore your instructions" arriving as data;
+  search and fetch on the crossing record and the search on the ledger; a query the gate
+  withholds never reaching the service; a composed URL refused with no request made; a
+  link the user wrote opened.
+- The one-door invariant caught the first draft: `kernel_test` failed on `web.js` calling
+  fetch directly. Fixed by a third egress door, `egress.web()`, demanding a kernel
+  clearance bound to the exact query or link — not by exempting the file. 34/34.
+- Every suite rerun: all pass.
+- In the page, against the fakes (port 8110): the 🌐 switch off on both sides, amber when
+  on, with its notice; ↗ web_search and ↗ fetch_url as amber cards; the bar's crossed
+  count rising for a local side's search.
+- Not yet run against the real Tavily service.
