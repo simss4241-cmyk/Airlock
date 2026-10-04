@@ -516,3 +516,18 @@ fakes (a fake cloud model, search, fetch and a withheld turn): "↗ 3 to cloud �
 and its host, 1 turn withheld, 1 reply from a cloud model. The first draft hung the panel
 from the bar, which scrolls sideways and cropped it; it now sits outside the bar, placed
 under the pill.
+
+## Verified 2026-10-03 — search cards you can open, links you can follow
+
+From the first real run on the desk: nemotron-3-nano:4b, 🌐 on, asked for NASA's latest
+Webb news. Tavily returned five generic NASA homepages (Wikipedia's NASA page, nasa.gov,
+plus.nasa.gov, science.nasa.gov, mars.nasa.gov) — nothing about Webb — and the model opened
+plus.nasa.gov and called it done. None of that was visible on the card.
+
+Now a search card opens to the full result list, each a link (new tab, `noopener
+noreferrer nofollow`, no referrer), with **opened** on the ones the reply fetched; a fetch
+card links to its page. The trace keeps result titles and the page title. Opened cards stay
+open across the timeline's redraws (it redraws on every streamed token). `web_test` 33/33
+(1 new). Seen in the page on a copy of the desk database: the five NASA links, plus.nasa.gov
+marked opened. Note for that run: the desk server had to be restarted to pick up the web
+tools — a page reload alone serves the new page to the old server, which ignores the switch.

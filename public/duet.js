@@ -159,6 +159,69 @@ function repeatOf(message) {
     return hit;
 }
 
+// ─────────────────────────── tool cards ───────────────────────────
+
+/** Search cards you opened stay open: the timeline redraws on every streamed token. */
+const openCards = new Set();
+
+/** A link from the web, made safe to show: http(s) only, or null. */
+function safeLink(raw) {
+    try {
+        const u = new URL(String(raw));
+        return /^https?:$/.test(u.protocol) ? u : null;
+    } catch { return null; }
+}
+
+const sameLink = (a, b) => {
+    const strip = u => { const x = safeLink(u); if (!x) return null; x.hash = ''; return x.toString().replace(/\/$/, ''); };
+    return strip(a) && strip(a) === strip(b);
+};
+
+/**
+ * A link that leaves Airlock for your own browser: a new tab, no referrer (the page is not
+ * told it was opened from localhost), and nofollow. Opening it is your choice, not the
+ * model's — the model only ever reads pages through fetch_url, on the record.
+ */
+const outLink = (url, text) =>
+    `<a class="web-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer nofollow" referrerpolicy="no-referrer">${escapeHtml(text)}</a>`;
+
+/**
+ * One tool call. A web search opens to show every result — title, site, link — and which of
+ * them this reply went on to open; a fetch links to the page it read. Everything else is
+ * the one-line card it always was.
+ */
+function toolCard(t, calls, key = '') {
+    const name = t.name || t.tool || 'tool';
+    const classes = `tool${t.ok ? '' : ' bad'}${t.crossed ? ' web-out' : ''}`;
+    const head = `<span class="tool-name">${escapeHtml(name)}</span>
+                  <span class="tool-sum">${escapeHtml(t.summary || t.label || '')}</span>`;
+
+    const results = name === 'web_search' && t.ok
+        ? (t.results || (t.urls || []).map(url => ({ url, title: '' }))).filter(r => safeLink(r.url))
+        : [];
+    if (results.length) {
+        const opened = calls.filter(c => (c.name || c.tool) === 'fetch_url' && c.ok);
+        const rows = results.map(r => {
+            const u = safeLink(r.url);
+            const read = opened.some(c => sameLink(c.target, r.url));
+            return `<li class="web-result${read ? ' read' : ''}">
+                ${outLink(u.toString(), r.title || u.toString())}
+                <span class="web-host">${escapeHtml(u.host)}</span>
+                ${read ? '<span class="web-read" title="This reply opened this result with fetch_url">opened</span>' : ''}
+            </li>`;
+        }).join('');
+        return `<details class="${classes} web-card" data-card="${escapeHtml(key)}"${openCards.has(key) ? ' open' : ''}><summary>${head}<span class="web-more">${results.length} result${results.length === 1 ? '' : 's'}</span></summary>
+                   <ol class="web-results">${rows}</ol></details>`;
+    }
+
+    if (name === 'fetch_url' && t.ok && safeLink(t.target)) {
+        const u = safeLink(t.target);
+        return `<div class="${classes}">${head}
+                   <span class="web-page">${outLink(u.toString(), t.title || u.toString())}</span></div>`;
+    }
+    return `<div class="${classes}">${head}</div>`;
+}
+
 /**
  * The files a reply names that nobody in this thread has seen — by the rule in
  * public/evidence.js. Seen means: a tool read it (either side; its words may be quoted
@@ -273,11 +336,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
     const calls = (message.tools || message.requestMeta?.tools || [])
         .filter(t => (t.name || t.tool) !== 'request_result');
     const toolCards = calls.length
-        ? `<div class="tools">${calls.map(t => `
-               <div class="tool${t.ok ? '' : ' bad'}${t.crossed ? ' web-out' : ''}">
-                   <span class="tool-name">${escapeHtml(t.name || t.tool || 'tool')}</span>
-                   <span class="tool-sum">${escapeHtml(t.summary || t.label || '')}</span>
-               </div>`).join('')}</div>`
+        ? `<div class="tools">${calls.map((t, i) => toolCard(t, calls, `${message.id}:${i}`)).join('')}</div>`
         : '';
 
     // What this reply asked the user for (request_result): a card, answered or waiting. Live
@@ -438,6 +497,9 @@ function paintTimeline() {
     wireCopyButtons(grid);
     wireHandoff(grid);
     grid.querySelectorAll('.ask-answer').forEach(b => { b.onclick = () => startAnswer(Number(b.dataset.answer)); });
+    grid.querySelectorAll('details.web-card').forEach(card => {
+        card.ontoggle = () => { card.open ? openCards.add(card.dataset.card) : openCards.delete(card.dataset.card); };
+    });
     if (wasPinned) scroller.scrollTop = scroller.scrollHeight;
     drawWires();
 }
@@ -1175,7 +1237,9 @@ function handleEvent(participantId, event, streamed) {
                 ? `${usage.reply ?? '?'} tokens · ${tps} tok/s · ${usage.prompt ?? '?'} prompt tokens`
                 : '';
 
-            upsert({ ...event.message, streaming: false, stats, thinking: event.thinking || null });
+            // tools: null — the stored trace on requestMeta replaces the live cards, and it
+            // carries what the live events do not: the links a search returned, page titles.
+            upsert({ ...event.message, streaming: false, stats, thinking: event.thinking || null, tools: null });
             refreshUsage();          // the ledger has the new row; the pill reads it
             pane.status = 'idle';
             schedulePaint(participantId);

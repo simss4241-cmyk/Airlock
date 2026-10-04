@@ -207,7 +207,11 @@ query is words a model wrote, and can carry whatever is in that model's context,
 
 On a cloud side, the results then go to that model in the next tool round, and are ruled
 on like a file result. Web cards are amber (↗) on the reply; a withheld or refused call is
-marked and says why. `tools/web_test.js`, 32 assertions, against a fake search service,
+marked and says why. A search card opens to list every result — title, site, link — and
+marks the ones this reply **opened**; a fetch card links to the page it read. The links
+open in your own browser, in a new tab, with no referrer: following one is your choice,
+not the model's, and is not on the record. The reply keeps result titles and links on its
+trace for this (public links only — never page text). `tools/web_test.js`, 33 assertions, against a fake search service,
 a fake page and a fake model.
 
 ## Asking you for a result
@@ -380,7 +384,7 @@ before stays exactly as above: shared by both lanes, owned by neither.
 | `tools/duet_context_test.js` | 61 assertions, offline: context, what counts as a repeat, what counts as a path |
 | `tools/duet_test.js` | 50 assertions over HTTP |
 | `tools/duet_tools_test.js` | 36 assertions: files, and every route to the cloud — fakes both sides |
-| `tools/web_test.js` | 32 assertions: search and fetch, the gate on queries, given links only, the door, private addresses |
+| `tools/web_test.js` | 33 assertions: search and fetch, the gate on queries, given links only, the door, private addresses |
 | `tools/duet_request_test.js` | 22 assertions: asking you for a result, answers, search and line ranges — fake model |
 | `tools/duet_chatter_test.js` | 28 assertions: relays, refusals, interjections, the ledger — fakes both sides |
 

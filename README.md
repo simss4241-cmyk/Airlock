@@ -63,7 +63,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Workspace files in a duet, ruled on by every route to a cloud model: directly, through shared history, after a move, by hand | working, 36 assertions end to end |
 | Search inside workspace files; read a numbered line range | working |
 | A participant can ask you for a result instead of inventing one; your answer is linked to the request | working, 22 assertions end to end |
-| The web: search (Tavily) and fetch, off by default; every query gated from either side, only given links opened, all on the record | working, 32 assertions |
+| The web: search (Tavily) and fetch, off by default; every query gated from either side, only given links opened, all on the record | working, 33 assertions |
 | One count of what has left this machine, by kind — to cloud models, searches, pages, carried by hand — with what was withheld and what came back | working |
 | A single message dragged or copied out is scanned on the way; a credential does not leave | working |
 | Carry out by hand: the brief is gated before it is shown, and recorded when it leaves | working |
@@ -73,7 +73,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Per-visitor settings, remote budgets, gate memory and generation slots; a daily cap that survives restarts | working |
 | Hosted deployment on Nebius AI Cloud, with the gate beside the app | not built |
 
-**732 assertions across nineteen suites.** Run them:
+**733 assertions across nineteen suites.** Run them:
 
 ```
 npm start                          # in one terminal

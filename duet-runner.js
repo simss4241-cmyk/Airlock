@@ -723,7 +723,9 @@ async function runWeb({ name, args, offered, fetchable, config, threadId, reply,
             trace: { name, tool: name, target: query, ok: true, crossed: true, args: { query },
                 label: `web_search("${query}") ${found.results.length} result(s)`,
                 summary: `"${query}" — ${found.results.length} result(s)`,
-                urls: found.results.map(r => r.url) }
+                urls: found.results.map(r => r.url),
+                // Public links and their titles — what the search returned, shown on the card.
+                results: found.results.map(r => ({ title: r.title, url: r.url })) }
         };
     }
 
@@ -750,7 +752,7 @@ async function runWeb({ name, args, offered, fetchable, config, threadId, reply,
     recordWebCrossing(reply.id, threadId, { actor: `web (${host})`, label: `fetch_url(${page.url})`, gate: null });
     return {
         result: page,
-        trace: { name, tool: name, target: page.url, ok: true, crossed: true, args: { url },
+        trace: { name, tool: name, target: page.url, ok: true, crossed: true, args: { url }, title: page.title,
             label: `fetch_url(${page.url}) ${page.chars} chars`,
             summary: `${host} — ${page.chars.toLocaleString()} chars${page.truncated ? ' (truncated)' : ''}` }
     };

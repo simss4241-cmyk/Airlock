@@ -236,6 +236,11 @@ async function main() {
             'the search is shown as a crossing; a result that is not a web page is dropped', JSON.stringify(s));
         ok(f?.name === 'fetch_url' && f.ok && f.crossed && pageHits.includes('/robots'),
             'a link from a search result is opened', JSON.stringify(f));
+        const trace = found.last('done')?.message?.requestMeta?.tools || [];
+        ok(JSON.stringify(trace[0]?.results) === JSON.stringify([{ title: 'Teal robots, a field guide', url: `${PAGE}/robots` }])
+            && trace[1]?.title === 'Teal robots',
+            'the reply keeps what was found — result titles and links, the page title — for the card to show',
+            JSON.stringify(trace.map(t => t.results || t.title)));
         const shown = bodies[bodies.length - 1].messages.filter(m => m.role === 'tool').map(m => m.content).join('\n');
         ok(shown.includes('Teal hides scuffs & reads as friendly.') && !shown.includes('stealCookies'),
             'the model reads the page as text, without its scripts');

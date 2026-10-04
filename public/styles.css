@@ -1107,6 +1107,21 @@ main {
 .answer-chip span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32em; }
 /* A web request that left this machine: amber, the crossing colour, like any crossing. */
 .tool.web-out { border-color: var(--cross-dim); }
+
+/* A search that opens up: every result, its site, and which ones the reply opened. */
+.web-card { display: block; }
+.web-card > summary { display: flex; align-items: baseline; gap: 8px; cursor: pointer; list-style: none; }
+.web-card > summary::-webkit-details-marker { display: none; }
+.web-more { margin-left: auto; flex: none; color: var(--muted); font-size: 10.5px; }
+.web-more::after { content: ' ▸'; }
+.web-card[open] .web-more::after { content: ' ▾'; }
+.web-results { margin: 6px 0 2px; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.web-result { color: var(--muted); font-size: 11.5px; line-height: 1.35; }
+.web-result .web-host { margin-left: 6px; font-size: 10.5px; opacity: .75; }
+.web-result .web-read { margin-left: 6px; font-size: 10px; color: var(--cross); border: 1px solid var(--cross-dim); border-radius: 4px; padding: 0 4px; }
+.web-link { color: var(--user-text); text-decoration: underline; text-decoration-color: var(--user-line); text-underline-offset: 2px; overflow-wrap: anywhere; }
+.web-link:hover { color: var(--text); text-decoration-color: var(--cross); }
+.web-page { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; font-size: 11px; }
 .tool.web-out .tool-name { color: var(--cross); }
 .tool.web-out .tool-name::before { content: '↗ '; }
 .badge.repeat { border-color: var(--user-line); color: var(--user-text); background: var(--panel-2); cursor: help; }
