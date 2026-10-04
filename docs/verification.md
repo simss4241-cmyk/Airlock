@@ -549,3 +549,25 @@ pill now reads only the open thread's messages, and repaints once they load.
 Checked in the page on a copy of the desk database (port 8110): double-click on a thread
 not yet open → rename box, focused, saved on Enter, in the tray and the bar; a new thread
 renamed from the bar; a thread with a withheld turn, then a new one → "nothing has left".
+
+## Verified 2026-10-04 — two windows, and tool results that fit them
+
+Seen on the desk: nemotron-3-nano:4b, 🌐 on, searched for Webb news, opened a 17,073-character
+NASA page, and answered "I cannot determine what you are referring to without more
+context". Three rounds, 11,371 prompt tokens, against num_ctx 8192: the last round — the
+system prompt, the question, five results and the page — plus room to think did not fit,
+and Ollama dropped the oldest text to make room. The question was the oldest text.
+
+- **Two windows.** `num_ctx` (Local context) stays Ollama's allocation for a model on this
+  machine. `remote_ctx` (Cloud context, default 32768) is how much Airlock sends a cloud
+  model per turn; it was being squeezed into the local 8k. Operator-only when hosted, like
+  num_ctx. Both in ⚙ Settings.
+- **Tool results fit.** Each file, search or page result is sized to the room left — the
+  window less what the model already holds, the tool definitions, and room to answer
+  (doubled for a reasoning model) — before it is hashed, so the crossing record describes
+  the text actually sent. A cut result says how much it showed; one with no room at all
+  says nothing of it fits, and not to guess.
+- `duet_request_test` 26/26 (4 new: a 900-line file in a 4096 window is cut and labelled,
+  everything the model holds fits with room to answer, the question is still there, a
+  local side budgeted by the local window). `duet_tools_test` 37/37 (1 new: a cloud side
+  budgeted by the cloud context, not the local window). Every suite rerun: all pass.

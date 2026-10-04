@@ -231,16 +231,22 @@
                     <input id="topk" type="number" step="1" min="0" max="200">
                 </div>
                 <div class="field">
-                    <label for="ctx">Context (num_ctx)</label>
+                    <label for="ctx" title="The window Ollama allocates for a model on this machine — memory on your GPU">Local context (num_ctx)</label>
                     <input id="ctx" type="number" step="1024" min="1024" max="262144">
+                </div>
+                <div class="field">
+                    <label for="ctxCloud" title="How much Airlock sends a cloud model per turn — conversation and tool results">Cloud context</label>
+                    <input id="ctxCloud" type="number" step="1024" min="2048" max="262144">
                 </div>
             </div>
             <p class="note">
                 <b>Temperature</b> and <b>Top&nbsp;P</b> apply to both tiers.
-                <b>Top&nbsp;K</b> and <b>Context</b> are local only: <code>num_ctx</code> is
-                Ollama's KV-cache budget and has no remote meaning, and <code>top_k</code>
-                is not part of the OpenAI schema the remote tier speaks — neither is sent
-                across the boundary.
+                <b>Local context</b> is Ollama's window for a model on this machine — memory
+                on your GPU. <b>Cloud context</b> is how much Airlock sends a cloud model per
+                turn: a ceiling, not a target — more room means more of the conversation
+                crosses, and more tokens billed. Either way, a long file or web page is cut to
+                fit what is left, and the model is told. <b>Top&nbsp;K</b> is local only: it
+                is not part of the OpenAI schema the remote tier speaks.
             </p>
             <p class="note">
                 Context trades speed for room. The KV cache competes with the model's own

@@ -9,7 +9,7 @@ const el = {
     gateModel: $('gateModel'), gateChip: $('gateChip'), crossedPill: $('crossedPill'),
     crossingPanel: $('crossingPanel'),
     settings: $('settings'), newChat: $('newChat'), openSettings: $('openSettings'),
-    sys: $('sys'), temp: $('temp'), topp: $('topp'), topk: $('topk'), ctx: $('ctx'),
+    sys: $('sys'), temp: $('temp'), topp: $('topp'), topk: $('topk'), ctx: $('ctx'), ctxCloud: $('ctxCloud'),
     saveSettings: $('saveSettings'), trays: $('trays'), storeStats: $('storeStats'),
     newFolder: $('newFolder'), threadPill: $('threadPill'), threadName: $('threadName'),
     committee: $('committee'),
@@ -575,6 +575,7 @@ async function loadConfig() {
     el.topp.value = config.top_p;
     el.topk.value = config.top_k;
     el.ctx.value = config.num_ctx;
+    el.ctxCloud.value = config.remote_ctx ?? 32768;
     paintThinkToggle();
 }
 
@@ -1910,7 +1911,8 @@ el.saveSettings.onclick = async () => {
             temperature: +el.temp.value,
             top_p: +el.topp.value,
             top_k: +el.topk.value,
-            num_ctx: +el.ctx.value
+            num_ctx: +el.ctx.value,
+            remote_ctx: +el.ctxCloud.value
         })
     });
     await loadConfig();

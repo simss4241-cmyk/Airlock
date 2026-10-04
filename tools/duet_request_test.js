@@ -36,6 +36,8 @@ const ASK = 'Measure the silence after the next pulse, in seconds.';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'airlock-duet-request-'));
 const workspace = path.join(tmp, 'workspace');
 fs.mkdirSync(workspace);
+// A long file, so a small window cannot hold it whole.
+fs.writeFileSync(path.join(workspace, 'long.md'), Array.from({ length: 900 }, (_, i) => `Line ${i + 1}: a long note about the reactor and its pulses.`).join('\n'));
 fs.writeFileSync(path.join(workspace, 'benign.md'),
     '# notes\n\nShopping list: eggs, flour, a teal ribbon for the robot costume.\nNothing else.\n');
 
@@ -88,6 +90,7 @@ const ollama = http.createServer((req, res) => {
         const text = last.content || '';
         if (/please measure/i.test(text) && offered.includes('request_result')) return call('request_result', { request: ASK });
         if (/find the ribbon/i.test(text) && offered.includes('search_text')) return call('search_text', { query: 'TEAL ribbon' });
+        if (/read the long file/i.test(text) && offered.includes('read_file')) return call('read_file', { path: 'long.md' });
         return reply({ content: 'Noted.' });
     });
 });
@@ -240,7 +243,26 @@ async function main() {
             JSON.stringify(trace.map(t => t.seen)));
         ok(!JSON.stringify(trace).includes('teal ribbon'), 'no file text is stored on the reply');
 
-        // ── 6. a model that cannot call tools is offered none ──
+        // ── 6. a long result is cut to the window that is left, and says so ──
+        console.log('\na long result in a small window');
+        await api('POST', '/api/config', { num_ctx: 4096 });
+        const { CHARS_PER_TOKEN, REPLY_RESERVE_TOKENS } = require('../duet-context');
+        const long = await send(thread.id, { participantId: left.id, text: 'Read the long file and tell me what it says.', tools: true, clientRequestId: 'long-1' });
+        const last = bodies[bodies.length - 1];
+        const toolText = last.messages.filter(m => m.role === 'tool').map(m => m.content).join('');
+        const held = last.messages.reduce((n, m) => n + String(m.content || '').length
+            + (m.tool_calls ? JSON.stringify(m.tool_calls).length : 0), 0) + JSON.stringify(last.tools || []).length;
+        ok(/cut to fit your context window: showing the first [\d,]+ of [\d,]+ characters/.test(toolText),
+            'a file too long for the window is cut, and the model is told how much it saw', toolText.slice(-140));
+        ok(held <= (4096 - REPLY_RESERVE_TOKENS) * CHARS_PER_TOKEN,
+            'and everything the model holds fits its window, with room left to answer', `${held} chars`);
+        ok(last.messages.some(m => m.role === 'user' && /Read the long file/.test(m.content)),
+            'so the question is still there — not pushed out by the file');
+        ok(long.last('done')?.message?.requestMeta?.budgetChars <= (4096 - REPLY_RESERVE_TOKENS) * CHARS_PER_TOKEN,
+            'a local side is budgeted by the local window');
+        await api('POST', '/api/config', { num_ctx: 8192 });
+
+        // ── 7. a model that cannot call tools is offered none ──
         console.log('\na model without tools');
         await api('PATCH', `/api/duet/participants/${right.id}`, { model: PLAIN });
         n = bodies.length;

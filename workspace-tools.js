@@ -159,7 +159,12 @@ async function usableRoot(root) {
  * and the artifact that describes it for the crossing record — label, size and hash,
  * computed from exactly the message that would be sent, so what is recorded is what went.
  */
-async function runCalls(toolCalls, root) {
+/**
+ * `fit`, optional: sizes each result's text to the room left in the model's window
+ * (duet-runner.js). Applied before the hash, so what the crossing record describes is
+ * exactly what was sent — the fitted text, not the file.
+ */
+async function runCalls(toolCalls, root, { fit = s => s } = {}) {
     const out = [];
     for (const call of toolCalls) {
         const name = call.function?.name;
@@ -176,7 +181,7 @@ async function runCalls(toolCalls, root) {
             result = { error: err.message };
         }
 
-        const message = { role: 'tool', tool_name: name, content: JSON.stringify(result).slice(0, 120000) };
+        const message = { role: 'tool', tool_name: name, content: fit(JSON.stringify(result).slice(0, 120000)) };
         const target = args.path || args.query || '.';
         const sha = kernel.unitHash(message).slice(0, 12);
 

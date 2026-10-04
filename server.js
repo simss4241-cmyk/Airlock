@@ -38,6 +38,12 @@ const DEFAULTS = {
     top_p: 0.95,
     top_k: 64,
     num_ctx: 8192,
+    // How much Airlock sends a CLOUD model per turn — conversation and tool results. Not a
+    // memory budget, like num_ctx: the far side has its own (often far larger) window. A
+    // ceiling, not a target: more room means more of the conversation crosses each turn,
+    // and more tokens billed. Kept apart from num_ctx so a small local window does not
+    // squeeze a cloud model, and a large cloud budget does not evict local weights.
+    remote_ctx: 32768,
     keep_alive: '10m',
     // The local model reasons in a separate channel before answering. It's the model's whole
     // point, but on a partially-offloaded 30B it costs ~3.7x the wall clock for simple

@@ -167,6 +167,15 @@ scanner's on that route (`tools/duet_tools_test.js`):
 Each reply records the calls it made in `request_meta.tools` (name, target, size, hash),
 and the pane shows them as cards.
 
+**Windows.** A side on this machine is budgeted by **Local context** (`num_ctx`, the
+window Ollama allocates); a side across the boundary by **Cloud context** (`remote_ctx`,
+default 32k — how much Airlock sends per turn; a ceiling, not a target). Every tool result
+— a file, a search, a page — is sized to the room left in that window before it is added,
+and before it is hashed for the record, so the record describes what was sent. A cut
+result says so ("cut to fit your context window: showing the first N of M characters").
+Before this, a long page overflowed an 8k window and the runtime dropped the oldest text
+to make room: the user's question.
+
 **The tools.** `list_directory`, `find_files` (by name), `search_text` (inside files:
 plain text, case-insensitive, each hit with its file and line; capped in files opened and
 hits, and a capped search says so), and `read_file` — whole, or with `start_line`/`end_line`
@@ -383,9 +392,9 @@ before stays exactly as above: shared by both lanes, owned by neither.
 | `public/duet.js` | the timeline and its lines, the panes, chatter, the chamber and its doors |
 | `tools/duet_context_test.js` | 61 assertions, offline: context, what counts as a repeat, what counts as a path |
 | `tools/duet_test.js` | 50 assertions over HTTP |
-| `tools/duet_tools_test.js` | 36 assertions: files, and every route to the cloud — fakes both sides |
+| `tools/duet_tools_test.js` | 37 assertions: files, and every route to the cloud — fakes both sides |
 | `tools/web_test.js` | 33 assertions: search and fetch, the gate on queries, given links only, the door, private addresses |
-| `tools/duet_request_test.js` | 22 assertions: asking you for a result, answers, search and line ranges — fake model |
+| `tools/duet_request_test.js` | 26 assertions: asking you for a result, answers, search and line ranges — fake model |
 | `tools/duet_chatter_test.js` | 28 assertions: relays, refusals, interjections, the ledger — fakes both sides |
 
 ## Not built

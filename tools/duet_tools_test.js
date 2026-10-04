@@ -287,6 +287,9 @@ async function main() {
             const notes1 = await exposureNotes(t1.id);
             ok(notes1.some(n => /read_file\(benign\.md\).*sha:[0-9a-f]{12}/.test(n)),
                 '"what has crossed" names the file, with its size and hash', notes1.join(' | '));
+            const budget1 = done1?.message?.requestMeta?.budgetChars;
+            ok(budget1 > (8192 - 1024) * 3.4,
+                'a cloud side is budgeted by the cloud context, not squeezed into the local window', String(budget1));
             const kinds1 = (await api('GET', `/api/threads/${t1.id}/exposure`)).body?.kinds || {};
             ok(kinds1.model?.packets >= 1 && kinds1.results?.crossings >= 1 && kinds1.model.to.includes(FAKE_MODEL),
                 'the record says what kind each crossing was: messages to the model, and the tool results it read',

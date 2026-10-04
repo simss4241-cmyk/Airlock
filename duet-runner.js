@@ -44,7 +44,7 @@ const providers = require('./providers');
 const auth = require('./auth');
 const kernel = require('./kernel');
 const sandbox = require('./sandbox');
-const { buildContext } = require('./duet-context');
+const { buildContext, CHARS_PER_TOKEN, REPLY_RESERVE_TOKENS } = require('./duet-context');
 const workspace = require('./workspace-tools');
 const web = require('./web');
 
@@ -314,7 +314,7 @@ async function generate({
         messages: snapshot,
         trigger,
         appSystemPrompt: config.systemPrompt,
-        numCtx: config.num_ctx,
+        numCtx: windowFor(tier, config),
         userName: duet.USER_NAME,
         // Any relay is a dialogue turn — including one answering a reply from before the
         // thread had participants, which has no author to name.
@@ -566,6 +566,7 @@ async function generate({
 
                 const asked = { role: 'assistant', content: roundContent, tool_calls: toolCalls };
                 convo.push(asked);
+                const fit = fitter({ numCtx: windowFor(tier, config), convo, offered, thinks: canThink });
 
                 // The model's own request, going back to the model that made it, is not new
                 // exposure — only the results it asked for are. Acknowledged so the next
@@ -599,7 +600,7 @@ async function generate({
                     let args = call.function?.arguments ?? {};
                     if (typeof args === 'string') { try { args = JSON.parse(args); } catch { args = {}; } }
                     const out = await runWeb({ name, args, offered: useWeb, fetchable, config, threadId, reply, signal });
-                    convo.push({ role: 'tool', tool_name: name, content: JSON.stringify(out.result).slice(0, 60000) });
+                    convo.push({ role: 'tool', tool_name: name, content: fit(JSON.stringify(out.result).slice(0, 60000)) });
                     toolTrace.push(out.trace);
                     emit({ type: 'tool', messageId: reply.id, name, args: out.trace.args, ok: out.trace.ok,
                         summary: out.trace.summary, web: true, crossed: Boolean(out.trace.crossed) });
@@ -616,7 +617,7 @@ async function generate({
                     emit({ type: 'tool', messageId: reply.id, name, args: {}, ok: false, summary: `${name} not offered — not run` });
                 }
 
-                for (const { message, card, artifact } of await workspace.runCalls(allowed, root)) {
+                for (const { message, card, artifact } of await workspace.runCalls(allowed, root, { fit })) {
                     convo.push(message);
                     toolTrace.push({ ...artifact, summary: card.summary, name: card.name });
                     emit({ type: 'tool', messageId: reply.id, ...card });
@@ -763,6 +764,43 @@ function recordWebCrossing(packetId, threadId, { actor, label, gate }) {
     try {
         store.recordArtifactCrossing(packetId, { actor, transport: 'web', gate, artifacts: [{ label }] });
     } catch (err) { console.error('web crossing not recorded:', err.message); }
+}
+
+/**
+ * The window a side's turn is budgeted against: the local window (num_ctx, what Ollama
+ * allocates) for a model on this machine, the cloud budget (remote_ctx) for one across the
+ * boundary.
+ */
+function windowFor(tier, config) {
+    return tier === 'local'
+        ? Number(config.num_ctx) || 8192
+        : Number(config.remote_ctx) || 32768;
+}
+
+/**
+ * Size tool results to the room left in the window. The conversation the model already
+ * holds (system, history, its own tool calls, earlier results, the tool definitions) is
+ * counted; what is left, less room for the reply (and its reasoning), is what a result may
+ * use. Without this, a long page or file pushed the window over, and the model's runtime
+ * silently dropped the OLDEST text — the user's question — to make room: measured, a 4B
+ * that had read a 17,000-character page answered "I cannot determine what you are
+ * referring to". A result that is cut says so, and how much it showed.
+ */
+function fitter({ numCtx, convo, offered, thinks }) {
+    const reserve = REPLY_RESERVE_TOKENS + (thinks ? REPLY_RESERVE_TOKENS : 0);
+    const windowChars = Math.max(0, numCtx - reserve) * CHARS_PER_TOKEN;
+    const held = () => convo.reduce((n, m) => n + String(m.content || '').length
+        + (m.tool_calls ? JSON.stringify(m.tool_calls).length : 0), 0)
+        + (offered.length ? JSON.stringify(offered).length : 0);
+    return text => {
+        const room = Math.floor(windowChars - held() - 200);
+        if (text.length <= room) return text;
+        const keep = Math.max(0, room - 160);
+        const note = keep > 0
+            ? `\n[cut to fit your context window: showing the first ${keep.toLocaleString()} of ${text.length.toLocaleString()} characters]`
+            : `[this result (${text.length.toLocaleString()} characters) did not fit in your context window — nothing of it is shown. Say so rather than guessing what it contained.]`;
+        return text.slice(0, keep) + note;
+    };
 }
 
 /** Queue depth per tier, for the status line. */
