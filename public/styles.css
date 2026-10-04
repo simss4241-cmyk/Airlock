@@ -507,6 +507,10 @@ body.dragging-thread .tray.drop-target .tray-tail {
     outline: none;
 }
 
+/* The bar's thread name renames in place. */
+.thread-pill { cursor: text; }
+.thread-pill:hover { border-color: var(--accent-dim); color: var(--text); }
+.thread-pill .rename-input { width: 22ch; font-size: 12px; padding: 1px 6px; }
 .tray-name .rename-input { font-size: 10.5px; text-transform: uppercase; letter-spacing: .9px; }
 
 /* something just landed here */

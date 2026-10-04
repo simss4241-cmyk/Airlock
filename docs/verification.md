@@ -531,3 +531,21 @@ open across the timeline's redraws (it redraws on every streamed token). `web_te
 (1 new). Seen in the page on a copy of the desk database: the five NASA links, plus.nasa.gov
 marked opened. Note for that run: the desk server had to be restarted to pick up the web
 tools — a page reload alone serves the new page to the old server, which ignores the switch.
+
+## Verified 2026-10-04 — renaming a thread
+
+Reported: a new thread is "Untitled" and could not be renamed. Double-click-to-rename in
+the tray had silently stopped working: the first click opens the thread, opening reloads
+the tray, and the second click lands on a new element — so the browser never fires
+`dblclick`. Two quick clicks are now counted per thread id, the rename waits for the
+reload, and edits the row actually on screen. The thread's name in the top bar is now
+clickable too (or Enter/F2) — where you look when it says "Untitled". Auto-naming from the
+first message is unchanged.
+
+Also found: a new thread's crossing pill showed the previous thread's withheld count
+("nothing left · 1 withheld"), drawn before the new thread's messages had loaded. The
+pill now reads only the open thread's messages, and repaints once they load.
+
+Checked in the page on a copy of the desk database (port 8110): double-click on a thread
+not yet open → rename box, focused, saved on Enter, in the tray and the bar; a new thread
+renamed from the bar; a thread with a withheld turn, then a new one → "nothing has left".

@@ -473,7 +473,11 @@ const CROSSING_KINDS = [
         'Packets sent to a reviewer across the boundary.']
 ];
 
-const duetMessages = () => window.duetUI?.state?.messages || [];
+/** The open duet's messages — only when they are this thread's, never the last thread's. */
+const duetMessages = () => {
+    const s = window.duetUI?.state;
+    return s && activeThread && s.threadId === activeThread.id ? s.messages : [];
+};
 
 function crossingSummary() {
     const kinds = exposure?.kinds || {};
@@ -822,7 +826,7 @@ function renderRail() {
     el.trays.querySelectorAll('[data-thread]').forEach(node => {
         node.addEventListener('click', e => {
             if (e.target.closest('.row-x')) return;
-            selectThread(+node.dataset.thread, node.dataset.title);
+            onThreadClick(+node.dataset.thread, node.dataset.title);
         });
         node.addEventListener('keydown', e => {
             if (e.key === 'Enter' || e.key === ' ') {
@@ -884,18 +888,48 @@ function renderRail() {
     }));
 
     // ── rename ──
-    el.trays.querySelectorAll('[data-rename-thread]').forEach(span =>
-        span.addEventListener('dblclick', e => {
-            e.stopPropagation();
-            beginRename(span, 'thread', +span.dataset.renameThread);
-        }));
-
+    // A thread is renamed by double-clicking it — but NOT with a dblclick listener: the
+    // first click selects the thread, selecting reloads the tray, and the second click lands
+    // on a new element, so the browser never fires dblclick. See onThreadClick.
     el.trays.querySelectorAll('[data-rename-folder]').forEach(span =>
         span.addEventListener('dblclick', e => {
             e.stopPropagation();
             beginRename(span, 'folder', +span.dataset.renameFolder);
         }));
 }
+
+/**
+ * One click opens a thread; two quick clicks on the same thread rename it. Counted by thread
+ * id, not by element, because opening a thread redraws the tray between the two clicks. The
+ * rename waits for that redraw, then edits the row that is actually on screen.
+ */
+let lastThreadClick = { id: null, at: 0 };
+let selecting = Promise.resolve();
+async function onThreadClick(id, title) {
+    const now = Date.now();
+    const second = lastThreadClick.id === id && now - lastThreadClick.at < 450;
+    lastThreadClick = second ? { id: null, at: 0 } : { id, at: now };
+    if (second) {
+        await selecting;
+        const span = el.trays.querySelector(`[data-rename-thread="${id}"]`);
+        if (span) beginRename(span, 'thread', id);
+        return;
+    }
+    // Already open: nothing to load, and no redraw to race the second click.
+    if (activeThread?.id === id) return;
+    selecting = selectThread(id, title);
+    await selecting;
+}
+
+/** The thread's name in the bar: click to rename. Where you look when it says "Untitled". */
+function renameFromBar() {
+    if (!activeThread || el.threadPill.querySelector('input')) return;
+    beginRename(el.threadName, 'thread', activeThread.id);
+}
+el.threadPill.addEventListener('click', renameFromBar);
+el.threadPill.addEventListener('keydown', e => {
+    if ((e.key === 'Enter' || e.key === 'F2') && e.target === el.threadPill) { e.preventDefault(); renameFromBar(); }
+});
 
 /** Swap a label for an input in place. Enter commits, Escape reverts, blur commits. */
 function beginRename(span, kind, id) {
@@ -919,6 +953,10 @@ function beginRename(span, kind, id) {
         if (settled) return;
         settled = true;
         if (host) host.draggable = true;
+
+        // The label goes back where it was — the tray redraws over it anyway, but the bar's
+        // thread name is a fixed element that has to come back.
+        input.replaceWith(span);
 
         const value = input.value.trim();
         if (commit && value && value !== current) {

@@ -1800,6 +1800,9 @@ async function onThread(thread) {
         state.enabled = false;
     }
     setActive(state.enabled);
+    // The bar's crossing pill counts this thread's withheld turns and cloud replies from these
+    // messages — repaint it now they are this thread's, not the last one's.
+    window.paintCrossed?.();
 }
 
 // ─────────────────────────── chatter ───────────────────────────
