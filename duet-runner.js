@@ -482,7 +482,7 @@ async function generate({
                 // mid-plan reasoned for 7,000 characters and then said nothing at all.
                 if (lastRound && offered.length) {
                     convo.push({ role: 'system', content: `You have used all ${workspace.MAX_TOOL_ROUNDS} rounds of tool calls for this turn. `
-                        + 'Answer now, from what you have already read. Say plainly what you could not open or verify.' });
+                        + ANSWER_NOW });
                 }
 
                 if (crosses) {
@@ -576,8 +576,7 @@ async function generate({
                     // no tools, it is given the chance to answer from what it has.
                     if (!roundContent.trim() && !nudged && round > 0 && round < workspace.MAX_TOOL_ROUNDS) {
                         nudged = true;
-                        convo.push({ role: 'system', content: 'You have not written an answer yet. Write your answer to the User now, '
-                            + 'from what you have already read. Say plainly what you could not open or verify.' });
+                        convo.push({ role: 'system', content: 'You have not written an answer yet. ' + ANSWER_NOW });
                         continue;
                     }
                     return;                             // this round is the answer
@@ -798,6 +797,15 @@ function recordWebCrossing(packetId, threadId, { actor, label, gate }) {
         store.recordArtifactCrossing(packetId, { actor, transport: 'web', gate, artifacts: [{ label }] });
     } catch (err) { console.error('web crossing not recorded:', err.message); }
 }
+
+/**
+ * What the runner says when a model must answer now. The substance first; a gap only as a
+ * named detail. Measured: told to "say plainly what you could not open or verify", a 4B
+ * that had a page open answered only "I could not open or verify the requested item."
+ */
+const ANSWER_NOW = "Answer the User's request now, using the search results and pages above: give the specific "
+    + 'details they asked for. If one particular detail is not in what you read, name that detail and say it is '
+    + 'unverified — do not answer only that you could not verify.';
 
 /** The given link closest to `url` by edit distance, if it is close enough to be a slip. */
 function nearestLink(url, fetchable) {

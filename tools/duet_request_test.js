@@ -309,8 +309,8 @@ async function main() {
         const final = bodies[bodies.length - 1];
         const notice = final.messages[final.messages.length - 1];
         ok(!final.tools && notice.role === 'system' && /used all 5 rounds of tool calls/.test(notice.content)
-            && /could not open or verify/.test(notice.content),
-            'on the last round the model is told it is out of tool calls, and to say what it could not verify', JSON.stringify(notice));
+            && /give the specific details they asked for/.test(notice.content) && /do not answer only that you could not verify/.test(notice.content),
+            'on the last round the model is told it is out of tool calls, and to give the details asked for — a gap only as a named detail', JSON.stringify(notice));
         ok(/Out of tool calls/.test(looking.last('done')?.message?.content || ''),
             'so it answers, rather than reasoning and saying nothing');
 

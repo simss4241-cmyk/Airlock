@@ -656,3 +656,11 @@ all, no loop).
 Same day, for comparison: qwen2.5:7b on the same prompt answered cleanly from one search —
 but opened nothing, guessed the date ("likely late September 2026"), and cited The
 Independent's topic page rather than NASA. The cards show it: one search, no fetch.
+
+**Same day, the next try.** The nudge fired — and was parroted. nemotron-3-nano:4b, 16k,
+reasoning on: searched (date now in the query: "October 2026"), opened CBS's Webb page
+(8,587 characters), searched again, thought for 13,037 characters, went quiet; nudged,
+it answered only "I could not open or verify the requested item." — the nudge's own last
+sentence. Both notices now ask for the substance first: "give the specific details they
+asked for. If one particular detail is not in what you read, name that detail and say it
+is unverified — do not answer only that you could not verify." `duet_request_test` 34/34.
