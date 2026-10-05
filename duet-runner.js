@@ -800,8 +800,19 @@ function fitter({ numCtx, convo, offered, thinks }) {
     const held = () => convo.reduce((n, m) => n + String(m.content || '').length
         + (m.tool_calls ? JSON.stringify(m.tool_calls).length : 0), 0)
         + (offered.length ? JSON.stringify(offered).length : 0);
+    const roomLeft = () => Math.floor(windowChars - held() - 200);
     return text => {
-        const room = Math.floor(windowChars - held() - 200);
+        // Make room before cutting: results this turn has already shown, oldest first, give
+        // up their text for a stub that says what they were. Measured: a 4B opened a page,
+        // followed a link on it, and the second page "did not fit" — the first page still
+        // held the window, though the model had read it and moved on.
+        for (const m of convo) {
+            if (text.length <= roomLeft()) break;
+            if (m.role !== 'tool' || STUBBED.has(m) || m.tool_name === 'request_result') continue;
+            const stub = stubOf(m);
+            if (stub.length < String(m.content || '').length) { m.content = stub; STUBBED.add(m); }
+        }
+        const room = roomLeft();
         if (text.length <= room) return text;
         const keep = Math.max(0, room - 160);
         const note = keep > 0
@@ -809,6 +820,31 @@ function fitter({ numCtx, convo, offered, thinks }) {
             : `[this result (${text.length.toLocaleString()} characters) did not fit in your context window — nothing of it is shown. Say so rather than guessing what it contained.]`;
         return text.slice(0, keep) + note;
     };
+}
+
+/**
+ * What an earlier tool result shrinks to when the window needs its room: what it was —
+ * the page's address and title, the file's path, the search's query and result links —
+ * without its text, and that it can be read again.
+ */
+/** Results already shrunk — kept off the message itself, which goes to the provider as is. */
+const STUBBED = new WeakSet();
+
+function stubOf(m) {
+    let r = null;
+    try { r = JSON.parse(m.content); } catch {
+        // Already cut to fit, so no longer whole JSON: what identifies it is at the front.
+        const field = k => { try { return JSON.parse(`"${(new RegExp(`"${k}":"((?:[^"\\\\]|\\\\.)*)"`).exec(m.content) || [])[1] ?? ''}"`); } catch { return ''; } };
+        r = { url: field('url') || undefined, title: field('title') || undefined, path: field('path') || undefined };
+    }
+    const note = 'Shown to you in an earlier step this turn; its text was dropped to make room in your context window. Open it again if you need it.';
+    if (r?.url) return JSON.stringify({ url: r.url, title: r.title || undefined, note });
+    if (r?.path) return JSON.stringify({ path: r.path, note });
+    if (Array.isArray(r?.results)) {
+        return JSON.stringify({ query: r.query, results: r.results.map(x => ({ title: x.title, url: x.url })), note });
+    }
+    if (Array.isArray(r?.matches)) return JSON.stringify({ query: r.query, count: r.count, note });
+    return JSON.stringify({ note });
 }
 
 /** Queue depth per tier, for the status line. */

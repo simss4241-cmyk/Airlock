@@ -38,6 +38,7 @@ const workspace = path.join(tmp, 'workspace');
 fs.mkdirSync(workspace);
 // A long file, so a small window cannot hold it whole.
 fs.writeFileSync(path.join(workspace, 'long.md'), Array.from({ length: 900 }, (_, i) => `Line ${i + 1}: a long note about the reactor and its pulses.`).join('\n'));
+fs.writeFileSync(path.join(workspace, 'second.md'), Array.from({ length: 900 }, (_, i) => `Entry ${i + 1}: the second file, about the silence between pulses.`).join('\n'));
 fs.writeFileSync(path.join(workspace, 'benign.md'),
     '# notes\n\nShopping list: eggs, flour, a teal ribbon for the robot costume.\nNothing else.\n');
 
@@ -85,12 +86,17 @@ const ollama = http.createServer((req, res) => {
         if (last.role === 'tool') {
             if (last.tool_name === 'request_result') return reply({ content: 'I asked the User to measure the silence.' });
             if (last.tool_name === 'search_text') return call('read_file', { path: 'benign.md', start_line: 3, end_line: 3 });
+            // Asked for both: having read the first long file, read the second.
+            const asked = [...messages].reverse().find(m => m.role === 'user')?.content || '';
+            if (/read both long files/i.test(asked) && /long\.md/.test(last.content) && !messages.some(m => m.role === 'tool' && /second\.md/.test(m.content))) {
+                return call('read_file', { path: 'second.md' });
+            }
             return reply({ content: 'Line 3 of benign.md mentions the teal ribbon.' });
         }
         const text = last.content || '';
         if (/please measure/i.test(text) && offered.includes('request_result')) return call('request_result', { request: ASK });
         if (/find the ribbon/i.test(text) && offered.includes('search_text')) return call('search_text', { query: 'TEAL ribbon' });
-        if (/read the long file/i.test(text) && offered.includes('read_file')) return call('read_file', { path: 'long.md' });
+        if (/read the long file|read both long files/i.test(text) && offered.includes('read_file')) return call('read_file', { path: 'long.md' });
         return reply({ content: 'Noted.' });
     });
 });
@@ -260,6 +266,14 @@ async function main() {
             'so the question is still there — not pushed out by the file');
         ok(long.last('done')?.message?.requestMeta?.budgetChars <= (4096 - REPLY_RESERVE_TOKENS) * CHARS_PER_TOKEN,
             'a local side is budgeted by the local window');
+        // A second long result in the same turn: the first gives up its text for a stub, so the
+        // one the model just asked for gets the room — measured, the second page "did not fit".
+        await send(thread.id, { participantId: left.id, text: 'Read both long files.', tools: true, clientRequestId: 'long-2' });
+        const both = bodies[bodies.length - 1].messages.filter(m => m.role === 'tool').map(m => m.content);
+        ok(both.length === 2 && /dropped to make room/.test(both[0]) && /"path":"long\.md"/.test(both[0]),
+            'the earlier result becomes a stub that says what it was', both[0]?.slice(0, 160));
+        ok(/Entry 1: the second file/.test(both[1] || '') && !/did not fit/.test(both[1] || ''),
+            'and the result just asked for gets the room', (both[1] || '').slice(-120));
         await api('POST', '/api/config', { num_ctx: 8192 });
 
         // ── 7. a model that cannot call tools is offered none ──

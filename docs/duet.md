@@ -171,8 +171,12 @@ and the pane shows them as cards.
 window Ollama allocates); a side across the boundary by **Cloud context** (`remote_ctx`,
 default 32k — how much Airlock sends per turn; a ceiling, not a target). Every tool result
 — a file, a search, a page — is sized to the room left in that window before it is added,
-and before it is hashed for the record, so the record describes what was sent. A cut
-result says so ("cut to fit your context window: showing the first N of M characters").
+and before it is hashed for the record, so the record describes what was sent. Room is
+made before anything is cut: results this turn has already shown, oldest first, shrink to
+a stub — the page's address and title, the file's path, the search's links — saying the
+text was dropped to make room and can be opened again. Only then is the new result cut,
+and a cut result says so ("cut to fit your context window: showing the first N of M
+characters").
 Before this, a long page overflowed an 8k window and the runtime dropped the oldest text
 to make room: the user's question.
 
@@ -396,7 +400,7 @@ before stays exactly as above: shared by both lanes, owned by neither.
 | `tools/duet_test.js` | 50 assertions over HTTP |
 | `tools/duet_tools_test.js` | 37 assertions: files, and every route to the cloud — fakes both sides |
 | `tools/web_test.js` | 38 assertions: search and fetch, the gate on queries, given links only, the door, private addresses |
-| `tools/duet_request_test.js` | 26 assertions: asking you for a result, answers, search and line ranges — fake model |
+| `tools/duet_request_test.js` | 28 assertions: asking you for a result, answers, search and line ranges — fake model |
 | `tools/duet_chatter_test.js` | 28 assertions: relays, refusals, interjections, the ledger — fakes both sides |
 
 ## Not built

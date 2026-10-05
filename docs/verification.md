@@ -591,3 +591,19 @@ search card). Its first fetch was "https://science.na sa. gov/ mission/webb/", r
 - `web_test` 38/38 (5 new: links reach the model main-content first; a page's link
   followed; followed on a later turn; a spaced link opened; nonsense refused with the
   right reason). The composed-URL refusal still holds.
+
+## Verified 2026-10-05 — making room, not only cutting
+
+Seen on the desk, after link-following: the 4B opened the Webb page (21,528 characters, cut
+to fit 8k), followed a link to the news listing, and answered "I cannot open the article
+because the URL does not fit within the context window". The first page still held the
+window; the listing got "nothing of it fits". Sizing a new result to the room left was not
+enough — nothing ever gave room back.
+
+Now, before a new result is cut, results this turn has already shown give up their text,
+oldest first, for a stub of what they were (address and title, path, or the search's
+links) and a note that they can be opened again. Kept off the message itself (a WeakSet),
+since the message goes to the provider as is. A result already cut — no longer whole JSON
+— still keeps its address, path or title. `duet_request_test` 28/28 (2 new: in a 4096
+window, reading a second long file turns the first into a stub naming long.md, and the
+second arrives with room, not "did not fit").
