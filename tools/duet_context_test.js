@@ -319,6 +319,8 @@ ok(/Your role in this conversation, set by the User: Skeptic/.test(roleSystem),
 ok(/including toward the other participant/.test(roleSystem) && /if they share your role/.test(roleSystem),
     'held toward the other participant too — even one with the same role');
 const anySystem = build(LEFT, [RIGHT]).messages[0].content;
+ok(/Today's date is \w+day, \d{1,2} \w+ \d{4}\./.test(anySystem),
+    'every side is told today\'s date — "latest" means nothing without it');
 ok(/Never cite a file, line, document, figure or source you have not actually seen/.test(anySystem)
     && /do not repeat it as fact/.test(anySystem),
     'no invented sources, and an unverified one from the other side is questioned, not repeated');

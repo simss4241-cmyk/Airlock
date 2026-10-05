@@ -167,14 +167,19 @@ scanner's on that route (`tools/duet_tools_test.js`):
 Each reply records the calls it made in `request_meta.tools` (name, target, size, hash),
 and the pane shows them as cards.
 
+**Today's date** is in every side's instructions — asked for the latest news, a model with
+no date searched for "… 2024".
+
 **Windows.** A side on this machine is budgeted by **Local context** (`num_ctx`, the
 window Ollama allocates); a side across the boundary by **Cloud context** (`remote_ctx`,
 default 32k — how much Airlock sends per turn; a ceiling, not a target). Every tool result
 — a file, a search, a page — is sized to the room left in that window before it is added,
 and before it is hashed for the record, so the record describes what was sent. Room is
-made before anything is cut: results this turn has already shown, oldest first, shrink to
-a stub — the page's address and title, the file's path, the search's links — saying the
-text was dropped to make room and can be opened again. Only then is the new result cut,
+made before anything is cut, in two steps: results this turn has already shown, oldest
+first, keep their opening 1,500 characters and a page's first ten links; only if that is
+not enough do they shrink to what they were — address and title, path, a search's links.
+Either says what was dropped and that it can be opened again. A new result may claim up
+to half the window this way, no more. Only then is the new result cut,
 and a cut result says so ("cut to fit your context window: showing the first N of M
 characters").
 Before this, a long page overflowed an 8k window and the runtime dropped the oldest text
@@ -396,11 +401,11 @@ before stays exactly as above: shared by both lanes, owned by neither.
 | `public/evidence.js` | what counts as a file reference, and whether anyone in the thread has seen it |
 | `public/echo.js` | what counts as a repeat — one rule for the run, the mark and the tests |
 | `public/duet.js` | the timeline and its lines, the panes, chatter, the chamber and its doors |
-| `tools/duet_context_test.js` | 61 assertions, offline: context, what counts as a repeat, what counts as a path |
+| `tools/duet_context_test.js` | 62 assertions, offline: context, what counts as a repeat, what counts as a path |
 | `tools/duet_test.js` | 50 assertions over HTTP |
 | `tools/duet_tools_test.js` | 37 assertions: files, and every route to the cloud — fakes both sides |
 | `tools/web_test.js` | 38 assertions: search and fetch, the gate on queries, given links only, the door, private addresses |
-| `tools/duet_request_test.js` | 28 assertions: asking you for a result, answers, search and line ranges — fake model |
+| `tools/duet_request_test.js` | 30 assertions: asking you for a result, answers, search and line ranges — fake model |
 | `tools/duet_chatter_test.js` | 28 assertions: relays, refusals, interjections, the ledger — fakes both sides |
 
 ## Not built

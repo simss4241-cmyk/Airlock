@@ -806,11 +806,21 @@ function fitter({ numCtx, convo, offered, thinks }) {
         // up their text for a stub that says what they were. Measured: a 4B opened a page,
         // followed a link on it, and the second page "did not fit" — the first page still
         // held the window, though the model had read it and moved on.
-        for (const m of convo) {
-            if (text.length <= roomLeft()) break;
-            if (m.role !== 'tool' || STUBBED.has(m) || m.tool_name === 'request_result') continue;
-            const stub = stubOf(m);
-            if (stub.length < String(m.content || '').length) { m.content = stub; STUBBED.add(m); }
+        // In two steps: first every earlier result keeps its opening and its first links;
+        // only if that is still not enough do they drop to what they were. Measured: dropped
+        // straight to a stub, a page the model was about to answer from became "the title
+        // and a brief note" when a later, smaller search result needed room.
+        // Room enough, not room for anything: a new result may claim up to half the window.
+        // Without the cap, one 50,000-character file dropped everything before it to a bare
+        // name every time, though it would be cut to fit regardless.
+        const want = Math.min(text.length, Math.floor(windowChars / 2));
+        for (const level of [1, 2]) {
+            for (const m of convo) {
+                if (want <= roomLeft()) break;
+                if (m.role !== 'tool' || (SHRUNK.get(m) || 0) >= level || m.tool_name === 'request_result') continue;
+                const stub = stubOf(m, level);
+                if (stub.length < String(m.content || '').length) { m.content = stub; SHRUNK.set(m, level); }
+            }
         }
         const room = roomLeft();
         if (text.length <= room) return text;
@@ -827,15 +837,32 @@ function fitter({ numCtx, convo, offered, thinks }) {
  * the page's address and title, the file's path, the search's query and result links —
  * without its text, and that it can be read again.
  */
-/** Results already shrunk — kept off the message itself, which goes to the provider as is. */
-const STUBBED = new WeakSet();
+/** How far each result has been shrunk (1 or 2) — kept off the message, which goes to the provider as is. */
+const SHRUNK = new WeakMap();
+const EXCERPT = 1500;
 
-function stubOf(m) {
+/**
+ * What an earlier result shrinks to. Level 1 keeps its opening EXCERPT characters and, for
+ * a page, its first ten links; level 2 only what it was. Either says what was dropped.
+ */
+function stubOf(m, level = 2) {
     let r = null;
     try { r = JSON.parse(m.content); } catch {
-        // Already cut to fit, so no longer whole JSON: what identifies it is at the front.
+        // Already cut to fit, so no longer whole JSON: what identifies it is at the front,
+        // and its text follows "content".
         const field = k => { try { return JSON.parse(`"${(new RegExp(`"${k}":"((?:[^"\\\\]|\\\\.)*)"`).exec(m.content) || [])[1] ?? ''}"`); } catch { return ''; } };
-        r = { url: field('url') || undefined, title: field('title') || undefined, path: field('path') || undefined };
+        const at = m.content.indexOf('"content":"');
+        r = { url: field('url') || undefined, title: field('title') || undefined, path: field('path') || undefined,
+              content: at === -1 ? '' : m.content.slice(at + 11, at + 11 + EXCERPT * 2).replace(/\\n/g, '\n').replace(/\\"/g, '"') };
+    }
+    if (level === 1 && (r?.url || r?.path)) {
+        const text = String(r.content || '');
+        return JSON.stringify({
+            url: r.url, title: r.title || undefined, path: r.path,
+            links: Array.isArray(r.links) ? r.links.slice(0, 10) : undefined,
+            excerpt: text.slice(0, EXCERPT),
+            note: `Shortened to make room in your context window: the first ${Math.min(EXCERPT, text.length).toLocaleString()} of ${text.length.toLocaleString()} characters${Array.isArray(r.links) ? ' and its first links' : ''} are kept. Open it again for the rest.`
+        });
     }
     const note = 'Shown to you in an earlier step this turn; its text was dropped to make room in your context window. Open it again if you need it.';
     if (r?.url) return JSON.stringify({ url: r.url, title: r.title || undefined, note });

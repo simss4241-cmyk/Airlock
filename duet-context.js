@@ -84,7 +84,12 @@ function label(message, { userName }) {
  * and perfectly readable to a model, but it silently defeats any check — ours or a future
  * reader's — that the prompt still says a particular thing.
  */
-function buildSystemPrompt({ participant, others, appSystemPrompt, userName, dialogueWith = null }) {
+/** Today, written out — "Monday, 5 October 2026" — in this machine's time zone. */
+function todayLong(at = new Date()) {
+    return at.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function buildSystemPrompt({ participant, others, appSystemPrompt, userName, dialogueWith = null, today = todayLong() }) {
     const lines = [];
 
     if (appSystemPrompt && appSystemPrompt.trim()) lines.push(appSystemPrompt.trim(), '');
@@ -98,6 +103,9 @@ function buildSystemPrompt({ participant, others, appSystemPrompt, userName, dia
     lines.push(
         `You are the ${participant.name.toUpperCase()} participant in this conversation, running ${participant.model || 'an unnamed model'}.`,
         `The other participant is ${roster}.`,
+        // Measured: asked for the latest news, a model searched for "… 2024" — it had no way
+        // to know the year. "Latest" means nothing without today.
+        `Today's date is ${today}.`,
         '',
         `The ${userName} writes to each participant in a separate composer, but there is only one conversation and all of it is shared. You can see what the other participant was asked and what it answered, and it can see yours. The separate composers are not private channels, so nothing here is confidential between you and the ${userName}.`,
         '',

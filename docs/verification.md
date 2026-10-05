@@ -607,3 +607,19 @@ since the message goes to the provider as is. A result already cut — no longer
 — still keeps its address, path or title. `duet_request_test` 28/28 (2 new: in a 4096
 window, reading a second long file turns the first into a stub naming long.md, and the
 second arrives with room, not "did not fit").
+
+## Verified 2026-10-05 — today's date, and shrinking in steps
+
+Seen on the desk: the 4B searched, opened esawebb.org/news (12,811 characters), searched
+again for "… latest news NASA 2024", and answered with the listing's own title, a 2024
+date, and "the fetched content only returned the title and a brief note". Two causes:
+
+- **No date.** Nothing told any side what day it was, so "latest" was the model's training
+  year. Every side's instructions now carry today's date ("Monday, 5 October 2026", this
+  machine's time zone). `duet_context_test` 62/62 (1 new).
+- **Shrinking went straight to nothing.** The second search's results needed room; the page
+  the model was about to answer from was dropped to a bare stub. Now in two steps — first
+  every earlier result keeps its opening 1,500 characters and ten links; only then bare
+  stubs — and a new result may claim at most half the window, so one huge file no longer
+  strips everything before it. `duet_request_test` 30/30 (2 new: at 6144 the earlier file
+  keeps its opening and the new one arrives; at 4096 the bare stub still applies).

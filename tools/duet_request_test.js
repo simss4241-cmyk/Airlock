@@ -274,6 +274,16 @@ async function main() {
             'the earlier result becomes a stub that says what it was', both[0]?.slice(0, 160));
         ok(/Entry 1: the second file/.test(both[1] || '') && !/did not fit/.test(both[1] || ''),
             'and the result just asked for gets the room', (both[1] || '').slice(-120));
+
+        // A little more room: the first step is enough, so the earlier result keeps its
+        // opening — measured, dropping straight to a stub left a model "the title and a brief
+        // note" of the page it was about to answer from.
+        await api('POST', '/api/config', { num_ctx: 6144 });
+        await send(thread.id, { participantId: left.id, text: 'Read both long files.', tools: true, clientRequestId: 'long-3' });
+        const kept = bodies[bodies.length - 1].messages.filter(m => m.role === 'tool').map(m => m.content);
+        ok(/Shortened to make room/.test(kept[0] || '') && /Line 1: a long note/.test(kept[0] || '') && /"path":"long\.md"/.test(kept[0] || ''),
+            'with room for it, the earlier result keeps its opening, not just its name', (kept[0] || '').slice(0, 200));
+        ok(/Entry 1: the second file/.test(kept[1] || ''), 'and the new one still arrives');
         await api('POST', '/api/config', { num_ctx: 8192 });
 
         // ── 7. a model that cannot call tools is offered none ──
