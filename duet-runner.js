@@ -733,10 +733,14 @@ async function runWeb({ name, args, offered, fetchable, config, threadId, reply,
     // fetch_url
     const raw = String(args.url || '').trim();
     const url = web.normalizeUrl(raw);
-    if (!url) return fail('fetch_url needs a URL', 'fetch_url needs a valid URL.', { args: { url: raw } });
+    if (!url) {
+        return raw
+            ? fail('not a valid URL — not fetched', `Not a valid URL: "${raw.slice(0, 300)}". Copy the link exactly as it was given.`, { args: { url: raw } })
+            : fail('fetch_url needs a URL', 'fetch_url needs a URL: copy one exactly as it was given.', { args: {} });
+    }
     if (!fetchable.has(url)) {
         return fail('link not given — not fetched',
-            'fetch_url only opens a link you were given — from a web_search result or a message from the User. That URL was not one of them, so nothing was fetched.',
+            'fetch_url only opens a link you were given — from a web_search result, a page you fetched, or a message from the User. That URL was not one of them, so nothing was fetched.',
             { target: url, args: { url } });
     }
     // The model did not write this URL, so there is nothing of its context to rule on. The
@@ -750,10 +754,14 @@ async function runWeb({ name, args, offered, fetchable, config, threadId, reply,
     try { page = await web.fetchPage(url, { signal, clearance: link.token }); }
     catch (err) { return fail(`fetch failed — ${err.message}`, err.message, { target: url, args: { url } }); }
     const host = new URL(page.url).host;
+    // The page's own links were written by the site, not the model: they may be followed —
+    // on this turn, and (through the trace's urls) on later ones.
+    page.links.forEach(l => fetchable.add(web.normalizeUrl(l.url)));
     recordWebCrossing(reply.id, threadId, { actor: `web (${host})`, label: `fetch_url(${page.url})`, gate: null });
     return {
         result: page,
         trace: { name, tool: name, target: page.url, ok: true, crossed: true, args: { url }, title: page.title,
+            urls: page.links.map(l => l.url),
             label: `fetch_url(${page.url}) ${page.chars} chars`,
             summary: `${host} — ${page.chars.toLocaleString()} chars${page.truncated ? ' (truncated)' : ''}` }
     };

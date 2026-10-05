@@ -48,8 +48,9 @@ const TOOLS = {
         type: 'function',
         function: {
             name: 'fetch_url',
-            description: 'Read a web page as text. Only URLs you were given work: one from a web_search '
-                + 'result, or one the User wrote. A URL you make up yourself is refused.',
+            description: 'Read a web page as text, with the links on it. Only URLs you were given work: one '
+                + 'from a web_search result, from a page you fetched, or one the User wrote — copied exactly. '
+                + 'A URL you make up yourself is refused.',
             parameters: {
                 type: 'object',
                 properties: { url: { type: 'string', description: 'The exact URL, as given.' } },
@@ -111,7 +112,10 @@ async function checkUrl(raw) {
 /** One spelling of a URL for comparing: no fragment, no trailing slash on the path. */
 function normalizeUrl(raw) {
     try {
-        const u = new URL(String(raw).trim());
+        // No URL contains whitespace; a small model sometimes writes one with spaces in it
+        // ("science.na sa. gov/ mission"). Removing them cannot make a URL fetchable that
+        // was not given — it still has to match one exactly.
+        const u = new URL(String(raw).replace(/\s+/g, ''));
         u.hash = '';
         if (u.pathname.length > 1) u.pathname = u.pathname.replace(/\/+$/, '');
         return u.toString();
@@ -157,6 +161,37 @@ const decode = s => s.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (m, e) => {
     }
     return ENTITIES[e.toLowerCase()] ?? m;
 });
+
+const MAX_LINKS = 30;
+
+/**
+ * The links on a page: text and absolute URL, http(s) only, one per address, this page's
+ * own anchors left out. A page's main content (<main>, then <article>) is read first, so an
+ * article list is not crowded out by the navigation menu; the rest of the page fills what
+ * room is left. These are links the SITE wrote, so a fetch may follow them (duet-runner.js).
+ */
+function linksIn(html, base) {
+    const source = String(html);
+    const main = /<main\b[\s\S]*?<\/main>/i.exec(source)?.[0] || /<article\b[\s\S]*?<\/article>/i.exec(source)?.[0] || '';
+    const seen = new Set([normalizeUrl(base)]);
+    const out = [];
+    for (const region of [main, source]) {
+        for (const m of region.matchAll(/<a\b[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi)) {
+            if (out.length >= MAX_LINKS) return out;
+            const href = decode(m[1] ?? m[2] ?? m[3] ?? '').trim();
+            if (!href || href.startsWith('#') || /^(javascript|mailto|tel|data):/i.test(href)) continue;
+            let abs;
+            try { abs = new URL(href, base); } catch { continue; }
+            if (!/^https?:$/.test(abs.protocol)) continue;
+            const key = normalizeUrl(abs.toString());
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            const text = decode(m[4].replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 100);
+            out.push({ text: text || abs.pathname, url: abs.toString() });
+        }
+    }
+    return out;
+}
 
 /** HTML to readable text. Not a browser: enough to read a page, nothing that executes. */
 function htmlToText(html) {
@@ -215,14 +250,17 @@ async function fetchPage(raw, { signal, clearance } = {}) {
     const body = await readCapped(res);
     const html = /html|xml/i.test(type) || /^\s*<(!doctype|html)/i.test(body);
     const { title, text } = html ? htmlToText(body) : { title: '', text: body.trim() };
+    const links = html ? linksIn(body, url) : [];
     const truncated = text.length > MAX_PAGE_CHARS;
     return {
         url: url.toString(), title, note: UNTRUSTED, chars: text.length, truncated,
+        // Before the text, so a page cut to fit a small window keeps its links.
+        links,
         content: truncated ? text.slice(0, MAX_PAGE_CHARS) + `\n\n[truncated — page is ${text.length} characters, showing the first ${MAX_PAGE_CHARS}]` : text
     };
 }
 
 module.exports = {
     TOOLS, UNTRUSTED, available, toolsFor, search, fetchPage, checkUrl, normalizeUrl, urlsIn,
-    htmlToText, privateAddress, MAX_PAGE_CHARS
+    htmlToText, linksIn, privateAddress, MAX_PAGE_CHARS
 };

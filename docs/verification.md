@@ -571,3 +571,23 @@ and Ollama dropped the oldest text to make room. The question was the oldest tex
   everything the model holds fits with room to answer, the question is still there, a
   local side budgeted by the local window). `duet_tools_test` 37/37 (1 new: a cloud side
   budgeted by the cloud context, not the local window). Every suite rerun: all pass.
+
+## Verified 2026-10-05 — following a link off a page
+
+Seen on the desk, after the windows fix: nemotron-3-nano:4b found the Webb story's title on
+NASA's news listing, and was asked to follow the link to the article. It could not — a
+page's links were dropped with its markup, and a fetch could only open a link from a
+search or from the user — so it searched for the headline twice. The article was the
+first result of the second search; it cited the mission page instead (visible now on the
+search card). Its first fetch was "https://science.na sa. gov/ mission/webb/", refused as
+"needs a URL".
+
+- A fetched page now carries its links (text and absolute URL, up to 30, main content
+  first; this page's anchors, javascript:, mailto: and the like left out), and they may be
+  followed — on that turn and later ones, through the trace. They are the site's links,
+  not the model's: matched exactly, they carry nothing from the conversation.
+- Stray spaces are removed from a URL before it is matched; a URL that still is not one is
+  refused as "not a valid URL", with what was written.
+- `web_test` 38/38 (5 new: links reach the model main-content first; a page's link
+  followed; followed on a later turn; a spaced link opened; nonsense refused with the
+  right reason). The composed-URL refusal still holds.
