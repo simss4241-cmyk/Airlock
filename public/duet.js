@@ -159,6 +159,45 @@ function repeatOf(message) {
     return hit;
 }
 
+// ─────────────────────────── claims against the record ───────────────────────────
+
+/** The reply's own tool calls, live or stored. */
+const callsOf = message => message.tools || message.requestMeta?.tools || [];
+
+/**
+ * Sentences claiming a page was opened, in a reply that opened none — by the rule in
+ * public/evidence.js, checked against this reply's own record. A finished reply only: mid-
+ * stream, the fetch may simply not have happened yet.
+ */
+function unbackedClaims(message) {
+    if (message.streaming || message.status !== 'complete' || !message.content || !window.AirlockEvidence?.claimsOpened) return [];
+    const opened = callsOf(message).some(t => (t.name || t.tool) === 'fetch_url' && t.ok);
+    return opened ? [] : window.AirlockEvidence.claimsOpened(message.content);
+}
+
+/** What the reply did do on the web, for the tooltip: "it ran web_search only". */
+function webCallsOf(message) {
+    const names = [...new Set(callsOf(message).map(t => t.name || t.tool).filter(n => n && n !== 'request_result'))];
+    return names.length ? `it ran ${names.join(' and ')} only` : 'it called no tools at all';
+}
+
+/**
+ * Underline each unbacked claim where it appears in the rendered text. Best effort: a
+ * sentence that markdown split across formatting is left as it is — the header mark still
+ * says it.
+ */
+function underlineClaims(html, claims, message) {
+    let out = html;
+    const title = escapeHtml(`No page was opened in this reply — ${webCallsOf(message)}. See the cards above.`);
+    for (const sentence of claims) {
+        const plain = escapeHtml(sentence);
+        const at = out.indexOf(plain);
+        if (at === -1) continue;
+        out = out.slice(0, at) + `<span class="claim-unbacked" title="${title}">${plain}</span>` + out.slice(at + plain.length);
+    }
+    return out;
+}
+
 // ─────────────────────────── tool cards ───────────────────────────
 
 /** Search cards you opened stay open: the timeline redraws on every streamed token. */
@@ -292,6 +331,13 @@ function messageHtml(message, { showAddressing = false } = {}) {
         ? ` <span class="badge unseen" title="${escapeHtml(`Named here, but no tool read ${unseenNames.length === 1 ? 'it' : 'them'} and you did not give ${unseenNames.length === 1 ? 'it' : 'them'} in this thread: ${unseenNames.join(', ')}`)}">⚠ unseen file${unseenNames.length === 1 ? '' : ` ×${unseenNames.length}`}</span>`
         : '';
 
+    // Says it opened a page, and its own record says it did not: the claim is marked in the
+    // header, and the sentence that makes it is underlined in the text below.
+    const unbacked = mine ? [] : unbackedClaims(message);
+    const claimMark = unbacked.length
+        ? ` <span class="badge unbacked" title="${escapeHtml(`This reply says it opened a page, but it opened none — ${webCallsOf(message)}. See the cards above its text.`)}">⚠ claims a page it didn't open</span>`
+        : '';
+
     // Holding a known credential: said on the message, before anyone reaches for the drag.
     const secret = message.streaming ? [] : credentialsCached(message);
     const kept = secret.length
@@ -359,7 +405,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
     // gate's ruling is shown under whatever was said, not only in place of it.
     const body = mine
         ? answerQuote + thumbs + (message.content ? renderProse(message.content) : '')
-        : toolCards + (message.content ? renderMarkdown(message.content) : '') + askCard
+        : toolCards + (message.content ? underlineClaims(renderMarkdown(message.content), unbacked, message) : '') + askCard
           + (message.status === 'blocked' ? gate : (message.content || askCard ? '' : empty));
 
     const classes = ['msg', mine ? 'user' : 'assistant'];
@@ -384,7 +430,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
 
     return `<div class="${classes.join(' ')}" data-message="${message.id}">
                 <span class="who"${portable ? ' draggable="true"' : ''}>${who}${addressed}${
-                    message.id ? `<span class="msg-id"> · #${message.id}</span>` : ''}${crossed}${echoMark}${unseenMark}${kept}${note}${handoff}</span>
+                    message.id ? `<span class="msg-id"> · #${message.id}</span>` : ''}${crossed}${echoMark}${unseenMark}${claimMark}${kept}${note}${handoff}</span>
                 <div class="bubble${message.streaming && message.content ? ' caret' : ''}">${
                     think}${body}</div>
                 ${message.stats ? `<span class="stats">${escapeHtml(message.stats)}</span>` : ''}

@@ -59,7 +59,30 @@ function unseen(text, seen) {
     });
 }
 
-const api = Object.freeze({ pathsIn, unseen });
+// ─────────────────────── claims of having opened something ───────────────────────
+//
+// Measured, 2026-10-05: qwen2.5:7b ran one web_search, opened nothing, and closed with
+// "I have opened the result to verify it." Whether a page was opened is on the reply's own
+// record, so a claim that one was can be checked against it — no judging of wording beyond
+// spotting the claim.
+
+const OPENED = /\b(?:I|we)(?:'ve|\s+have|\s+had)?\s+(?:also\s+|just\s+|now\s+)?(?:opened|visited|fetched|browsed|accessed|clicked|loaded|followed)\b/i;
+const VERIFIED = /\b(?:I|we)(?:'ve|\s+have|\s+had)?\s+(?:also\s+|just\s+|now\s+)?(?:verified|confirmed|checked|read)\b[^.!?\n]*\b(?:page|link|url|article|result|results|site|website|source|sources|press release|it|this)\b/i;
+const HAVING = /\b(?:after|having|upon|on)\s+(?:opening|visiting|fetching|reading|checking|following|browsing)\s+(?:the\s+|that\s+|this\s+)?(?:page|link|url|article|result|site|website|source|press release)\b/i;
+const OBJECT = /\b(?:page|link|url|article|result|results|site|website|source|press release|it|this|them)\b/i;
+
+/**
+ * The sentences in `text` that claim a web page was opened or checked: "I have opened the
+ * result to verify it", "After visiting the page, …". Not "I could not open", not "I
+ * recommend opening the link" — a claim is something done, said as done.
+ */
+function claimsOpened(text) {
+    const sentences = String(text || '').split(/(?<=[.!?])\s+|\n+/).map(s => s.trim()).filter(Boolean);
+    return sentences.filter(s =>
+        (OPENED.test(s) && OBJECT.test(s.slice(s.search(OPENED)))) || VERIFIED.test(s) || HAVING.test(s));
+}
+
+const api = Object.freeze({ pathsIn, unseen, claimsOpened });
 if (typeof module === 'object' && module.exports) module.exports = api;
 else root.AirlockEvidence = api;
 })(typeof window !== 'undefined' ? window : globalThis);

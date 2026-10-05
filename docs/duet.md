@@ -313,6 +313,14 @@ desk on 2026-10-02 it marked eleven replies — nine invented logs in one role-p
 "`model.txt` line 45" and "[policy_enforcer.py] v2.4.1" from the role runs, all made up —
 and one command offered for the user to run (`python run.py`). It is a mark, not a stop.
 
+**A claim the record contradicts is marked.** A reply that says it opened, visited,
+fetched or verified a page — "I have opened the result to verify it" — while its own record
+shows no successful `fetch_url` carries **⚠ claims a page it didn't open** in its header,
+and the sentence is underlined; both say what the reply did run instead. The rule is
+`claimsOpened` in `public/evidence.js`: a claim is something done, said as done — not "I
+could not open", "I recommend opening", "I have not opened". Over every reply on the desk
+on 2026-10-05 it found one: the measured one. Steel, like the other evidence marks.
+
 **The run lives in the page.** Close the tab, or switch threads, and it stops, so a
 conversation with a cloud model cannot keep spending with nobody watching.
 
@@ -411,7 +419,7 @@ before stays exactly as above: shared by both lanes, owned by neither.
 | `public/evidence.js` | what counts as a file reference, and whether anyone in the thread has seen it |
 | `public/echo.js` | what counts as a repeat — one rule for the run, the mark and the tests |
 | `public/duet.js` | the timeline and its lines, the panes, chatter, the chamber and its doors |
-| `tools/duet_context_test.js` | 62 assertions, offline: context, what counts as a repeat, what counts as a path |
+| `tools/duet_context_test.js` | 65 assertions, offline: context, what counts as a repeat, what counts as a path |
 | `tools/duet_test.js` | 50 assertions over HTTP |
 | `tools/duet_tools_test.js` | 37 assertions: files, and every route to the cloud — fakes both sides |
 | `tools/web_test.js` | 40 assertions: search and fetch, the gate on queries, given links only, the door, private addresses |

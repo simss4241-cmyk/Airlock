@@ -664,3 +664,19 @@ it answered only "I could not open or verify the requested item." — the nudge'
 sentence. Both notices now ask for the substance first: "give the specific details they
 asked for. If one particular detail is not in what you read, name that detail and say it
 is unverified — do not answer only that you could not verify." `duet_request_test` 34/34.
+
+## Verified 2026-10-05 — a claim the record contradicts
+
+The same prompt, two models. nemotron-3-nano:4b: one search, one fetch of NASA's news
+listing, and a real answer — "NASA's Webb Provides Crash Course on Planet-Shattering
+Collisions", 1 October 2026 (citing the listing, not the article). qwen2.5:7b: one search,
+no fetch, a polished answer, and its last line "I have opened the result to verify it."
+
+Whether a page was opened is on the reply's own record, so the claim is checkable. Now a
+reply that claims to have opened, visited, fetched or verified a page, with no successful
+fetch_url in its trace, is marked "⚠ claims a page it didn't open" and the sentence
+underlined, both saying what it ran instead ("web_search only"). `claimsOpened` in
+`public/evidence.js`; `duet_context_test` 65/65 (3 new: the measured sentence, four other
+shapes, six non-claims). Over every reply on the desk it flags exactly one — Qwen's. Seen
+in the page on a copy of the desk database: the badge in the header, the sentence
+underlined, the tooltips naming web_search.

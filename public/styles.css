@@ -1128,6 +1128,10 @@ main {
 .web-page { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; font-size: 11px; }
 .tool.web-out .tool-name { color: var(--cross); }
 .tool.web-out .tool-name::before { content: '↗ '; }
+/* A claim the reply's own record contradicts — "I opened the result", no page opened. Steel,
+   like the other evidence marks: red means the gate refused something, and nothing was. */
+.badge.unbacked { border-color: var(--user-line); color: var(--text); background: var(--panel-2); cursor: help; }
+.claim-unbacked { text-decoration: underline dashed var(--user-text); text-decoration-thickness: 1px; text-underline-offset: 3px; cursor: help; }
 .badge.repeat { border-color: var(--user-line); color: var(--user-text); background: var(--panel-2); cursor: help; }
 .badge.secret { border-color: #4a1d1f; color: #ffb3b5; background: rgba(255, 90, 95, .08); cursor: help; }
 .badge.review { border-color: var(--accent-dim); color: var(--accent); background: rgba(118, 185, 0, .07); }

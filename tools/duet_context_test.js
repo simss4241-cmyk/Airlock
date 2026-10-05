@@ -373,5 +373,20 @@ ok(ev.unseen('The README.md says so, and so does C:\\proj\\docs\\notes.md', ['do
 ok(same(ev.unseen('see src/main.js', ['main.js.bak']), ['src/main.js']), 'a different file with a similar name is not a match');
 ok(Object.isFrozen(ev), 'the rule is frozen');
 
+// ── 14. a claim of having opened a page ──
+//
+// From 2026-10-05: qwen2.5:7b ran one web_search, opened nothing, and closed with "I have
+// opened the result to verify it." The page checks such a claim against the reply's record.
+
+const claims = ev.claimsOpened;
+ok(claims('Summary here. I have opened the result to verify it.').length === 1,
+    'the measured claim is found: "I have opened the result to verify it."');
+ok(['I\'ve visited the NASA page and the date matches.', 'After opening the article, the date is 1 October 2026.',
+    'I verified the publication date on the NASA site.', 'We fetched the page from science.nasa.gov.']
+    .every(s => claims(s).length === 1), 'and its other shapes: visited, after opening, verified on the site, fetched');
+ok(['I could not open the page.', 'I was unable to verify the date.', 'I recommend opening the link to verify the details.',
+    'I have not opened the result.', 'To verify this information, open the article yourself.', 'I opened with a summary of the findings.']
+    .every(s => claims(s).length === 0), 'not a failure, a suggestion, a denial, or "opened" meaning began');
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

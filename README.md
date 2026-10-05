@@ -48,13 +48,14 @@ what leaves it. This table is the honest version — clone it and check.
 | Tier recorded per packet; "what crossed?" as a query | working |
 | Crossing by a remote participant **and** by hand, both gated and recorded | working |
 | Access token + remote spend cap for hosting | working, 26 assertions |
-| Duet — two addressable participants over one conversation | working, 112 assertions |
+| Duet — two addressable participants over one conversation | working, 115 assertions |
 | One timeline in two lanes: each message once, with a line to the one it answers | working |
 | Roles — one word per side ("Skeptic"), held for the whole conversation | working |
 | Images in a duet, for models that can see; never sent across the boundary | working |
 | Chatter — the participants answering each other, step or auto, every turn gated | working, 28 assertions end to end |
 | Chatter stops when a side repeats itself, and asks once more after an empty reply | working |
 | A reply naming a file nobody in the thread has read or given is marked "unseen file" | working |
+| A reply claiming it opened a page its own record says it never opened is marked, and the sentence underlined | working |
 | Token spend on the record — every reply, gate ruling and review, per model, in a server ledger | working |
 | Per-thread consent retired; an old database is cleaned on open | working, 7 assertions |
 | Every turn gated, bound to the exact words sent — only what is new is re-read | working |
@@ -74,7 +75,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Per-visitor settings, remote budgets, gate memory and generation slots; a daily cap that survives restarts | working |
 | Hosted deployment on Nebius AI Cloud, with the gate beside the app | not built |
 
-**754 assertions across nineteen suites.** Run them:
+**757 assertions across nineteen suites.** Run them:
 
 ```
 npm start                          # in one terminal
