@@ -638,3 +638,21 @@ and no word why, reasoned for 7,188 characters and said nothing.
   now, from what you have already read. Say plainly what you could not open or verify."
 - `web_test` 40/40 (2 new), `duet_request_test` 32/32 (2 new: the notice on the last
   round, and a model that never stops looking answers once told).
+
+## Verified 2026-10-05 — one nudge for a turn that went quiet
+
+Seen on the desk at 16k: nemotron-3-nano:4b searched, opened a page, searched again, and on
+the fourth round called nothing and wrote nothing — "Finished without an answer". Not out of
+rounds (three of five used); the 4B's habit, seen in chatter, of reasoning and then
+emitting nothing. Chatter retries an empty reply once; a direct turn did not.
+
+Now a round with no tool call and no text, after at least one tool call, is followed once
+by a system line — "You have not written an answer yet. Write your answer to the User now,
+from what you have already read. Say plainly what you could not open or verify." — with
+no tools offered. Once a turn. `duet_request_test` 34/34 (2 new: a model that goes quiet
+answers once nudged; one that stays silent is nudged once and ends empty, three calls in
+all, no loop).
+
+Same day, for comparison: qwen2.5:7b on the same prompt answered cleanly from one search —
+but opened nothing, guessed the date ("likely late September 2026"), and cited The
+Independent's topic page rather than NASA. The cards show it: one search, no fetch.

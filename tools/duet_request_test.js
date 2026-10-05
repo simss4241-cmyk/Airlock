@@ -87,6 +87,15 @@ const ollama = http.createServer((req, res) => {
         if (last.role === 'system' && /used all \d+ rounds of tool calls/.test(last.content)) {
             return reply({ content: 'Out of tool calls: here is what I found so far.' });
         }
+        // A model that goes quiet after a tool call: answers once nudged — or never does.
+        const quiet = [...messages].reverse().find(m => m.role === 'user')?.content || '';
+        if (/then go quiet|and stay silent/i.test(quiet)) {
+            if (last.role === 'system' && /not written an answer yet/.test(last.content) && /go quiet/i.test(quiet)) {
+                return reply({ content: 'Answered after a nudge.' });
+            }
+            if (last.role === 'tool' || last.role === 'system') return reply({ content: '' });
+            if (offered.includes('list_directory')) return call('list_directory', { path: '.' });
+        }
         if (last.role === 'tool') {
             if (last.tool_name === 'request_result') return reply({ content: 'I asked the User to measure the silence.' });
             // A model that never stops looking: calls a tool every round it is offered one.
@@ -305,7 +314,23 @@ async function main() {
         ok(/Out of tool calls/.test(looking.last('done')?.message?.content || ''),
             'so it answers, rather than reasoning and saying nothing');
 
-        // ── 8. a model that cannot call tools is offered none ──
+        // ── 8. a round that says nothing ──
+        console.log('\na round that says nothing');
+        const goneQuiet = await send(thread.id, { participantId: left.id, text: 'Look around, then go quiet.', tools: true, clientRequestId: 'quiet-1' });
+        const nudge = bodies[bodies.length - 1];
+        ok(goneQuiet.last('done')?.message?.content === 'Answered after a nudge.' && !nudge.tools
+            && /not written an answer yet/.test(nudge.messages[nudge.messages.length - 1].content),
+            'a model that goes quiet after a tool call is asked once, without tools, and answers',
+            JSON.stringify(goneQuiet.last('done')?.message?.content));
+        const n0 = bodies.length;
+        const silent = await send(thread.id, { participantId: left.id, text: 'Look around and stay silent.', tools: true, clientRequestId: 'quiet-2' });
+        const nudges = bodies[bodies.length - 1].messages.filter(m => m.role === 'system' && /not written an answer yet/.test(m.content)).length;
+        ok(silent.last('done')?.message?.status === 'complete' && silent.last('done').message.content === ''
+            && nudges === 1 && bodies.length - n0 === 3,
+            'one that stays silent is asked once, not over and over — it ends empty, as before',
+            `nudges ${nudges}, calls ${bodies.length - n0}`);
+
+        // ── 9. a model that cannot call tools is offered none ──
         console.log('\na model without tools');
         await api('PATCH', `/api/duet/participants/${right.id}`, { model: PLAIN });
         n = bodies.length;

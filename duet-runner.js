@@ -452,6 +452,7 @@ async function generate({
     const usage = { prompt: 0, reply: 0, evalDuration: 0, rounds: 0 };
     const toolTrace = [];           // every call this reply made — stored on it, shown on it
     const requests = [];            // what this reply asked the user for (request_result)
+    let nudged = false;             // once a turn: a round that said nothing is asked to answer
     let withheld = null;            // a mid-turn refusal: the tool results the gate kept back
 
     try {
@@ -516,7 +517,7 @@ async function generate({
                     // a model that has no thinking channel, and that is a hard 400.
                     ...(canThink ? { think: config.think !== false } : {}),
                     // Once it has asked the user for something, the turn is for saying so.
-                    tools: offered.length && !lastRound && !requests.length ? offered : undefined,
+                    tools: offered.length && !lastRound && !requests.length && !nudged ? offered : undefined,
                     signal,
                     clearance
                 });
@@ -569,7 +570,18 @@ async function generate({
                     usage.rounds++;
                 }
 
-                if (!toolCalls.length) return;          // this round is the answer
+                if (!toolCalls.length) {
+                    // A round with no tool call and no words — measured on a 4B after three
+                    // tool calls: it reasoned, then wrote nothing. Asked once, plainly, with
+                    // no tools, it is given the chance to answer from what it has.
+                    if (!roundContent.trim() && !nudged && round > 0 && round < workspace.MAX_TOOL_ROUNDS) {
+                        nudged = true;
+                        convo.push({ role: 'system', content: 'You have not written an answer yet. Write your answer to the User now, '
+                            + 'from what you have already read. Say plainly what you could not open or verify.' });
+                        continue;
+                    }
+                    return;                             // this round is the answer
+                }
 
                 const asked = { role: 'assistant', content: roundContent, tool_calls: toolCalls };
                 convo.push(asked);

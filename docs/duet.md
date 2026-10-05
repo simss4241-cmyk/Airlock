@@ -171,6 +171,10 @@ and the pane shows them as cards.
 from what it has read and say what it could not verify. The tools used to vanish silently,
 and a model mid-plan said nothing at all.
 
+**A round that says nothing**, after a tool call, is asked once to answer — without tools,
+from what the model has read, saying what it could not verify. Once a turn: a model that
+stays silent still ends silent, as before.
+
 **Today's date** is in every side's instructions — asked for the latest news, a model with
 no date searched for "… 2024".
 
@@ -411,7 +415,7 @@ before stays exactly as above: shared by both lanes, owned by neither.
 | `tools/duet_test.js` | 50 assertions over HTTP |
 | `tools/duet_tools_test.js` | 37 assertions: files, and every route to the cloud — fakes both sides |
 | `tools/web_test.js` | 40 assertions: search and fetch, the gate on queries, given links only, the door, private addresses |
-| `tools/duet_request_test.js` | 32 assertions: asking you for a result, answers, search and line ranges — fake model |
+| `tools/duet_request_test.js` | 34 assertions: asking you for a result, answers, search and line ranges — fake model |
 | `tools/duet_chatter_test.js` | 28 assertions: relays, refusals, interjections, the ledger — fakes both sides |
 
 ## Not built
