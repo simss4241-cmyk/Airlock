@@ -623,3 +623,18 @@ date, and "the fetched content only returned the title and a brief note". Two ca
   stubs — and a new result may claim at most half the window, so one huge file no longer
   strips everything before it. `duet_request_test` 30/30 (2 new: at 6144 the earlier file
   keeps its opening and the new one arrives; at 4096 the bare stub still applies).
+
+## Verified 2026-10-05 — a slip in a link, and the last round
+
+Seen on the desk, with the date fix in (both queries now said 2026): six tool calls, the
+second search returning the latest Webb stories — then the 4B wrote `science.nesa.gov/…`
+for one of them, refused as "link not given", and on the next round, with no tools left
+and no word why, reasoned for 7,188 characters and said nothing.
+
+- A refused link now names the nearest link the model WAS given, when it is close enough
+  to be a slip (edit distance), and says to copy it exactly. The slip itself is never
+  opened: a near miss can be a different site.
+- The last round says so: "You have used all 5 rounds of tool calls for this turn. Answer
+  now, from what you have already read. Say plainly what you could not open or verify."
+- `web_test` 40/40 (2 new), `duet_request_test` 32/32 (2 new: the notice on the last
+  round, and a model that never stops looking answers once told).

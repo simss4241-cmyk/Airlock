@@ -167,6 +167,10 @@ scanner's on that route (`tools/duet_tools_test.js`):
 Each reply records the calls it made in `request_meta.tools` (name, target, size, hash),
 and the pane shows them as cards.
 
+**Out of tool rounds**, a model is told so — five rounds per turn, then one more to answer
+from what it has read and say what it could not verify. The tools used to vanish silently,
+and a model mid-plan said nothing at all.
+
 **Today's date** is in every side's instructions — asked for the latest news, a model with
 no date searched for "… 2024".
 
@@ -211,7 +215,9 @@ query is words a model wrote, and can carry whatever is in that model's context,
 - **A fetch opens only a link someone else wrote**: one the user wrote in this
   conversation, one a search returned, or one on a page already fetched (up to 30 per
   page, the page's main content first — a site's links, not the model's). Matched
-  exactly, after removing stray spaces a small model sometimes writes into a URL. A URL the model composed is refused before any
+  exactly, after removing stray spaces a small model sometimes writes into a URL. A near
+  miss is still refused — `nesa.gov` is not `nasa.gov` — but the model is told the
+  closest link it was given, to try again with. A URL the model composed is refused before any
   request is made — the URL itself is the easiest place to hide data. The scanner still
   reads a given link (a pasted link with a token in it is a credential leaving). Each
   fetch is recorded with where it went.
@@ -231,7 +237,7 @@ marked and says why. A search card opens to list every result — title, site, l
 marks the ones this reply **opened**; a fetch card links to the page it read. The links
 open in your own browser, in a new tab, with no referrer: following one is your choice,
 not the model's, and is not on the record. The reply keeps result titles and links on its
-trace for this (public links only — never page text). `tools/web_test.js`, 38 assertions, against a fake search service,
+trace for this (public links only — never page text). `tools/web_test.js`, 40 assertions, against a fake search service,
 a fake page and a fake model.
 
 ## Asking you for a result
@@ -404,8 +410,8 @@ before stays exactly as above: shared by both lanes, owned by neither.
 | `tools/duet_context_test.js` | 62 assertions, offline: context, what counts as a repeat, what counts as a path |
 | `tools/duet_test.js` | 50 assertions over HTTP |
 | `tools/duet_tools_test.js` | 37 assertions: files, and every route to the cloud — fakes both sides |
-| `tools/web_test.js` | 38 assertions: search and fetch, the gate on queries, given links only, the door, private addresses |
-| `tools/duet_request_test.js` | 30 assertions: asking you for a result, answers, search and line ranges — fake model |
+| `tools/web_test.js` | 40 assertions: search and fetch, the gate on queries, given links only, the door, private addresses |
+| `tools/duet_request_test.js` | 32 assertions: asking you for a result, answers, search and line ranges — fake model |
 | `tools/duet_chatter_test.js` | 28 assertions: relays, refusals, interjections, the ledger — fakes both sides |
 
 ## Not built

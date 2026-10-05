@@ -477,6 +477,13 @@ async function generate({
                 const lastRound = round === workspace.MAX_TOOL_ROUNDS;   // no tools: force an answer
                 let roundRecorded = false;
 
+                // Out of tool rounds: say so. The tools used to vanish silently, and a model
+                // mid-plan reasoned for 7,000 characters and then said nothing at all.
+                if (lastRound && offered.length) {
+                    convo.push({ role: 'system', content: `You have used all ${workspace.MAX_TOOL_ROUNDS} rounds of tool calls for this turn. `
+                        + 'Answer now, from what you have already read. Say plainly what you could not open or verify.' });
+                }
+
                 if (crosses) {
                     // ⚠ Every round after the first carries something new: the tool results
                     // the model asked for — file contents. They are ruled on before they go,
@@ -739,8 +746,14 @@ async function runWeb({ name, args, offered, fetchable, config, threadId, reply,
             : fail('fetch_url needs a URL', 'fetch_url needs a URL: copy one exactly as it was given.', { args: {} });
     }
     if (!fetchable.has(url)) {
-        return fail('link not given — not fetched',
-            'fetch_url only opens a link you were given — from a web_search result, a page you fetched, or a message from the User. That URL was not one of them, so nothing was fetched.',
+        // Not opened — a near miss may be a different site entirely (nesa.gov is not
+        // nasa.gov) — but the nearest link it WAS given is named, so a copying slip can be
+        // put right on the next call. Measured: a 4B wrote science.nesa.gov for a link a
+        // search had just returned.
+        const near = nearestLink(url, fetchable);
+        return fail(`link not given — not fetched${near ? ' (a near miss)' : ''}`,
+            'fetch_url only opens a link you were given — from a web_search result, a page you fetched, or a message from the User. That URL was not one of them, so nothing was fetched.'
+            + (near ? ` Did you mean ${near}? If so, call fetch_url again with it copied exactly.` : ''),
             { target: url, args: { url } });
     }
     // The model did not write this URL, so there is nothing of its context to rule on. The
@@ -772,6 +785,33 @@ function recordWebCrossing(packetId, threadId, { actor, label, gate }) {
     try {
         store.recordArtifactCrossing(packetId, { actor, transport: 'web', gate, artifacts: [{ label }] });
     } catch (err) { console.error('web crossing not recorded:', err.message); }
+}
+
+/** The given link closest to `url` by edit distance, if it is close enough to be a slip. */
+function nearestLink(url, fetchable) {
+    let best = null, bestD = Infinity;
+    for (const cand of fetchable) {
+        if (!cand || Math.abs(cand.length - url.length) > 6) continue;
+        const d = editDistance(url, cand, 6);
+        if (d < bestD) { best = cand; bestD = d; }
+    }
+    return bestD <= Math.max(2, Math.floor(url.length / 25)) ? best : null;
+}
+
+/** Levenshtein, giving up past `cap`. */
+function editDistance(a, b, cap) {
+    let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+        const row = [i];
+        let lo = i;
+        for (let j = 1; j <= b.length; j++) {
+            row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+            lo = Math.min(lo, row[j]);
+        }
+        if (lo > cap) return cap + 1;
+        prev = row;
+    }
+    return prev[b.length];
 }
 
 /**

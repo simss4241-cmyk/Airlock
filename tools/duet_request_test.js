@@ -83,8 +83,15 @@ const ollama = http.createServer((req, res) => {
         const offered = toolNames(body);
         const call = (name, args) => reply({ tool_calls: [{ function: { name, arguments: args } }] });
 
+        // Told it is out of tool rounds: it answers.
+        if (last.role === 'system' && /used all \d+ rounds of tool calls/.test(last.content)) {
+            return reply({ content: 'Out of tool calls: here is what I found so far.' });
+        }
         if (last.role === 'tool') {
             if (last.tool_name === 'request_result') return reply({ content: 'I asked the User to measure the silence.' });
+            // A model that never stops looking: calls a tool every round it is offered one.
+            const looking = [...messages].reverse().find(m => m.role === 'user')?.content || '';
+            if (/keep looking/i.test(looking) && offered.includes('list_directory')) return call('list_directory', { path: '.' });
             if (last.tool_name === 'search_text') return call('read_file', { path: 'benign.md', start_line: 3, end_line: 3 });
             // Asked for both: having read the first long file, read the second.
             const asked = [...messages].reverse().find(m => m.role === 'user')?.content || '';
@@ -96,6 +103,7 @@ const ollama = http.createServer((req, res) => {
         const text = last.content || '';
         if (/please measure/i.test(text) && offered.includes('request_result')) return call('request_result', { request: ASK });
         if (/find the ribbon/i.test(text) && offered.includes('search_text')) return call('search_text', { query: 'TEAL ribbon' });
+        if (/keep looking/i.test(text) && offered.includes('list_directory')) return call('list_directory', { path: '.' });
         if (/read the long file|read both long files/i.test(text) && offered.includes('read_file')) return call('read_file', { path: 'long.md' });
         return reply({ content: 'Noted.' });
     });
@@ -286,7 +294,18 @@ async function main() {
         ok(/Entry 1: the second file/.test(kept[1] || ''), 'and the new one still arrives');
         await api('POST', '/api/config', { num_ctx: 8192 });
 
-        // ── 7. a model that cannot call tools is offered none ──
+        // ── 7. out of tool rounds ──
+        console.log('\nout of tool rounds');
+        const looking = await send(thread.id, { participantId: left.id, text: 'Keep looking until you find it.', tools: true, clientRequestId: 'loop-1' });
+        const final = bodies[bodies.length - 1];
+        const notice = final.messages[final.messages.length - 1];
+        ok(!final.tools && notice.role === 'system' && /used all 5 rounds of tool calls/.test(notice.content)
+            && /could not open or verify/.test(notice.content),
+            'on the last round the model is told it is out of tool calls, and to say what it could not verify', JSON.stringify(notice));
+        ok(/Out of tool calls/.test(looking.last('done')?.message?.content || ''),
+            'so it answers, rather than reasoning and saying nothing');
+
+        // ── 8. a model that cannot call tools is offered none ──
         console.log('\na model without tools');
         await api('PATCH', `/api/duet/participants/${right.id}`, { model: PLAIN });
         n = bodies.length;

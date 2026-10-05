@@ -127,6 +127,7 @@ const ollama = http.createServer((req, res) => {
         if (/open the second article/i.test(text)) return call('fetch_url', { url: `${PAGE}/article-2` });
         if (/open it with spaces/i.test(text)) return call('fetch_url', { url: `${PAGE}/gi ven` });
         if (/open nonsense/i.test(text)) return call('fetch_url', { url: 'the nasa page' });
+        if (/open it with a typo/i.test(text)) return call('fetch_url', { url: `${PAGE}/givne` });
         if (/search for teal robots/i.test(text)) return call('web_search', { query: 'teal robot paint' });
         if (/search the codename/i.test(text)) return call('web_search', { query: 'PROJECT-NIGHTJAR launch date' });
         if (/open a page you make up/i.test(text)) return call('fetch_url', { url: `${PAGE}/robots?notes=the-users-secret-notes` });
@@ -320,6 +321,12 @@ async function main() {
         const nonsense = await send(thread.id, { participantId: left.id, text: 'Open nonsense.', web: true, clientRequestId: 'ns-1' });
         ok(nonsense.tools[0] && !nonsense.tools[0].ok && /not a valid URL/.test(nonsense.tools[0].summary),
             'a URL that is not one says so — not "needs a URL"', JSON.stringify(nonsense.tools[0]));
+        const hitsBefore = pageHits.length;
+        const typo = await send(thread.id, { participantId: left.id, text: `Open it with a typo: ${PAGE}/given`, web: true, clientRequestId: 'typo-1' });
+        const told = JSON.stringify(bodies[bodies.length - 1].messages.filter(m => m.role === 'tool').slice(-1));
+        ok(typo.tools[0] && !typo.tools[0].ok && /near miss/.test(typo.tools[0].summary) && pageHits.length === hitsBefore,
+            'a link copied with a slip is not opened — a near miss may be another site', JSON.stringify(typo.tools[0]));
+        ok(told.includes(`Did you mean ${PAGE}/given?`), 'but the model is told the link it was given, to try again with');
     } catch (err) {
         fail++;
         console.log(`  FAIL run aborted: ${err.message}`);
