@@ -388,5 +388,20 @@ ok(['I could not open the page.', 'I was unable to verify the date.', 'I recomme
     'I have not opened the result.', 'To verify this information, open the article yourself.', 'I opened with a summary of the findings.']
     .every(s => claims(s).length === 0), 'not a failure, a suggestion, a denial, or "opened" meaning began');
 
+// ── 15. a link the model writes ──
+//
+// A reply's link is a way out no gate reads: a page can tell the model to put the
+// conversation in a link's address, and a click carries it off. Only links the thread was
+// GIVEN — by the user, a search, a fetched page — stay clickable.
+
+const given = new Set(['https://science.nasa.gov/missions/webb/story', 'https://www.cbsnews.com/tag/jwst'].map(ev.linkKey));
+ok(ev.isSourced('https://science.nasa.gov/missions/webb/story/', given) && ev.isSourced('https://SCIENCE.nasa.gov/missions/webb/story#top', given),
+    'a given link is recognised whatever its trailing slash, fragment or host case');
+ok(!ev.isSourced('https://evil.example/?q=the-users-notes', given) && !ev.isSourced('https://science.nasa.gov/missions/webb/story?q=notes', given),
+    'a link the thread was never given is not — nor a given one with something added to it');
+ok(!ev.isSourced('javascript:alert(1)', given) && ev.linkKey('ftp://x.org/f') === null, 'only web links count at all');
+ok(JSON.stringify(ev.urlsIn('See https://a.org/x, and (https://b.org/y?z=1).')) === '["https://a.org/x","https://b.org/y?z=1"]',
+    'links the user writes are found, without trailing punctuation');
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

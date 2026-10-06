@@ -82,7 +82,32 @@ function claimsOpened(text) {
         (OPENED.test(s) && OBJECT.test(s.slice(s.search(OPENED)))) || VERIFIED.test(s) || HAVING.test(s));
 }
 
-const api = Object.freeze({ pathsIn, unseen, claimsOpened });
+// ─────────────────────── links a reply writes ───────────────────────
+//
+// A link in a model's reply is a way out that no gate sees: a page can tell the model to
+// write one with the conversation folded into its address, and the user's click carries it
+// off. So a link the model wrote is clickable only if it came from somewhere other than the
+// model — a search result, a page it fetched, or the user.
+
+/** One spelling of a link for comparing: lower-case host, no fragment, no trailing slash. */
+function linkKey(raw) {
+    try {
+        const u = new URL(String(raw).replace(/\s+/g, ''));
+        if (!/^https?:$/.test(u.protocol)) return null;
+        u.hash = '';
+        if (u.pathname.length > 1) u.pathname = u.pathname.replace(/\/+$/, '');
+        return u.toString();
+    } catch { return null; }
+}
+
+/** Links written in a piece of text. */
+const urlsIn = text => (String(text || '').match(/\bhttps?:\/\/[^\s<>"'`)\]]+/gi) || [])
+    .map(u => u.replace(/[.,;:!?]+$/, ''));
+
+/** Is this link one of the given ones (a Set of linkKey values)? */
+const isSourced = (url, given) => { const k = linkKey(url); return Boolean(k) && given.has(k); };
+
+const api = Object.freeze({ pathsIn, unseen, claimsOpened, linkKey, urlsIn, isSourced });
 if (typeof module === 'object' && module.exports) module.exports = api;
 else root.AirlockEvidence = api;
 })(typeof window !== 'undefined' ? window : globalThis);

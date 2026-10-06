@@ -680,3 +680,27 @@ underlined, both saying what it ran instead ("web_search only"). `claimsOpened` 
 shapes, six non-claims). Over every reply on the desk it flags exactly one — Qwen's. Seen
 in the page on a copy of the desk database: the badge in the header, the sentence
 underlined, the tooltips naming web_search.
+
+## Verified 2026-10-06 — hidden text, and the links a reply writes
+
+From a review of the web path against generic "proxy and sanitiser" advice: most of it was
+already here in a stricter form (one egress door with per-request clearances, gated queries,
+given links only, private addresses refused, pages as untrusted text). Two real gaps:
+
+- **Hidden text.** Scripts and styles were dropped, but text hidden from a reader was not —
+  the usual home of an injection. Now elements hidden by `display:none`, `visibility:hidden`,
+  `hidden`, `aria-hidden="true"`, zero font size or opacity, or a hiding class are removed with
+  their contents before the page becomes text or links; screen-reader text stays.
+  `web_test` 43/43 (3 new: the hidden forms, nested, removed; visible, screen-reader and
+  look-alike text kept; end to end, a listing's hidden "ignore your instructions" and its
+  hidden link never reach the model).
+- **A reply's links.** A link the model writes is a way out no gate sees — a page could have
+  it fold the conversation into an address, and the user's click carries it off. Now only a
+  link the thread was given (by the user, a search, a fetched page) is clickable, opening
+  with no referrer; any other is shown as text with its destination, and the reply is
+  marked "⚠ unsourced link". `duet_context_test` 69/69 (4 new). Seen in the page on a copy
+  of the desk database: Qwen's real "here" (a search result) stays a link; a made-up reply,
+  rendered in the tab only, shows its "here" as text beside
+  `https://evil.example/collect?q=the-users-private-notes` with the mark.
+
+Still open: DNS rebinding between the address check and the connection.

@@ -162,6 +162,52 @@ const decode = s => s.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (m, e) => {
     return ENTITIES[e.toLowerCase()] ?? m;
 });
 
+// ─────────────────────── what a reader cannot see ───────────────────────
+//
+// The classic place for an injection is text a person never sees: display:none, the hidden
+// attribute, aria-hidden, zero-size or transparent type. A model reading the page as text
+// would see it as plainly as the headline. Removed — element and everything inside it —
+// before the page becomes text or links. Not covered: text hidden by an external
+// stylesheet, or coloured to match its background; the page is still marked untrusted.
+
+const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
+
+function isHiddenTag(tag) {
+    const attrs = tag.replace(/^<[a-zA-Z][\w-]*/, '');
+    if (/\shidden(?=[\s=>/]|$)/i.test(attrs)) return true;
+    if (/\saria-hidden\s*=\s*["']?true/i.test(attrs)) return true;
+    const style = (/\sstyle\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(attrs) || []).slice(1).find(s => s != null) || '';
+    if (/display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0(?:\.0+)?\s*(?:;|!|$)|font-size\s*:\s*0(?:px|em|rem|%)?\s*(?:;|!|$)/i.test(style)) return true;
+    // Utility classes that mean "not shown". Screen-reader-only classes are left alone: that
+    // text is read aloud to people who use one, so it is not hidden from readers.
+    const cls = (/\sclass\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(attrs) || []).slice(1).find(s => s != null) || '';
+    return /(?:^|\s)(?:hidden|d-none|invisible)(?:\s|$)/i.test(cls);
+}
+
+/** The page without its hidden elements. A tag walk, not a parser: enough for this. */
+function dropHidden(html) {
+    let src = String(html);
+    const tagRe = /<(\/?)([a-zA-Z][\w-]*)\b[^>]*>/g;
+    let m;
+    while ((m = tagRe.exec(src))) {
+        const [tag, closing, rawName] = m;
+        const name = rawName.toLowerCase();
+        if (closing || VOID.has(name) || tag.endsWith('/>') || !isHiddenTag(tag)) continue;
+        // Find this element's end: the matching close of the same name, counting nesting.
+        const inner = new RegExp(`<(/?)${name}\\b[^>]*>`, 'gi');
+        inner.lastIndex = m.index + tag.length;
+        let depth = 1, end = -1, n;
+        while ((n = inner.exec(src))) {
+            if (n[0].endsWith('/>')) continue;
+            depth += n[1] ? -1 : 1;
+            if (depth === 0) { end = n.index + n[0].length; break; }
+        }
+        src = src.slice(0, m.index) + ' ' + src.slice(end === -1 ? src.length : end);
+        tagRe.lastIndex = m.index;
+    }
+    return src;
+}
+
 const MAX_LINKS = 30;
 
 /**
@@ -249,8 +295,9 @@ async function fetchPage(raw, { signal, clearance } = {}) {
 
     const body = await readCapped(res);
     const html = /html|xml/i.test(type) || /^\s*<(!doctype|html)/i.test(body);
-    const { title, text } = html ? htmlToText(body) : { title: '', text: body.trim() };
-    const links = html ? linksIn(body, url) : [];
+    const visible = html ? dropHidden(body) : body;
+    const { title, text } = html ? htmlToText(visible) : { title: '', text: body.trim() };
+    const links = html ? linksIn(visible, url) : [];
     const truncated = text.length > MAX_PAGE_CHARS;
     return {
         url: url.toString(), title, note: UNTRUSTED, chars: text.length, truncated,
@@ -262,5 +309,5 @@ async function fetchPage(raw, { signal, clearance } = {}) {
 
 module.exports = {
     TOOLS, UNTRUSTED, available, toolsFor, search, fetchPage, checkUrl, normalizeUrl, urlsIn,
-    htmlToText, linksIn, privateAddress, MAX_PAGE_CHARS
+    htmlToText, linksIn, dropHidden, privateAddress, MAX_PAGE_CHARS
 };

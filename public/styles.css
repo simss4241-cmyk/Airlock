@@ -1132,6 +1132,10 @@ main {
    like the other evidence marks: red means the gate refused something, and nothing was. */
 .badge.unbacked { border-color: var(--user-line); color: var(--text); background: var(--panel-2); cursor: help; }
 .claim-unbacked { text-decoration: underline dashed var(--user-text); text-decoration-thickness: 1px; text-underline-offset: 3px; cursor: help; }
+/* A link the model wrote from nowhere: shown with where it goes, not clickable. Steel. */
+.badge.unsourced { border-color: var(--user-line); color: var(--text); background: var(--panel-2); cursor: help; }
+.link-unsourced { text-decoration: underline dashed var(--user-text); text-underline-offset: 3px; cursor: help; }
+.link-unsourced .link-dest { font-size: .82em; opacity: .8; overflow-wrap: anywhere; }
 .badge.repeat { border-color: var(--user-line); color: var(--user-text); background: var(--panel-2); cursor: help; }
 .badge.secret { border-color: #4a1d1f; color: #ffb3b5; background: rgba(255, 90, 95, .08); cursor: help; }
 .badge.review { border-color: var(--accent-dim); color: var(--accent); background: rgba(118, 185, 0, .07); }

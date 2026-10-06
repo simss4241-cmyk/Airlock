@@ -48,7 +48,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Tier recorded per packet; "what crossed?" as a query | working |
 | Crossing by a remote participant **and** by hand, both gated and recorded | working |
 | Access token + remote spend cap for hosting | working, 26 assertions |
-| Duet — two addressable participants over one conversation | working, 115 assertions |
+| Duet — two addressable participants over one conversation | working, 119 assertions |
 | One timeline in two lanes: each message once, with a line to the one it answers | working |
 | Roles — one word per side ("Skeptic"), held for the whole conversation | working |
 | Images in a duet, for models that can see; never sent across the boundary | working |
@@ -65,7 +65,8 @@ what leaves it. This table is the honest version — clone it and check.
 | Search inside workspace files; read a numbered line range | working |
 | A participant can ask you for a result instead of inventing one; your answer is linked to the request | working, 34 assertions end to end |
 | Separate context windows for local and cloud models; tool results sized to fit, so the question is never pushed out | working |
-| The web: search (Tavily) and fetch, off by default; every query gated from either side, only given links opened, all on the record | working, 40 assertions |
+| The web: search (Tavily) and fetch, off by default; every query gated from either side, only given links opened, all on the record | working, 43 assertions |
+| Hidden page text removed before a model reads it; links a model writes clickable only if a search, a page or you gave them | working |
 | One count of what has left this machine, by kind — to cloud models, searches, pages, carried by hand — with what was withheld and what came back | working |
 | A single message dragged or copied out is scanned on the way; a credential does not leave | working |
 | Carry out by hand: the brief is gated before it is shown, and recorded when it leaves | working |
@@ -75,7 +76,7 @@ what leaves it. This table is the honest version — clone it and check.
 | Per-visitor settings, remote budgets, gate memory and generation slots; a daily cap that survives restarts | working |
 | Hosted deployment on Nebius AI Cloud, with the gate beside the app | not built |
 
-**757 assertions across nineteen suites.** Run them:
+**764 assertions across nineteen suites.** Run them:
 
 ```
 npm start                          # in one terminal

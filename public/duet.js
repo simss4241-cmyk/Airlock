@@ -161,6 +161,51 @@ function repeatOf(message) {
 
 // ─────────────────────────── claims against the record ───────────────────────────
 
+/**
+ * The links this conversation has been GIVEN, up to and including `message`: written by the
+ * user, returned by a search, or held by a page a fetch opened (and that page itself).
+ */
+function givenLinks(message) {
+    const E = window.AirlockEvidence;
+    const at = state.messages.findIndex(m => m.id === message.id);
+    const upTo = state.messages.slice(0, at === -1 ? state.messages.length : at + 1);
+    const given = new Set();
+    const add = u => { const k = E.linkKey(u); if (k) given.add(k); };
+    for (const m of upTo) {
+        if (m.role === 'user') E.urlsIn(m.content).forEach(add);
+        for (const t of callsOf(m)) {
+            (t.urls || []).forEach(add);
+            (t.results || []).forEach(r => add(r.url));
+            if ((t.name || t.tool) === 'fetch_url' && t.ok && t.target) add(t.target);
+        }
+    }
+    return given;
+}
+
+/**
+ * The model's links, checked. A link that came from a search, a page or the user stays a
+ * link — opened in a new tab with no referrer. One the model wrote from nowhere is shown as
+ * text with its real destination beside it, and is not clickable: a reply's link is the one
+ * way out of the airlock no gate reads, and "here" hides where it goes.
+ */
+function guardLinks(html, message) {
+    const E = window.AirlockEvidence;
+    if (!E?.linkKey) return { html, unsourced: [] };
+    const given = givenLinks(message);
+    const unsourced = [];
+    const unescape = s => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    const out = html.replace(/<a href="([^"]*)" target="_blank" rel="noopener">([\s\S]*?)<\/a>/g, (all, href, text) => {
+        const url = unescape(href);
+        if (E.isSourced(url, given)) {
+            return `<a href="${href}" target="_blank" rel="noopener noreferrer nofollow" referrerpolicy="no-referrer">${text}</a>`;
+        }
+        unsourced.push(url);
+        const shown = url.length > 90 ? url.slice(0, 87) + '…' : url;
+        return `<span class="link-unsourced" title="${escapeHtml(`Written by the model; no search returned it, no opened page held it, and you did not give it. Not clickable here: ${url}`)}">${text} <code class="link-dest">${escapeHtml(shown)}</code></span>`;
+    });
+    return { html: out, unsourced };
+}
+
 /** The reply's own tool calls, live or stored. */
 const callsOf = message => message.tools || message.requestMeta?.tools || [];
 
@@ -334,6 +379,13 @@ function messageHtml(message, { showAddressing = false } = {}) {
     // Says it opened a page, and its own record says it did not: the claim is marked in the
     // header, and the sentence that makes it is underlined in the text below.
     const unbacked = mine ? [] : unbackedClaims(message);
+
+    // Links the model wrote that came from nowhere — not a search, a page or you — are shown
+    // with their destination and not made clickable; the header says how many.
+    const guarded = !mine && message.content ? guardLinks(renderMarkdown(message.content), message) : null;
+    const linkMark = guarded?.unsourced.length
+        ? ` <span class="badge unsourced" title="${escapeHtml(`The model wrote ${guarded.unsourced.length === 1 ? 'a link' : 'links'} that no search returned, no opened page held, and you did not give: ${guarded.unsourced.join(', ')}. Not clickable here — copy it if you mean to open it.`)}">⚠ unsourced link${guarded.unsourced.length === 1 ? '' : ` ×${guarded.unsourced.length}`}</span>`
+        : '';
     const claimMark = unbacked.length
         ? ` <span class="badge unbacked" title="${escapeHtml(`This reply says it opened a page, but it opened none — ${webCallsOf(message)}. See the cards above its text.`)}">⚠ claims a page it didn't open</span>`
         : '';
@@ -405,7 +457,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
     // gate's ruling is shown under whatever was said, not only in place of it.
     const body = mine
         ? answerQuote + thumbs + (message.content ? renderProse(message.content) : '')
-        : toolCards + (message.content ? underlineClaims(renderMarkdown(message.content), unbacked, message) : '') + askCard
+        : toolCards + (message.content ? underlineClaims(guarded.html, unbacked, message) : '') + askCard
           + (message.status === 'blocked' ? gate : (message.content || askCard ? '' : empty));
 
     const classes = ['msg', mine ? 'user' : 'assistant'];
@@ -430,7 +482,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
 
     return `<div class="${classes.join(' ')}" data-message="${message.id}">
                 <span class="who"${portable ? ' draggable="true"' : ''}>${who}${addressed}${
-                    message.id ? `<span class="msg-id"> · #${message.id}</span>` : ''}${crossed}${echoMark}${unseenMark}${claimMark}${kept}${note}${handoff}</span>
+                    message.id ? `<span class="msg-id"> · #${message.id}</span>` : ''}${crossed}${echoMark}${unseenMark}${claimMark}${linkMark}${kept}${note}${handoff}</span>
                 <div class="bubble${message.streaming && message.content ? ' caret' : ''}">${
                     think}${body}</div>
                 ${message.stats ? `<span class="stats">${escapeHtml(message.stats)}</span>` : ''}
