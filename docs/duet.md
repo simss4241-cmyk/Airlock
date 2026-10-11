@@ -331,6 +331,20 @@ desk on 2026-10-02 it marked eleven replies — nine invented logs in one role-p
 "`model.txt` line 45" and "[policy_enforcer.py] v2.4.1" from the role runs, all made up —
 and one command offered for the user to run (`python run.py`). It is a mark, not a stop.
 
+**Numbers say where they began.** Every number in a reply is traced to where it was first
+said (`public/figures.js`, shared with the server and the tests). **Sourced** — you wrote
+it, in a message or a side's role, or a tool returned it — is not drawn on; hovering says
+where ("read by qwen2.5:7b on the left (#70) from gauge.txt: “…reads 480 kPa at…”"). **First
+said by a model** gets a quiet dashed underline naming which side and turn; **new in this
+reply**, a dotted one. You saying a number a model made up makes it yours. Three or more
+unsourced numbers in one reply put **# N unsourced figures** in the header. Nothing says a
+number is wrong — a proposal ("try 10 seconds") is new too; the point is that an invention
+repeated by the other side no longer looks established. Not figures: list markers, model
+names ("Llama3-8b"), versions, file names, links, paths, message ids, labels ("step 2"),
+anything in code. Tool calls keep the numbers they showed the model, with a few words
+around each (`figures` on the trace) — never the result itself, and never sent to a model.
+Exact values only: a computed or converted number (2 × 250, 500 kPa = 0.5 MPa) reads new.
+
 **A claim the record contradicts is marked.** A reply that says it opened, visited,
 fetched or verified a page — "I have opened the result to verify it" — while its own record
 shows no successful `fetch_url` carries **⚠ claims a page it didn't open** in its header,
@@ -436,11 +450,12 @@ before stays exactly as above: shared by both lanes, owned by neither.
 | `workspace-tools.js` | the file tools, shared with `/api/chat` |
 | `public/evidence.js` | what counts as a file reference, and whether anyone in the thread has seen it |
 | `public/echo.js` | what counts as a repeat — one rule for the run, the mark and the tests |
+| `public/figures.js` | what counts as a figure, and the numbers a tool result showed |
 | `public/restate.js` | which words of a reply were already said, word for word, by someone else |
 | `public/duet.js` | the timeline and its lines, the panes, chatter, the chamber and its doors |
-| `tools/duet_context_test.js` | 79 assertions, offline: context, what counts as a repeat, a path, a restated run |
+| `tools/duet_context_test.js` | 86 assertions, offline: context, what counts as a repeat, a path, a restated run, a figure |
 | `tools/duet_test.js` | 50 assertions over HTTP |
-| `tools/duet_tools_test.js` | 37 assertions: files, and every route to the cloud — fakes both sides |
+| `tools/duet_tools_test.js` | 38 assertions: files, and every route to the cloud — fakes both sides |
 | `tools/web_test.js` | 43 assertions: search and fetch, the gate on queries, given links only, the door, private addresses |
 | `tools/duet_request_test.js` | 34 assertions: asking you for a result, answers, search and line ranges — fake model |
 | `tools/duet_chatter_test.js` | 28 assertions: relays, refusals, interjections, the ledger — fakes both sides |

@@ -431,5 +431,26 @@ ok(!rs.worthMarking(rs.restated('Noted: we should check the relief valve before 
 ok(rs.restated('', [{ id: 7, text: theirs }]).copied === 0 && rs.restated(parrot, []).copied === 0, 'nothing to compare copies nothing');
 ok(Object.isFrozen(rs), 'the rule is frozen');
 
+// ── 17. where a number came from ──
+//
+// From the Wayfarer runs: models invented "500 kPa" and listed it as known for certain. Only
+// where a number was first said is checkable, so that is what is found. Noise is not a
+// figure: list markers, model names, versions, file names, links, labels.
+
+const F = require('../public/figures.js');
+const figs = t => F.figuresIn(t).map(f => f.v);
+ok(JSON.stringify(figs('1. Send pulses at 10, 12, 14 and 16 seconds.\n2. Then wait.')) === '["10","12","14","16"]',
+    'figures in prose are found; list markers are not');
+ok(figs('Use Llama3-8b or yolov8 at v2.4.1, see run.py, #12, https://x.org/2025/10.html, src/v2/main_3.js, step 2').length === 0,
+    'names, versions, file names, message ids, links, paths and labels are not figures');
+ok(JSON.stringify(figs('Pressure is 500kPa (0.50 MPa), a 5 % spike, 1,000 units, per model.txt line 45, as of Q3 2024.'))
+    === '["500","0.5","5","1000","45","2024"]', 'units glued or spaced, trailing zeros and thousands separators: one value each');
+ok(figs('500 kPa')[0] === figs('the 500 figure')[0] && figs('0.50')[0] === figs('0.5')[0], 'the same number written two ways is one value');
+const tf = F.toolFigures(JSON.stringify({ path: 'gauge.txt', startLine: 1, lines: 40, content: 'gauge reads 480 kPa at 09:14' }));
+ok(tf.some(f => f.v === '480' && /reads 480 kPa/.test(f.ctx)) && !tf.some(f => f.v === '40'),
+    "a tool result's numbers come from its text, with context — not from its own counts");
+ok(F.toolFigures('{"content":"cut short at 77 kPa and').some(f => f.v === '77'), 'a result cut short mid-JSON is still read');
+ok(Object.isFrozen(F), 'the rule is frozen');
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

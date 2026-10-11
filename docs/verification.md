@@ -721,3 +721,23 @@ marked. In "Roles v3 (no reasoning): Skeptic vs Optimist", #50 is 100% the other
 #47, word for word, and reads fully dimmed. In "Roles v3 (no reasoning): Skeptic vs
 Skeptic", #59 is 59%: "You're correct — the only way to settle it" and "on Llama3-8b
 across" stay bright, the rest is the left side's #58.
+
+## Verified 2026-10-11 — where a number began
+
+The figure-provenance idea from the Wayfarer runs, decided with the user: trace each number
+to where it was first said rather than judge it; a quiet underline for unsourced numbers and
+a header mark only at three or more; tool calls store the numbers they showed (with a few
+words of context), not their text; exact matches only. `public/figures.js`;
+`duet_context_test` 86/86 (7 new), `duet_tools_test` 38/38 (1 new: a file read records
+its numbers on the reply's trace).
+
+Before building, over the desk's 85 stored replies: 217 numbers, 108 also in the user's
+messages. The rest were inventions ("model.txt line 45", "as of Q3 2024"), proposals
+("reset to 10 seconds") and noise (list numbering, "yolov8", "Llama3-8b") — the noise is
+now filtered; inventions and proposals both read "new" and are told apart by eye. In "The
+Reactor Answered": 117 numbers sourced, 19 first said by a model, 11 new; four replies
+marked. One correction it made on the spot: "pulses every 11 seconds", taken for an
+invention in planning, is from the role the user wrote for the left side.
+
+Not yet run on a live tool turn in the page: only stored replies (which predate the
+`figures` field) and the faked server test.

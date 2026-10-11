@@ -42,7 +42,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'airlock-duet-tools-'));
 const workspace = path.join(tmp, 'workspace');
 fs.mkdirSync(workspace);
 
-const BENIGN = 'Shopping list: eggs, flour, a teal ribbon for the robot costume.';
+const BENIGN = 'Shopping list: 12 eggs, 500 g flour, a teal ribbon for the robot costume.';
 const CANARY_MARK = 'hunter2-canary-duet-51c9';
 const CANARY = [
     '# production credentials — DO NOT SHARE',
@@ -284,6 +284,9 @@ async function main() {
                 'and the gate was shown the file\'s contents before they went, not only the request');
             ok(done1?.message.requestMeta?.tools?.some(t => t.name === 'read_file' && /benign\.md/.test(t.label)),
                 'the reply records which file it read', JSON.stringify(done1?.message.requestMeta?.tools));
+            const read1 = done1?.message.requestMeta?.tools?.find(t => t.name === 'read_file');
+            ok(['12', '500'].every(v => read1?.figures?.some(f => f.v === v && f.ctx.includes(v))),
+                'and the numbers it was shown, with the words around each — for the figure marks', JSON.stringify(read1?.figures));
             const notes1 = await exposureNotes(t1.id);
             ok(notes1.some(n => /read_file\(benign\.md\).*sha:[0-9a-f]{12}/.test(n)),
                 '"what has crossed" names the file, with its size and hash', notes1.join(' | '));

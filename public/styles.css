@@ -1142,6 +1142,13 @@ main {
 .badge.restated-mark { border-color: var(--user-line); color: var(--user-text); background: var(--panel-2); cursor: help; }
 .restated { opacity: .5; cursor: help; }
 .restated:hover { opacity: .85; }
+/* Numbers and where they began. Sourced ones are not drawn on — hover says where they were
+   read or who gave them. One a model said first: a quiet dashed line; new here: dotted.
+   Steel, like the other evidence marks: where a number began, not a verdict on it. */
+.badge.figures { border-color: var(--user-line); color: var(--user-text); background: var(--panel-2); cursor: help; white-space: nowrap; }
+.fig { cursor: help; }
+.fig-model { text-decoration: underline dashed var(--user-text); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.fig-new { text-decoration: underline dotted var(--user-text); text-decoration-thickness: 1px; text-underline-offset: 3px; }
 .badge.secret { border-color: #4a1d1f; color: #ffb3b5; background: rgba(255, 90, 95, .08); cursor: help; }
 .badge.review { border-color: var(--accent-dim); color: var(--accent); background: rgba(118, 185, 0, .07); }
 

@@ -47,6 +47,18 @@ const sandbox = require('./sandbox');
 const { buildContext, CHARS_PER_TOKEN, REPLY_RESERVE_TOKENS } = require('./duet-context');
 const workspace = require('./workspace-tools');
 const web = require('./web');
+const figures = require('./public/figures');
+
+/**
+ * The numbers a tool result showed the model, kept on the reply's record so the page can
+ * tell a figure the model READ from one it made up (public/figures.js). The numbers and a few
+ * words around each — never the result itself. Read from exactly what the model was shown.
+ */
+const figuresShown = (ok, content) => {
+    if (!ok) return {};
+    const found = figures.toolFigures(content);
+    return found.length ? { figures: found } : {};
+};
 
 const { STATUS } = duet;
 
@@ -618,8 +630,9 @@ async function generate({
                     let args = call.function?.arguments ?? {};
                     if (typeof args === 'string') { try { args = JSON.parse(args); } catch { args = {}; } }
                     const out = await runWeb({ name, args, offered: useWeb, fetchable, config, threadId, reply, signal });
-                    convo.push({ role: 'tool', tool_name: name, content: fit(JSON.stringify(out.result).slice(0, 60000)) });
-                    toolTrace.push(out.trace);
+                    const shown = fit(JSON.stringify(out.result).slice(0, 60000));
+                    convo.push({ role: 'tool', tool_name: name, content: shown });
+                    toolTrace.push({ ...out.trace, ...figuresShown(out.trace.ok, shown) });
                     emit({ type: 'tool', messageId: reply.id, name, args: out.trace.args, ok: out.trace.ok,
                         summary: out.trace.summary, web: true, crossed: Boolean(out.trace.crossed) });
                     if (crosses && out.trace.ok) pendingArtifacts.push({ label: out.trace.label });
@@ -637,7 +650,7 @@ async function generate({
 
                 for (const { message, card, artifact } of await workspace.runCalls(allowed, root, { fit })) {
                     convo.push(message);
-                    toolTrace.push({ ...artifact, summary: card.summary, name: card.name });
+                    toolTrace.push({ ...artifact, summary: card.summary, name: card.name, ...figuresShown(card.ok, message.content) });
                     emit({ type: 'tool', messageId: reply.id, ...card });
                     if (crosses) pendingArtifacts.push(artifact);
                 }

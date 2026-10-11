@@ -385,7 +385,23 @@ function shadeRestated(html, message) {
     const sources = restateSources(message);
     const key = `${message.id}:${sources.map(m => m.id).join(',')}:${html}`;
     if (shadeCache.has(key)) return shadeCache.get(key);
+    const labels = new Map(sources.map(m => [m.id, sourceLabel(m)]));
+    const out = wrapRuns(html, text => window.AirlockRestate
+        .restated(text, sources.map(m => ({ id: m.id, text: m.content }))).spans
+        .map(s => ({ ...s, className: 'restated', title: `Already said, word for word, by ${labels.get(s.from)}` })));
+    if (shadeCache.size > 400) shadeCache.clear();
+    shadeCache.set(key, out);
+    return out;
+}
 
+/**
+ * Wrap runs of a reply's rendered TEXT in marking spans, across formatting. `runsOf` is given
+ * the text of every text node joined by spaces (so list items never fuse into one word) and
+ * returns [{ start, end, className, title }] in order, not overlapping; a run that crosses
+ * bold or a list item is wrapped piece by piece. Text inside `skip` is blanked out first, so
+ * nothing there is found.
+ */
+function wrapRuns(html, runsOf, { skip = null } = {}) {
     const tpl = document.createElement('template');
     tpl.innerHTML = html;
     const nodes = [];
@@ -393,14 +409,15 @@ function shadeRestated(html, message) {
     const walker = document.createTreeWalker(tpl.content, NodeFilter.SHOW_TEXT);
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
         nodes.push({ node: n, start: text.length });
-        text += n.nodeValue + ' ';            // a space between nodes: list items never fuse into one word
+        const hidden = skip && n.parentElement?.closest(skip);
+        text += (hidden ? ' '.repeat(n.nodeValue.length) : n.nodeValue) + ' ';
     }
-    const { spans } = window.AirlockRestate.restated(text, sources.map(m => ({ id: m.id, text: m.content })));
-    const labels = new Map(sources.map(m => [m.id, sourceLabel(m)]));
+    const runs = runsOf(text);
+    if (!runs.length) return html;
 
     for (const { node, start } of nodes) {
         const end = start + node.nodeValue.length;
-        const mine = spans.filter(s => s.start < end && s.end > start);
+        const mine = runs.filter(s => s.start < end && s.end > start);
         if (!mine.length) continue;
         const frag = document.createDocumentFragment();
         let pos = 0;
@@ -409,8 +426,8 @@ function shadeRestated(html, message) {
             if (b <= a) continue;
             if (a > pos) frag.append(node.nodeValue.slice(pos, a));
             const mark = document.createElement('span');
-            mark.className = 'restated';
-            mark.title = `Already said, word for word, by ${labels.get(s.from)}`;
+            mark.className = s.className;
+            mark.title = s.title;
             mark.textContent = node.nodeValue.slice(a, b);
             frag.append(mark);
             pos = b;
@@ -418,10 +435,83 @@ function shadeRestated(html, message) {
         if (pos < node.nodeValue.length) frag.append(node.nodeValue.slice(pos));
         node.replaceWith(frag);
     }
-    const out = tpl.innerHTML;
-    if (shadeCache.size > 400) shadeCache.clear();
-    shadeCache.set(key, out);
-    return out;
+    return tpl.innerHTML;
+}
+
+// ─────────────────────────── where a number came from ───────────────────────────
+
+/**
+ * Where each number this reply could cite was first said, by the rule in public/figures.js:
+ * a Map from value to { kind, label }. Sourced ('user', 'tool') wins whenever it happened at
+ * or before this reply — you saying a number a model made up makes it yours. Otherwise the
+ * earliest model reply that said it ('model'). This reply's own tool calls count: it read
+ * them before it wrote. The roles you wrote for each side count as yours.
+ */
+const figureCache = new Map();
+function figureOrigins(message) {
+    const F = window.AirlockFigures;
+    const at = state.messages.findIndex(m => m.id === message.id);
+    const upTo = state.messages.slice(0, at === -1 ? state.messages.length : at + 1);
+    const key = `${message.id}:${(message.content || '').length}:${upTo.length}`;
+    if (figureCache.has(key)) return figureCache.get(key);
+
+    const origins = new Map();
+    const source = (v, origin) => { if (origins.get(v)?.kind !== 'user' && origins.get(v)?.kind !== 'tool') origins.set(v, origin); };
+    for (const p of state.participants) {
+        const side = p.slot === 'a' ? 'left' : p.slot === 'b' ? 'right' : null;
+        for (const v of F.valuesIn(p.instructions)) source(v, { kind: 'user', label: `from the role you wrote${side ? ` for the ${side} side` : ''}` });
+    }
+    for (const m of upTo) {
+        if (m.role === 'user') {
+            if (m.id !== message.id) for (const v of F.valuesIn(m.content)) source(v, { kind: 'user', label: `from you (#${m.id})` });
+            continue;
+        }
+        for (const t of callsOf(m)) {
+            const where = t.name === 'fetch_url' || t.tool === 'fetch_url' ? (safeLink(t.target)?.host || t.target)
+                : t.name === 'web_search' || t.tool === 'web_search' ? `a web search for "${t.target}"` : t.target;
+            for (const f of t.figures || []) {
+                source(f.v, { kind: 'tool', label: `read by ${sourceLabel(m)} from ${where}: “…${f.ctx}…”` });
+            }
+        }
+        if (m.id === message.id) continue;
+        for (const v of F.valuesIn(m.content)) {
+            if (!origins.has(v)) origins.set(v, { kind: 'model', label: `first said by ${sourceLabel(m)}, with no source before that` });
+        }
+    }
+    if (figureCache.size > 400) figureCache.clear();
+    figureCache.set(key, origins);
+    return origins;
+}
+
+/** This reply's figures with no source: [{ v, origin }] — each value once. For the header mark. */
+function unsourcedFigures(message) {
+    if (message.role === 'user' || message.streaming || message.status !== 'complete' || !message.content || !window.AirlockFigures) return [];
+    const origins = figureOrigins(message);
+    const out = new Map();
+    for (const f of window.AirlockFigures.figuresIn(message.content)) {
+        const o = origins.get(f.v);
+        if (!o || o.kind === 'model') out.set(f.v, o || null);
+    }
+    return [...out].map(([v, origin]) => ({ v, origin }));
+}
+
+/**
+ * Mark each number in the rendered reply with where it came from. A sourced one is not
+ * drawn on — hovering it says where it was read or who gave it; one a model said first, or
+ * one new here, gets a quiet underline. Nothing says a number is wrong: only where it began.
+ * Numbers in code, links and link destinations are left alone.
+ */
+function markFigures(html, message) {
+    if (message.streaming || message.status !== 'complete' || !window.AirlockFigures) return html;
+    const origins = figureOrigins(message);
+    return wrapRuns(html, text => window.AirlockFigures.figuresIn(text).map(f => {
+        const o = origins.get(f.v);
+        return {
+            start: f.start, end: f.end,
+            className: !o ? 'fig fig-new' : o.kind === 'model' ? 'fig fig-model' : 'fig fig-sourced',
+            title: o ? `${f.raw}: ${o.label}` : `${f.raw}: new in this reply — not said before by you, a tool, or either side`
+        };
+    }), { skip: 'code, pre, a, .link-dest' });
 }
 
 const credentialCache = new Map();
@@ -487,6 +577,15 @@ function messageHtml(message, { showAddressing = false } = {}) {
                 .map(id => messageById(id)).filter(Boolean).map(sourceLabel).join(', ');
             return ` <span class="badge restated-mark" title="${escapeHtml(`${pct}% of this reply (${restate.copied} of ${restate.total} words) repeats, word for word, what ${whose} already said. Those runs are dimmed below; the rest is new.`)}">≈ ${pct}% restated</span>`;
         })()
+        : '';
+    // Three or more numbers no one outside the models gave: said in the header, and each
+    // underlined in the text with where it began. Fewer is left to the underlines alone — a
+    // proposal ("try 10 seconds") is a model's job, not a fault.
+    const loose = mine ? [] : unsourcedFigures(message);
+    const figureMark = loose.length >= 3
+        ? ` <span class="badge figures" title="${escapeHtml(`${loose.length} numbers here came from no message of yours and no tool result:\n`
+            + loose.map(f => `${f.v} — ${f.origin ? f.origin.label : 'new in this reply'}`).join('\n')
+            + '\nWhere a number began, not whether it is right: a proposal is new too.')}"># ${loose.length} unsourced figures</span>`
         : '';
     const claimMark = unbacked.length
         ? ` <span class="badge unbacked" title="${escapeHtml(`This reply says it opened a page, but it opened none — ${webCallsOf(message)}. See the cards above its text.`)}">⚠ claims a page it didn't open</span>`
@@ -559,7 +658,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
     // gate's ruling is shown under whatever was said, not only in place of it.
     const body = mine
         ? answerQuote + thumbs + (message.content ? renderProse(message.content) : '')
-        : toolCards + (message.content ? shadeRestated(underlineClaims(guarded.html, unbacked, message), message) : '') + askCard
+        : toolCards + (message.content ? markFigures(shadeRestated(underlineClaims(guarded.html, unbacked, message), message), message) : '') + askCard
           + (message.status === 'blocked' ? gate : (message.content || askCard ? '' : empty));
 
     const classes = ['msg', mine ? 'user' : 'assistant'];
@@ -584,7 +683,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
 
     return `<div class="${classes.join(' ')}" data-message="${message.id}">
                 <span class="who"${portable ? ' draggable="true"' : ''}>${who}${addressed}${
-                    message.id ? `<span class="msg-id"> · #${message.id}</span>` : ''}${crossed}${echoMark}${restateMark}${unseenMark}${claimMark}${linkMark}${kept}${note}${handoff}</span>
+                    message.id ? `<span class="msg-id"> · #${message.id}</span>` : ''}${crossed}${echoMark}${restateMark}${figureMark}${unseenMark}${claimMark}${linkMark}${kept}${note}${handoff}</span>
                 <div class="bubble${message.streaming && message.content ? ' caret' : ''}">${
                     think}${body}</div>
                 ${message.stats ? `<span class="stats">${escapeHtml(message.stats)}</span>` : ''}
