@@ -1896,11 +1896,16 @@ main::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
 
 /* The log. Resizable by drag, because how much of the conversation you want in view
    is a per-task judgement — reading a long reply wants a tall chamber, driving the two
-   panes wants a short one. */
+   panes wants a short one.
+   Its own height, not flex: 1. Under flex: 1 the browser ignored the height and sized the
+   log to its content, so on a long thread the chamber opened over the whole timeline. It
+   opens at about a third of the window, and a drag can never take it past 60%: the
+   conversation above always keeps some room. */
 .airlock-log {
-    flex: 1;
+    flex: none;
     min-height: 0;
-    height: 188px;
+    height: clamp(130px, 32vh, 320px);
+    max-height: 60vh;
     overflow-y: auto;
     resize: vertical;
     padding: 6px 0;
