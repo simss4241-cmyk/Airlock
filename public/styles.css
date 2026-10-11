@@ -1137,6 +1137,11 @@ main {
 .link-unsourced { text-decoration: underline dashed var(--user-text); text-underline-offset: 3px; cursor: help; }
 .link-unsourced .link-dest { font-size: .82em; opacity: .8; overflow-wrap: anywhere; }
 .badge.repeat { border-color: var(--user-line); color: var(--user-text); background: var(--panel-2); cursor: help; }
+/* Words already said by someone else: dimmed, not coloured — colour here means where text
+   went (local / crossed / refused), and restating is about who wrote it. */
+.badge.restated-mark { border-color: var(--user-line); color: var(--user-text); background: var(--panel-2); cursor: help; }
+.restated { opacity: .5; cursor: help; }
+.restated:hover { opacity: .85; }
 .badge.secret { border-color: #4a1d1f; color: #ffb3b5; background: rgba(255, 90, 95, .08); cursor: help; }
 .badge.review { border-color: var(--accent-dim); color: var(--accent); background: rgba(118, 185, 0, .07); }
 

@@ -403,5 +403,33 @@ ok(!ev.isSourced('javascript:alert(1)', given) && ev.linkKey('ftp://x.org/f') ==
 ok(JSON.stringify(ev.urlsIn('See https://a.org/x, and (https://b.org/y?z=1).')) === '["https://a.org/x","https://b.org/y?z=1"]',
     'links the user writes are found, without trailing punctuation');
 
+// ── 16. words already said by someone else ──
+//
+// Small models parrot: a chatter reply can be one new sentence wrapped in the other side's
+// wording. Runs of six or more words copied from another author are found and credited to
+// where they came from; the new words are left alone.
+
+const rs = require('../public/restate.js');
+const theirs = 'The pressure reading is high, so we should check the relief valve before anything else. The log shows nothing unusual.';
+const parrot = 'Agreed. The pressure reading is high, so we should check the relief valve before anything else. I would also ask for the gauge model.';
+const r1 = rs.restated(parrot, [{ id: 7, text: theirs }]);
+const shaded = r1.spans.map(s => parrot.slice(s.start, s.end));
+ok(shaded.length === 1 && shaded[0] === 'The pressure reading is high, so we should check the relief valve before anything else',
+    'the copied run is found, punctuation inside it included, and nothing either side of it');
+ok(r1.spans[0].from === 7 && r1.copied === 15 && r1.total === 24, 'credited to its source, counted in words');
+ok(rs.worthMarking(r1), 'more than 40% copied, and over twelve words: worth a mark');
+ok(rs.restated(parrot.toUpperCase(), [{ id: 7, text: theirs }]).copied === 15, 'case does not hide a copy');
+ok(rs.restated('Yes, I agree with you on that, and the valve matters most here, as you said.', [{ id: 7, text: theirs }]).copied === 0,
+    'agreeing, on the same topic, in its own words: nothing copied');
+ok(rs.restated('Please check the relief valve before noon', [{ id: 7, text: theirs }]).copied === 0,
+    'five words in a row are a phrase, not a copy');
+const r2 = rs.restated(parrot, [{ id: 9, text: 'so we should check the relief valve before anything else' }, { id: 7, text: theirs }]);
+ok(r2.spans.length === 2 && r2.spans[0].from === 7 && r2.spans[1].from === 9,
+    'two sources: each run named for the first source in priority order that holds it');
+ok(!rs.worthMarking(rs.restated('Noted: we should check the relief valve before anything else. Then the gauge, then the log, then the seals, then the pump, then the wiring, then the panel.',
+    [{ id: 7, text: theirs }])), 'a long reply quoting one line is shaded, not marked');
+ok(rs.restated('', [{ id: 7, text: theirs }]).copied === 0 && rs.restated(parrot, []).copied === 0, 'nothing to compare copies nothing');
+ok(Object.isFrozen(rs), 'the rule is frozen');
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

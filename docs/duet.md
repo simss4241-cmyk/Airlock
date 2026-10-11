@@ -312,6 +312,14 @@ or more — or, under six distinct words, an exact match — is a repeat: the ru
 repeat, and is never counted. Measured on the loop it was built for: word for word 1.00, one
 word changed 0.90, two replies agreeing in different words 0.26.
 
+**Words already said by someone else are dimmed.** A run of six or more words that appeared,
+word for word, in an earlier message by the other side or by you is dimmed in the reply, so
+what is new stands out; hovering a run says whose words they were — "nemotron-3-nano:4b on
+the left (#58)". The message being answered is credited first, then newest to oldest over
+the last twelve. A reply 40% or more restated (and over twelve words) carries
+**≈ N% restated**. The rule is `public/restate.js`, shared with the tests; measured on the
+rendered text, so a run across bold or list items is still found. A mark, not a stop.
+
 **A file nobody has seen is marked.** A reply that names a file — `/log/nav_01.txt`,
 `policy_enforcer.py`, `log/sequence_01` — that no tool read in this thread, and that you
 did not write or attach, carries **⚠ unseen file** (the names are in its tooltip). Either
@@ -428,8 +436,9 @@ before stays exactly as above: shared by both lanes, owned by neither.
 | `workspace-tools.js` | the file tools, shared with `/api/chat` |
 | `public/evidence.js` | what counts as a file reference, and whether anyone in the thread has seen it |
 | `public/echo.js` | what counts as a repeat — one rule for the run, the mark and the tests |
+| `public/restate.js` | which words of a reply were already said, word for word, by someone else |
 | `public/duet.js` | the timeline and its lines, the panes, chatter, the chamber and its doors |
-| `tools/duet_context_test.js` | 69 assertions, offline: context, what counts as a repeat, what counts as a path |
+| `tools/duet_context_test.js` | 79 assertions, offline: context, what counts as a repeat, a path, a restated run |
 | `tools/duet_test.js` | 50 assertions over HTTP |
 | `tools/duet_tools_test.js` | 37 assertions: files, and every route to the cloud — fakes both sides |
 | `tools/web_test.js` | 43 assertions: search and fetch, the gate on queries, given links only, the door, private addresses |

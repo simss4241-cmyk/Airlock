@@ -333,6 +333,97 @@ function unseenFiles(message) {
     return names;
 }
 
+/**
+ * What this reply could have copied from, for public/restate.js: the earlier messages by
+ * anyone else — the other side's finished replies and the user's messages. The message it
+ * answers comes first, so a run found there is credited to it; then newest to oldest, the
+ * last twelve. The side's own earlier replies are left out: saying itself again is a repeat.
+ */
+function restateSources(message) {
+    const at = state.messages.findIndex(m => m.id === message.id);
+    const before = state.messages.slice(0, at === -1 ? state.messages.length : at)
+        .filter(m => (m.content || '').trim() && (m.role === 'user'
+            || (m.authorId !== message.authorId && m.status === 'complete')));
+    const parent = before.find(m => m.id === parentOf(message));
+    const rest = before.filter(m => m !== parent).reverse();
+    return (parent ? [parent, ...rest] : rest).slice(0, 12);
+}
+
+/**
+ * Whose words a source was, for a tooltip: "you (#12)" or "qwen2.5:7b on the right (#14)".
+ * The side is always said: both sides can run the same model, and then the name alone does
+ * not tell them apart.
+ */
+function sourceLabel(m) {
+    if (m.role === 'user') return `you (#${m.id})`;
+    const slot = participant(m.authorId)?.slot;
+    const side = slot === 'a' ? ' on the left' : slot === 'b' ? ' on the right' : '';
+    return `${nameOf(m)}${side} (#${m.id})`;
+}
+
+/** The reply's restating, measured on its own text — for the header mark. Cached by content. */
+const restateCache = new Map();
+function restatedOf(message) {
+    if (message.role === 'user' || message.streaming || message.status !== 'complete' || !message.content || !window.AirlockRestate) return null;
+    const sources = restateSources(message);
+    const key = `${message.id}:${message.content.length}:${sources.map(m => m.id).join(',')}`;
+    if (restateCache.has(key)) return restateCache.get(key);
+    const result = window.AirlockRestate.restated(message.content, sources.map(m => ({ id: m.id, text: m.content })));
+    restateCache.set(key, result);
+    return result;
+}
+
+/**
+ * Dim the restated runs where they appear in the rendered reply, so the new words stand
+ * out. Measured on the rendered TEXT (markdown gone), across formatting: a run that crosses
+ * bold or a list item is still found, and each piece of it is wrapped in its own text node.
+ * Each dimmed run names, on hover, whose words it was.
+ */
+const shadeCache = new Map();
+function shadeRestated(html, message) {
+    if (!restatedOf(message)?.copied) return html;
+    const sources = restateSources(message);
+    const key = `${message.id}:${sources.map(m => m.id).join(',')}:${html}`;
+    if (shadeCache.has(key)) return shadeCache.get(key);
+
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html;
+    const nodes = [];
+    let text = '';
+    const walker = document.createTreeWalker(tpl.content, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        nodes.push({ node: n, start: text.length });
+        text += n.nodeValue + ' ';            // a space between nodes: list items never fuse into one word
+    }
+    const { spans } = window.AirlockRestate.restated(text, sources.map(m => ({ id: m.id, text: m.content })));
+    const labels = new Map(sources.map(m => [m.id, sourceLabel(m)]));
+
+    for (const { node, start } of nodes) {
+        const end = start + node.nodeValue.length;
+        const mine = spans.filter(s => s.start < end && s.end > start);
+        if (!mine.length) continue;
+        const frag = document.createDocumentFragment();
+        let pos = 0;
+        for (const s of mine) {
+            const a = Math.max(s.start - start, pos), b = Math.min(s.end - start, node.nodeValue.length);
+            if (b <= a) continue;
+            if (a > pos) frag.append(node.nodeValue.slice(pos, a));
+            const mark = document.createElement('span');
+            mark.className = 'restated';
+            mark.title = `Already said, word for word, by ${labels.get(s.from)}`;
+            mark.textContent = node.nodeValue.slice(a, b);
+            frag.append(mark);
+            pos = b;
+        }
+        if (pos < node.nodeValue.length) frag.append(node.nodeValue.slice(pos));
+        node.replaceWith(frag);
+    }
+    const out = tpl.innerHTML;
+    if (shadeCache.size > 400) shadeCache.clear();
+    shadeCache.set(key, out);
+    return out;
+}
+
 const credentialCache = new Map();
 function credentialsCached(message) {
     const key = `${message.id}:${(message.content || '').length}`;
@@ -385,6 +476,17 @@ function messageHtml(message, { showAddressing = false } = {}) {
     const guarded = !mine && message.content ? guardLinks(renderMarkdown(message.content), message) : null;
     const linkMark = guarded?.unsourced.length
         ? ` <span class="badge unsourced" title="${escapeHtml(`The model wrote ${guarded.unsourced.length === 1 ? 'a link' : 'links'} that no search returned, no opened page held, and you did not give: ${guarded.unsourced.join(', ')}. Not clickable here — copy it if you mean to open it.`)}">⚠ unsourced link${guarded.unsourced.length === 1 ? '' : ` ×${guarded.unsourced.length}`}</span>`
+        : '';
+    // Much of it already said, word for word, by the other side or by you: the header says
+    // how much, and the copied runs are dimmed in the text so what is new stands out.
+    const restate = mine ? null : restatedOf(message);
+    const restateMark = window.AirlockRestate?.worthMarking(restate)
+        ? (() => {
+            const pct = Math.round(restate.share * 100);
+            const whose = [...new Set(restate.spans.map(s => s.from))]
+                .map(id => messageById(id)).filter(Boolean).map(sourceLabel).join(', ');
+            return ` <span class="badge restated-mark" title="${escapeHtml(`${pct}% of this reply (${restate.copied} of ${restate.total} words) repeats, word for word, what ${whose} already said. Those runs are dimmed below; the rest is new.`)}">≈ ${pct}% restated</span>`;
+        })()
         : '';
     const claimMark = unbacked.length
         ? ` <span class="badge unbacked" title="${escapeHtml(`This reply says it opened a page, but it opened none — ${webCallsOf(message)}. See the cards above its text.`)}">⚠ claims a page it didn't open</span>`
@@ -457,7 +559,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
     // gate's ruling is shown under whatever was said, not only in place of it.
     const body = mine
         ? answerQuote + thumbs + (message.content ? renderProse(message.content) : '')
-        : toolCards + (message.content ? underlineClaims(guarded.html, unbacked, message) : '') + askCard
+        : toolCards + (message.content ? shadeRestated(underlineClaims(guarded.html, unbacked, message), message) : '') + askCard
           + (message.status === 'blocked' ? gate : (message.content || askCard ? '' : empty));
 
     const classes = ['msg', mine ? 'user' : 'assistant'];
@@ -482,7 +584,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
 
     return `<div class="${classes.join(' ')}" data-message="${message.id}">
                 <span class="who"${portable ? ' draggable="true"' : ''}>${who}${addressed}${
-                    message.id ? `<span class="msg-id"> · #${message.id}</span>` : ''}${crossed}${echoMark}${unseenMark}${claimMark}${linkMark}${kept}${note}${handoff}</span>
+                    message.id ? `<span class="msg-id"> · #${message.id}</span>` : ''}${crossed}${echoMark}${restateMark}${unseenMark}${claimMark}${linkMark}${kept}${note}${handoff}</span>
                 <div class="bubble${message.streaming && message.content ? ' caret' : ''}">${
                     think}${body}</div>
                 ${message.stats ? `<span class="stats">${escapeHtml(message.stats)}</span>` : ''}
