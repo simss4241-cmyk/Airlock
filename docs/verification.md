@@ -755,3 +755,16 @@ the tracer cannot and should not catch — the tooltip's source line is what sho
 Tooltips now give the time a source was said. Discovery, chosen by the user: a faint line
 under sourced numbers on reply hover, and a **?** key to every mark. `duet_context_test`
 91/91 (5 new), `duet_tools_test` 38/38.
+
+## Verified 2026-10-13 — /api/chat runs only what it offered
+
+Flagged 2026-10-03 and left open: `/api/chat` ran any file-tool call a model made, even on a
+request that offered no tools. The duet route already refused; this one now matches — a call
+on a request with no usable workspace (none, a folder gone, a folder outside
+`AIRLOCK_WORKSPACE_ROOTS`, a model without tools) is answered "not offered — not run" and
+touches nothing on disk. `kernel_http_test` 14/14 (2 new), with the server limited to the test
+workspace and a thread whose root was written into the db outside it. Without the fix the
+same test fails: the fenced file's contents reached the fake remote.
+
+No page code calls `/api/chat` any more (the duet is the only view); the route survives for
+the HTTP tests that exercise the kernel through it.

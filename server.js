@@ -643,6 +643,19 @@ app.post('/api/chat', async (req, res) => {
             // ruling judges the file contents, not the far side's own words.
             if (crosses) kernel.acknowledge([asked]);
 
+            // ⚠ Only what was offered runs. A model can name a tool on a request that offered
+            // none — no workspace, a folder gone or no longer permitted, a model without tool
+            // support — and it is told so; nothing on disk is touched. Same rule as the duet.
+            if (!useTools) {
+                for (const call of toolCalls) {
+                    const name = String(call.function?.name || 'tool');
+                    send({ airlock_tool: { name, args: {}, ok: false, summary: `${name} not offered — not run` } });
+                    convo.push({ role: 'tool', tool_name: name,
+                        content: `${name} is not available on this request: no workspace files were offered.` });
+                }
+                continue;
+            }
+
             for (const { message, card, artifact } of await runCalls(toolCalls, workspaceRoot)) {
                 // Custom line the client renders as a tool card. Ollama never emits this key.
                 send({ airlock_tool: card });

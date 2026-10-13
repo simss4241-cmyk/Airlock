@@ -40,6 +40,11 @@ const FAKE_MODEL = 'fake/remote-model';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'airlock-kernel-http-'));
 const workspace = path.join(tmp, 'workspace');
 fs.mkdirSync(workspace);
+// Outside the permitted roots: a folder a thread may have saved before the fence went up.
+const outside = path.join(tmp, 'outside');
+fs.mkdirSync(outside);
+const OUTSIDE_MARK = 'outside-the-fence-4e1b';
+fs.writeFileSync(path.join(outside, 'benign.md'), OUTSIDE_MARK + '\n');
 
 const BENIGN = 'Shopping list: eggs, flour, a teal ribbon for the robot costume.';
 const CANARY_MARK = 'hunter2-canary-7f3a';
@@ -161,7 +166,9 @@ async function main() {
             NEBIUS_BASE_URL: `http://127.0.0.1:${FAKE_PORT}`,
             AIRLOCK_REMOTE_ALLOW: '',
             AIRLOCK_TOKEN: '',
-            AIRLOCK_REMOTE_BUDGET: ''
+            AIRLOCK_REMOTE_BUDGET: '',
+            // Only the test workspace is permitted, so the fenced case below is real.
+            AIRLOCK_WORKSPACE_ROOTS: workspace
         },
         stdio: ['ignore', 'pipe', 'pipe']
     });
@@ -239,6 +246,29 @@ async function main() {
             const notes2 = (exp2.body?.packets || []).flatMap(p => p.crossings.map(c => c.note));
             ok(!notes2.some(n => /canary\.md/.test(n)), 'and it is not recorded as crossed, because it did not');
         }
+
+        // ── 3. a folder no longer permitted: nothing is read ──
+        // The hole (flagged 2026-10-03): /api/chat ran any tool call a model made, even on a
+        // request that offered none. A thread whose root was saved before the allowlist
+        // fenced it off — here, written straight into the db — must not be read, whatever
+        // the model asks for.
+        console.log('\na workspace saved before it was fenced off');
+        const thread3 = (await api('POST', '/api/threads', { folderId, title: 'fenced' })).body;
+        {
+            const { DatabaseSync } = require('node:sqlite');
+            const db = new DatabaseSync(path.join(tmp, 'kernel-http.db'));
+            db.prepare('UPDATE threads SET workspace_root = ? WHERE id = ?').run(outside, thread3.id);
+            db.close();
+        }
+        const ask3 = 'Please read benign.md and tell me what is in it.';
+        const p3 = (await api('POST', '/api/packets', { threadId: thread3.id, role: 'user', content: ask3 })).body;
+        const before3 = received.length;
+        const r3 = await chat({ threadId: thread3.id, model: FAKE_MODEL, messages: [{ role: 'user', content: ask3 }], packetIds: [p3.id] });
+        const tool3 = r3.lines.find(l => l.airlock_tool)?.airlock_tool;
+        ok(tool3 && !tool3.ok && /not offered/.test(tool3.summary),
+            'the model asks to read a file anyway, and is told it was not offered', JSON.stringify(tool3 || r3.refusal));
+        ok(!received.slice(before3).some(b => b.includes(OUTSIDE_MARK)),
+            'NOTHING from the fenced folder reached the far side');
     } finally {
         child.kill();
         if (child.exitCode === null) await new Promise(r => child.once('exit', r));
