@@ -355,10 +355,24 @@ function restateSources(message) {
  * not tell them apart.
  */
 function sourceLabel(m) {
-    if (m.role === 'user') return `you (#${m.id})`;
+    const when = saidAt(m);
+    if (m.role === 'user') return `you${when}`;
     const slot = participant(m.authorId)?.slot;
     const side = slot === 'a' ? ' on the left' : slot === 'b' ? ' on the right' : '';
-    return `${nameOf(m)}${side} (#${m.id})`;
+    return `${nameOf(m)}${side}${when}`;
+}
+
+/**
+ * When a message was said, for a tooltip: " at 14:32" today, " on 11 Oct at 14:32" before.
+ * A time reads at a glance where a message number means opening the chamber to look it up.
+ */
+function saidAt(m) {
+    const d = m.createdAt ? new Date(m.createdAt) : null;
+    if (!d || Number.isNaN(d.getTime())) return '';
+    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return d.toDateString() === new Date().toDateString()
+        ? ` at ${time}`
+        : ` on ${d.toLocaleDateString([], { day: 'numeric', month: 'short' })} at ${time}`;
 }
 
 /** The reply's restating, measured on its own text — for the header mark. Cached by content. */
@@ -463,14 +477,20 @@ function figureOrigins(message) {
     }
     for (const m of upTo) {
         if (m.role === 'user') {
-            if (m.id !== message.id) for (const v of F.valuesIn(m.content)) source(v, { kind: 'user', label: `from you (#${m.id})` });
+            if (m.id !== message.id) for (const v of F.valuesIn(m.content)) source(v, { kind: 'user', label: `from you${saidAt(m)}` });
             continue;
         }
         for (const t of callsOf(m)) {
             const where = t.name === 'fetch_url' || t.tool === 'fetch_url' ? (safeLink(t.target)?.host || t.target)
                 : t.name === 'web_search' || t.tool === 'web_search' ? `a web search for "${t.target}"` : t.target;
+            // The stored value, and the values in its context read by today's rule: a record
+            // written before dates and times were whole still matches "09:14" — the context
+            // words were in the tool result too, so nothing outside it is credited.
             for (const f of t.figures || []) {
-                source(f.v, { kind: 'tool', label: `read by ${sourceLabel(m)} from ${where}: “…${f.ctx}…”` });
+                const origin = { kind: 'tool', label: `read by ${sourceLabel(m)} from ${where}: “…${f.ctx}…”` };
+                source(f.v, origin);
+                const inner = String(f.ctx).replace(/^\S*\s+|\s+\S*$/g, '');   // edge words may be cut mid-number
+                for (const v of F.valuesIn(inner)) if (!origins.has(v) || origins.get(v).kind === 'model') source(v, origin);
             }
         }
         if (m.id === message.id) continue;
@@ -2272,6 +2292,10 @@ function paintChatter(ended = null) {
 
 // The header collapses the chamber on click; its controls must not.
 chatterEl.root.addEventListener('click', e => e.stopPropagation());
+
+// The key to the marks: in the chamber bar, which otherwise collapses on any click.
+const marksKeyBtn = document.getElementById('marksKeyBtn');
+if (marksKeyBtn) marksKeyBtn.onclick = e => { e.stopPropagation(); document.getElementById('marksKey').showModal(); };
 chatterEl.step.onclick = () => chatterStep();
 chatterEl.auto.onclick = () => chatterAuto();
 

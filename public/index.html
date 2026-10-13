@@ -140,6 +140,9 @@
                     <span class="key local">local</span>
                     <span class="key crossed">↗ crossed</span>
                 </span>
+                <!-- Outside the legend: the legend hides on narrow screens; the key should not. -->
+                <button class="icon-btn sm marks-key-btn" id="marksKeyBtn" type="button"
+                        title="What the marks on replies mean">?</button>
                 <button class="icon-btn sm" id="airlockToggle" title="Collapse the chamber">▾</button>
             </header>
             <!-- The bay holds the log and, over it, a pair of pressure doors. When a new
@@ -171,6 +174,64 @@
 
 </div><!-- /.pane -->
 </div><!-- /.app-shell -->
+
+<!-- The key to every mark a reply can carry. Drawn with the marks' own classes, so the key
+     cannot drift from what the thread shows. -->
+<dialog id="marksKey">
+    <form method="dialog">
+        <div class="dlg-head">What the marks mean</div>
+        <div class="dlg-body marks-key">
+            <p class="note">Code checks these against the thread's record — no model judges anything.
+                Hover a mark or an underline in a reply to see the details.</p>
+
+            <h4>Numbers: where each one began</h4>
+            <dl>
+                <dt><span class="fig fig-sourced fig-shown">480</span></dt>
+                <dd>From you, the role you wrote, or something a tool read. Plain in the text; hover a reply and these show a faint line.</dd>
+                <dt><span class="fig fig-model">12</span></dt>
+                <dd>First said by a model earlier in the thread, with no source before that.</dd>
+                <dt><span class="fig fig-new">1.5</span></dt>
+                <dd>New in this reply. Fine for a proposal; a warning sign for a "known" fact.</dd>
+                <dt><span class="badge figures"># 3 unsourced figures</span></dt>
+                <dd>Three or more numbers in one reply with no outside source.</dd>
+            </dl>
+            <p class="note">Where a number began, not whether it is right. A number used for the wrong
+                thing still shows its source — hover it to compare.</p>
+
+            <h4>Words</h4>
+            <dl>
+                <dt><span class="restated">already said word for word</span></dt>
+                <dd>Copied from the other side or from you. The bright words are the reply's own.</dd>
+                <dt><span class="badge restated-mark">≈ 62% restated</span></dt>
+                <dd>Most of the reply repeats someone else.</dd>
+                <dt><span class="badge repeat">↻ repeat of #12</span></dt>
+                <dd>Nearly word for word an earlier reply from the same side. Ends an Auto run.</dd>
+            </dl>
+
+            <h4>Claims against the record</h4>
+            <dl>
+                <dt><span class="badge unseen">⚠ unseen file</span></dt>
+                <dd>Names a file no tool read and you never gave.</dd>
+                <dt><span class="badge unbacked">⚠ claims a page it didn't open</span></dt>
+                <dd>Says it opened or checked a page; its record shows it didn't.</dd>
+                <dt><span class="badge unsourced">⚠ unsourced link</span></dt>
+                <dd>A link the model wrote itself. Shown with its destination, not clickable.</dd>
+                <dt><span class="badge secret">⚠ credential</span></dt>
+                <dd>Holds a key or password. It won't leave by drag or copy; the gate withholds it.</dd>
+            </dl>
+
+            <h4>Where it went</h4>
+            <dl>
+                <dt><span class="badge travel">↗ crossed</span></dt>
+                <dd>Produced across the boundary — this text was on a remote model's side.</dd>
+            </dl>
+        </div>
+        <div class="dlg-foot">
+            <span class="spacer"></span>
+            <button class="icon-btn" value="close">Close</button>
+        </div>
+    </form>
+</dialog>
 
 <dialog id="settings">
     <form method="dialog">

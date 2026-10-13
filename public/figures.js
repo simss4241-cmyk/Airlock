@@ -39,6 +39,21 @@ function figuresIn(text) {
     t = blank(t, /\b[\w-]+\.(?:[a-z]{1,5})\b(?=\W|$)/gi);            // file names: run.py, v2.csv
     t = blank(t, /^[ \t]*(?:[-*+][ \t]+)?\d+[.)](?=[ \t])/gm);       // list markers
     const out = [];
+
+    // Dates and clock times are ONE value each: "2026-10-02" is not 2026, 10 and 2, and
+    // "09:14" is not 9 and 14. Split, their pieces credited any later "10 seconds" or
+    // "2 pumps" to the file that held the date. A date matches only the same date; a time
+    // only the same time ("9:14" and "09:14" are one). "3:2" is a ratio, not a time.
+    // Any hyphen: small models write dates with U+2011 (non-breaking) as often as "-".
+    const whole = /(?<![\w.:\-‐-–])(\d{4})[\-‐-–](\d{1,2})[\-‐-–](\d{1,2})(?![\w.:\-‐-–]*\d)|(?<![\w.:-])(\d{1,2}):([0-5]\d)(?::([0-5]\d))?(?![\w:]|\.\d)/g;
+    for (const m of t.matchAll(whole)) {
+        const pad = n => String(Number(n)).padStart(2, '0');
+        const v = m[1] ? `${m[1]}-${pad(m[2])}-${pad(m[3])}`
+            : `${Number(m[4])}:${m[5]}${m[6] ? ':' + m[6] : ''}`;
+        out.push({ v, raw: m[0], start: m.index, end: m.index + m[0].length });
+    }
+    t = blank(t, whole);
+
     for (const m of t.matchAll(/\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)*/g)) {
         const raw = m[0], start = m.index, end = start + raw.length;
         const before = t[start - 1] || '', after = t.slice(end);
@@ -52,7 +67,7 @@ function figuresIn(text) {
         if (!Number.isFinite(n)) continue;
         out.push({ v: String(n), raw, start, end });
     }
-    return out;
+    return out.sort((a, b) => a.start - b.start);
 }
 
 /** The distinct values in a piece of text, for a quick set. */
@@ -84,7 +99,12 @@ function toolFigures(content, { max = 300, around = 28 } = {}) {
     for (const s of strings) {
         for (const f of figuresIn(s)) {
             if (seen.has(f.v)) continue;
-            const ctx = s.slice(Math.max(0, f.start - around), f.end + around).replace(/\s+/g, ' ').trim();
+            // Whole words only at the edges: a window cut mid-number ("…since 20") would
+            // show, and could later be read as, a figure the result never held.
+            let a = Math.max(0, f.start - around), b = Math.min(s.length, f.end + around);
+            while (a > 0 && /\S/.test(s[a - 1]) && a < f.start) a++;
+            while (b < s.length && /\S/.test(s[b]) && b > f.end) b--;
+            const ctx = s.slice(a, b).replace(/\s+/g, ' ').trim();
             seen.set(f.v, { v: f.v, ctx });
             if (seen.size >= max) return [...seen.values()];
         }

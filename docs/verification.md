@@ -741,3 +741,17 @@ invention in planning, is from the role the user wrote for the left side.
 
 Not yet run on a live tool turn in the page: only stored replies (which predate the
 `figures` field) and the faked server test.
+
+## Verified 2026-10-12 — the first live tool run, and finding the marks
+
+On the user's desk: nemotron-3-nano:4b ran find_files and read_file(gauge.txt), and its
+reply's 480, 3.7 and 09:14 were credited to the read. It split the file's "09:14" and
+"2026-10-02" into 9, 14, 2026, 10 and 2 — pieces that would credit any later "10 seconds" to
+the file — so dates and times are now whole values; the model wrote the date with U+2011
+hyphens, so any hyphen counts. Stored context is cut at word edges, and the page re-reads it,
+so the record written before the change still matches. Asked for a combined pressure across
+two loops with one in the file, it answered 480: the right number for the wrong thing, which
+the tracer cannot and should not catch — the tooltip's source line is what shows it.
+Tooltips now give the time a source was said. Discovery, chosen by the user: a faint line
+under sourced numbers on reply hover, and a **?** key to every mark. `duet_context_test`
+91/91 (5 new), `duet_tools_test` 38/38.

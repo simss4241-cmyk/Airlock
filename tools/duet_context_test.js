@@ -450,6 +450,16 @@ const tf = F.toolFigures(JSON.stringify({ path: 'gauge.txt', startLine: 1, lines
 ok(tf.some(f => f.v === '480' && /reads 480 kPa/.test(f.ctx)) && !tf.some(f => f.v === '40'),
     "a tool result's numbers come from its text, with context — not from its own counts");
 ok(F.toolFigures('{"content":"cut short at 77 kPa and').some(f => f.v === '77'), 'a result cut short mid-JSON is still read');
+// From the first live tool run (2026-10-12): gauge.txt's "09:14" and "2026-10-02" came apart
+// into 9, 14, 2026, 10 and 2 — and would have credited any later "10 seconds" to the file.
+ok(JSON.stringify(figs('Pressure 480 kPa at 09:14. Valve B: closed since 2026-10-02. Pump 2 draw: 3.7 A'))
+    === '["480","9:14","2026-10-02","2","3.7"]', 'a clock time and a date are one value each, in reading order');
+ok(figs('at 9:14')[0] === figs('at 09:14')[0] && figs('on 2026-1-5')[0] === figs('on 2026-01-05')[0],
+    'the same time or date written two ways is one value');
+ok(figs('closed since 2026‑10‑02')[0] === '2026-10-02', 'a date written with non-breaking hyphens, as nemotron writes them, is the same date');
+ok(!F.valuesIn('since 2026-10-02 at 09:14').has('10') && !F.valuesIn('since 2026-10-02 at 09:14').has('14'),
+    "a date's or time's pieces are not figures of their own");
+ok(JSON.stringify(figs('a ratio of 3:2, and 12:30:05 exactly')) === '["3","2","12:30:05"]', 'a ratio is not a time; seconds are kept');
 ok(Object.isFrozen(F), 'the rule is frozen');
 
 console.log(`\n${pass} passed, ${fail} failed\n`);

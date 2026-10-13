@@ -343,7 +343,7 @@ repeated by the other side no longer looks established. Not figures: list marker
 names ("Llama3-8b"), versions, file names, links, paths, message ids, labels ("step 2"),
 anything in code. Tool calls keep the numbers they showed the model, with a few words
 around each (`figures` on the trace) — never the result itself, and never sent to a model.
-Exact values only: a computed or converted number (2 × 250, 500 kPa = 0.5 MPa) reads new.
+Exact values only: a computed or converted number (2 × 250, 500 kPa = 0.5 MPa) reads new. Dates and clock times are one value each (`2026-10-02`, `09:14` = `9:14`, any hyphen), so their pieces never credit a later "10 seconds" to the file that held the date. Tooltips say when the source was said ("at 14:32"), not its message number. A sourced number shows a faint line while you hover its reply, and the **?** in the chamber bar opens a key to every mark, drawn with the marks' own styles.
 
 **A claim the record contradicts is marked.** A reply that says it opened, visited,
 fetched or verified a page — "I have opened the result to verify it" — while its own record
