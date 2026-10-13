@@ -638,7 +638,7 @@ function createCore(db, file) {
         walk(getThreadPackets(threadId), 0);
 
         const lines = [];
-        lines.push(`# Oversight brief — ${thread.title}`);
+        lines.push(`# Airlock brief — ${thread.title}`);
         lines.push('');
         lines.push(`Tray: **${thread.folder_name}** · ${flat.length} packet(s) · `
             + `generated ${new Date().toISOString()}`);

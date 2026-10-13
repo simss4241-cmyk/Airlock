@@ -176,9 +176,9 @@ function paintNotice(h) {
 function groupModels(models) {
     return [
         [`Local — stays on ${here()}`, models.filter(m => m.tier === 'local')],
-        ['Oversight — Nemotron, across the boundary',
+        ['Across the boundary — Nemotron',
             models.filter(m => m.tier === 'remote' && !m.via && m.family === 'nemotron')],
-        ['Oversight — other remote models',
+        ['Across the boundary — other remote models',
             models.filter(m => m.tier === 'remote' && !m.via && m.family !== 'nemotron')],
         ['Ollama cloud — listed by Ollama, answered on ollama.com',
             models.filter(m => m.tier === 'remote' && m.via === 'ollama-cloud')],
@@ -716,14 +716,6 @@ async function loadWorkspace(threadId = activeThread?.id) {
     wsNotice = '';
     paintWorkspace();
 }
-
-function openWorkspaceSettings() {
-    if (!el.settings.open) el.settings.showModal();
-    paintWorkspace();
-    if (activeThread) setTimeout(() => el.wsRoot.focus(), 0);
-}
-
-// The pill is a doorway to the current thread's workspace, not a global on/off switch.
 
 const notice = msg => { wsNotice = msg; paintWorkspace(); };
 

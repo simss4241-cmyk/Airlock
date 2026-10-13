@@ -183,7 +183,7 @@ async function scrub() {
     const brief = await get(`/api/threads/${RUN.id}/brief?actor=Claude`);
     check('brief names its thread and tray',
         brief.thread.title === 'smoke-run' && brief.thread.folder === FIXTURE);
-    check('brief is markdown with a heading', brief.markdown.startsWith('# Oversight brief'));
+    check('brief is markdown with a heading', brief.markdown.startsWith('# Airlock brief'));
     check('brief addresses the named actor', brief.markdown.includes('Asked of Claude'));
 
     const runNow = flat(await get(`/api/threads/${RUN.id}/packets`));
@@ -227,7 +227,7 @@ async function scrub() {
     check('brief.md sets a download filename',
         /attachment; filename="airlock-smoke-code\.md"/.test(dl.headers.get('content-disposition') || ''),
         dl.headers.get('content-disposition'));
-    check('brief.md body is the brief, not JSON', body.startsWith('# Oversight brief'));
+    check('brief.md body is the brief, not JSON', body.startsWith('# Airlock brief'));
     check('brief.md 400s on a missing thread',
         (await fetch(`${BASE}/api/threads/999999/brief.md`)).status === 400);
 
