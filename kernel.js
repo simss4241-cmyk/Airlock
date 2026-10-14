@@ -226,24 +226,6 @@ function clearLink({ url }) {
     return { ok: true, ruling, token: issue('web:fetch', [unitHash(outboundUnit('web:fetch', url))], ruling) };
 }
 
-/**
- * An operator overrode the gate. The content goes, and the record says who decided.
- *
- * The messages are remembered as released too: after a forced crossing they are on the
- * far side whatever anyone thinks of it, and gating them again later protects nothing.
- */
-function override({ model, messages = [], actor = 'the operator' }) {
-    const hashes = messages.map(unitHash);
-    for (const h of hashes) remember(h, 'operator');
-    const ruling = {
-        release: true,
-        reason: `Overridden by ${actor}.`,
-        concerns: [],
-        model: null,           // no model ruled
-        forced: true
-    };
-    return { ok: true, token: issue(model, hashes, ruling), ruling, fresh: hashes.length };
-}
 
 /**
  * These messages came FROM the far side — a remote model's own reply, fed back to it in
@@ -272,7 +254,7 @@ const isIssuedFor = (token, model) => Boolean(token) && issued.has(token) && tok
 
 module.exports = {
     clearOutbound, clearLink, outboundUnit,
-    clear, override, acknowledge, covers, isIssuedFor, unitHash,
+    clear, acknowledge, covers, isIssuedFor, unitHash,
     // Tests reach in to simulate a restart: the CURRENT scope's record.
     get _released() { return released(); }
 };

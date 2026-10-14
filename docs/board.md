@@ -36,26 +36,14 @@ so the board UI will be one client of them rather than the only place they live.
 | `POST /api/packets` | Create. Logs a `created` event |
 | `POST /api/packets/:id/move` | Drag. Carries the whole subtree; `parentId` instead = nest |
 | `POST /api/packets/:id/fork` | Alt-drag. Deep-copies, sets `forked_from` as the tether |
-| `POST /api/packets/:id/review` | Escalation signature — `{ actor, note }` |
 | `GET /api/packets/:id/provenance` | The full trail, with thread names resolved |
-| `GET /api/search` | `folder` · `thread` · `from` · `to` · `q` · `role` |
-| `GET /api/travelled` | Packets whose origin ≠ current thread — ghost-trail candidates |
-| `GET /api/threads/:id/brief` | Renders the thread as a markdown brief — a local read; crosses nothing |
 | `POST /api/threads/:id/carry` | ⇱ Carry out: scanner + gate over the brief. Withheld → the ruling only; released → the brief and a one-hour token (`force: true` overrides, recorded as such) |
 | `POST /api/threads/:id/carried` | The brief was copied or saved: records the crossing, with the server's ruling |
 | `POST /api/threads/:id/handoff` | Records a reply carried back — with a token, the ruling and packets come from the server |
 | `GET /api/packets/:id/packet.md` | One message as a `.md` file — refused (403) if it holds a credential |
-| `GET /api/threads/:id/exposure` · `/api/exposure` | What has left this machine, from the provenance log |
+| `GET /api/threads/:id/exposure` | What has left this machine, from the provenance log |
 | `GET /api/usage` | Token spend per model and purpose, from the ledger (`?threadId=`) |
 | `GET /api/stats` | Counts, and the db path |
-
-"Everything in Indexing from April" is the query the schema exists to answer:
-
-```
-curl "http://localhost:8100/api/search?thread=Indexing&from=2026-04-01&to=2026-04-30"
-```
-
-A bare `to` date is treated as end-of-day, so `to=2026-04-30` includes the 30th.
 
 Guards: a packet cannot nest into itself or into its own descendant (both 400). Deleting a
 packet cascades to its children and its provenance rows.
@@ -184,7 +172,8 @@ gate's ruling when it was withheld.
 > **Retired 2026-09-30.** The lane is gone. A participant pointed at Super or Ultra does
 > the reviewing now, inside the conversation, and a brief carried by hand goes through ⇱
 > Carry out, which gates it before showing it. This section records how the lane worked;
-> `POST /api/threads/:id/escalate` and the handoff routes still exist and are tested.
+> its routes (`/escalate`, `/brief`, `/review`) were removed 2026-10-14. The handoff route
+> remains: Carry out records a reply carried back through it.
 
 Escalation as a deliberate act. Drag a thread onto a committee member and you get a
 portable markdown brief: the tray and thread, every packet numbered,

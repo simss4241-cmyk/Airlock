@@ -108,7 +108,6 @@ async function unitTests() {
     await cloudTests();
     await residencyTests();
     defaultModelTests();
-    transportTests();
 }
 
 // ─────────────────────── the default local model ───────────────────────
@@ -145,27 +144,6 @@ function defaultModelTests() {
     ok(pick([], '') === null, 'with nothing installed, there is no default rather than a guess');
 }
 
-// ─────────────────────── what carried a crossing ───────────────────────
-
-function transportTests() {
-    console.log('\nunit: the audit trail names the carrier that was actually used');
-    // Planted as a resolved catalogue would hold them: the registry is what knows which
-    // catalogue named a model, so that is what the transport is read from.
-    providers.registry._entries.set('probe-cloud:30b-cloud',
-        { id: 'probe-cloud:30b-cloud', tier: 'remote', source: 'local', via: 'ollama-cloud' });
-    providers.registry._entries.set('nvidia/some-remote',
-        { id: 'nvidia/some-remote', tier: 'remote', source: 'remote' });
-    try {
-        ok(providers.transportOf('probe-cloud:30b-cloud') === 'ollama-cloud',
-           'an Ollama cloud model is recorded as ollama-cloud, not token-factory');
-        ok(providers.transportOf('nvidia/some-remote') === 'token-factory',
-           'a Token Factory model is recorded as token-factory');
-        ok(providers.transportOf('llama3.2:latest') === 'ollama', 'and a local one as ollama');
-    } finally {
-        providers.registry._entries.delete('probe-cloud:30b-cloud');
-        providers.registry._entries.delete('nvidia/some-remote');
-    }
-}
 
 /**
  * Serve canned Ollama responses for the duration of `fn`. Everything else passes through,
@@ -368,7 +346,7 @@ async function errorTests() {
         ok(false, 'a missing key should throw');
     } catch (err) {
         ok(err.name === 'ProviderError', 'a missing key throws ProviderError');
-        ok(err.status === 503, 'with a 503, so /api/chat can answer with a status');
+        ok(err.status === 503, 'with a 503, so a route can answer with a status');
         ok(err.tier === 'remote', 'tagged with the tier that failed');
         ok(/NEBIUS_API_KEY/.test(err.message), 'and says which variable is missing');
     } finally {

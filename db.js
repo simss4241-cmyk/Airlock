@@ -532,13 +532,6 @@ function createCore(db, file) {
         return getPacket(copy(id, parentId, true));
     }
 
-    /** Escalation result — a signature on the packet, not a mutated field. */
-    function reviewPacket(id, { actor, note = null }) {
-        if (!getPacket(id)) throw new Error(`No packet ${id}`);
-        if (!actor) throw new Error('A review needs an actor.');
-        record(id, 'reviewed', { actor, note });
-        return getProvenance(id);
-    }
 
     function getProvenance(id) {
         return db.prepare(`
@@ -563,51 +556,7 @@ function createCore(db, file) {
         db.prepare('DELETE FROM packets WHERE id = ?').run(id);
     }
 
-    /**
-     * The query that justifies the whole schema:
-     *   "everything in Indexing from April"  ->  { thread: 'Indexing', from: '2026-04-01', to: '2026-04-30' }
-     */
-    function search({ folder = null, thread = null, from = null, to = null, q = null, role = null, limit = 200 } = {}) {
-        const where = [];
-        const args = [];
 
-        if (folder) { where.push('f.name LIKE ?'); args.push(`%${folder}%`); }
-        if (thread) { where.push('t.title LIKE ?'); args.push(`%${thread}%`); }
-        if (from)   { where.push('p.created_at >= ?'); args.push(from); }
-        // A bare date as the upper bound should mean "through the end of that day",
-        // otherwise `to=2026-04-30` silently excludes everything logged on the 30th.
-        if (to)     { where.push('p.created_at <= ?'); args.push(to.length === 10 ? `${to}T23:59:59.999Z` : to); }
-        if (q)      { where.push('p.content LIKE ?'); args.push(`%${q}%`); }
-        if (role)   { where.push('p.role = ?'); args.push(role); }
-
-        args.push(Math.min(Number(limit) || 200, 1000));
-
-        return db.prepare(`
-            SELECT p.*, t.title AS thread_title, f.name AS folder_name,
-                   ot.title AS origin_thread_title
-            FROM packets p
-            JOIN threads t  ON t.id = p.thread_id
-            JOIN folders f  ON f.id = t.folder_id
-            LEFT JOIN threads ot ON ot.id = p.origin_thread_id
-            ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-            ORDER BY p.created_at DESC, p.id DESC
-            LIMIT ?
-        `).all(...args).map(hydrate);
-    }
-
-    /** Packets whose origin thread isn't their current one — the ghost-trail candidates. */
-    function getTravelled(limit = 100) {
-        return db.prepare(`
-            SELECT p.id, p.content, p.created_at,
-                   ot.title AS origin_thread, t.title AS current_thread,
-                   (SELECT COUNT(*) FROM provenance pr WHERE pr.packet_id = p.id AND pr.event IN ('moved','nested')) AS hops
-            FROM packets p
-            JOIN threads t ON t.id = p.thread_id
-            LEFT JOIN threads ot ON ot.id = p.origin_thread_id
-            WHERE p.origin_thread_id IS NOT NULL AND p.origin_thread_id <> p.thread_id
-            ORDER BY p.id DESC LIMIT ?
-        `).all(Math.min(Number(limit) || 100, 500));
-    }
 
     function getThread(id) {
         return db.prepare(`
@@ -1030,7 +979,7 @@ function createCore(db, file) {
         createThread, deleteThread, getThread, renameThread, moveThreadToFolder, reorderThread,
         setThreadWorkspace, migrateWorkspaceRoot, getMeta, setMeta,
         createPacket, getPacket, getThreadPackets, movePacket, forkPacket, deletePacket,
-        reviewPacket, getProvenance, getReviews, search, getTravelled, stats, subtreeIds,
+        getProvenance, getReviews, stats, subtreeIds,
         buildBrief, recordHandoff, recordCarry, getExposure, recordCrossings, recordArtifactCrossing,
         recordUsage, getUsage
     };

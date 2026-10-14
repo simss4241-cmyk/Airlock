@@ -5,8 +5,8 @@
  * unavoidable.  node tools/kernel_test.js
  *
  * Offline. The gate is stubbed so these assertions are about the kernel's bookkeeping
- * and the locks' refusals, not about a model's judgement — tools/kernel_http_test.js
- * covers the same ground end to end against a real gate.
+ * and the locks' refusals, not about a model's judgement — tools/duet_tools_test.js
+ * covers the same ground end to end, over HTTP, against a fake remote.
  */
 
 const fs = require('fs');
@@ -142,11 +142,6 @@ async function main() {
     ok(/tool result \(read_file\)/.test(shown[0]) && /file body/.test(shown[0]),
        'the tool result is, and the gate is told what it is');
 
-    // ── override ──
-    console.log('\nan operator override is still a clearance, and says so');
-    const forced = kernel.override({ model: REMOTE, messages: [{ role: 'user', content: 'forced' }] });
-    ok(forced.ruling.forced && forced.ruling.model === null, 'it is marked forced and names no gate model');
-    ok(kernel.isIssuedFor(forced.token, REMOTE), 'and it opens the door like any clearance');
 
     // ── the first lock: providers.chat ──
     console.log('\nthe first lock: providers.chat() will not dispatch without a clearance');

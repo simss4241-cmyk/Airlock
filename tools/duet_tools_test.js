@@ -41,6 +41,11 @@ const FAKE_MODEL = 'fake/remote-model';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'airlock-duet-tools-'));
 const workspace = path.join(tmp, 'workspace');
 fs.mkdirSync(workspace);
+// Outside the permitted roots: a folder a thread may have saved before the fence went up.
+const outside = path.join(tmp, 'outside');
+fs.mkdirSync(outside);
+const OUTSIDE_MARK = 'outside-the-fence-4e1b';
+fs.writeFileSync(path.join(outside, 'notes.md'), OUTSIDE_MARK + String.fromCharCode(10));
 
 const BENIGN = 'Shopping list: 12 eggs, 500 g flour, a teal ribbon for the robot costume.';
 const CANARY_MARK = 'hunter2-canary-duet-51c9';
@@ -230,7 +235,9 @@ async function main() {
             AIRLOCK_GATE_MODEL: GATE_MODEL,
             AIRLOCK_REMOTE_ALLOW: '',
             AIRLOCK_TOKEN: '',
-            AIRLOCK_REMOTE_BUDGET: ''
+            AIRLOCK_REMOTE_BUDGET: '',
+            // Only the test workspace is permitted, so the fenced case is real.
+            AIRLOCK_WORKSPACE_ROOTS: workspace
         },
         stdio: ['ignore', 'pipe', 'pipe']
     });
@@ -263,6 +270,28 @@ async function main() {
         const notRun = s0.events.find(e => e.type === 'tool');
         ok(notRun && !notRun.ok && /not offered/.test(notRun.summary),
             'and a file tool it calls anyway is refused, not run', JSON.stringify(notRun));
+
+        // ── 0b. a folder no longer permitted ──
+        // A thread whose root was saved before AIRLOCK_WORKSPACE_ROOTS fenced it off —
+        // written straight into the db here — is offered no file tools, even switched on,
+        // and nothing in it is read. (This case first proved the hole in the old /api/chat,
+        // 2026-10-13; the duet has always refused it, and now it is held to that.)
+        console.log('\na workspace saved before it was fenced off');
+        const { thread: tf, right: rf } = await duetThread(folderId, 'fenced');
+        {
+            const { DatabaseSync } = require('node:sqlite');
+            const db = new DatabaseSync(path.join(tmp, 'duet-tools.db'));
+            db.prepare('UPDATE threads SET workspace_root = ? WHERE id = ?').run(outside, tf.id);
+            db.close();
+        }
+        const nf = received.length;
+        const sf = await send(tf.id, { participantId: rf.id, text: 'Please check the notes.', tools: true, clientRequestId: 'fenced-1' });
+        const fileTools = received.slice(nf).flatMap(b => (JSON.parse(b).tools || []).map(t => t.function?.name)).filter(n => n !== 'request_result');
+        ok(!fileTools.length, 'a fenced folder is offered no file tools, even switched on', fileTools.join(', '));
+        const fencedCall = sf.events.find(e => e.type === 'tool');
+        ok(!fencedCall || (!fencedCall.ok && /not offered/.test(fencedCall.summary)),
+            'and a file tool the model calls anyway is refused, not run', JSON.stringify(fencedCall));
+        ok(!received.slice(nf).some(b => b.includes(OUTSIDE_MARK)), 'NOTHING from the fenced folder reached the far side');
 
         // ── 1. directly: a remote participant reads a file ──
         console.log('\n1. a remote participant reads a file for itself');
@@ -384,6 +413,12 @@ async function main() {
             ok(false, 'a harmless brief is released', JSON.stringify(c4.body?.gate));
         } else {
             ok(Boolean(c4.body.token && c4.body.markdown), 'a harmless brief is released, with a token for the record');
+            // What the brief says — checked here, on the route that builds it for real, since
+            // the old preview routes (/brief, /brief.md) are gone.
+            const md = c4.body.markdown;
+            ok(md.startsWith(`# Airlock brief — harmless`), 'the brief is headed with its thread', md.split('\n')[0]);
+            ok(md.includes('Plan the robot costume: teal, with ribbons.'), 'it holds what the thread said');
+            ok(md.includes('Asked of a web chat'), 'and is addressed to where it is going');
             ok((await exposureNotes(t4.id)).length === 0, 'released is not carried: nothing is recorded until it leaves');
             const carried = await api('POST', `/api/threads/${t4.id}/carried`, { token: c4.body.token });
             ok(carried.body?.crossed === 1, 'copying it out records the crossing then and there', JSON.stringify(carried.body));

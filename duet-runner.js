@@ -500,7 +500,7 @@ async function generate({
                 if (crosses) {
                     // ⚠ Every round after the first carries something new: the tool results
                     // the model asked for — file contents. They are ruled on before they go,
-                    // exactly as /api/chat rules on them, and a refusal ends the turn here.
+                    // and a refusal ends the turn here.
                     if (round > 0) {
                         emit({ type: 'gating', messageId: reply.id });
                         const next = await kernel.clear({ model, messages: convo, config, threadId });

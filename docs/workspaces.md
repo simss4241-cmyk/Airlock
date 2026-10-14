@@ -95,9 +95,8 @@ doesn't depend on any dialog.
 | `find_files(query)` | Filename substring search, depth 8, 150 hits max |
 | `read_file(path)` | Reads a text file, 256 KB cap with a truncation note |
 
-The loop runs **server-side**, in the duet runner (and the older `/api/chat` route), with the
-tools and their runner shared from `workspace-tools.js` so a file is the same thing to the
-kernel and the crossing record whichever path read it. It streams the model through, watches
+The loop runs **server-side**, in the duet runner, with the tools and their runner in
+`workspace-tools.js` so a file is one exact thing to the kernel and the crossing record. It streams the model through, watches
 for `tool_calls`, executes them, emits a `tool` event the pane renders as a card, and
 re-calls with the results. Capped at 5 rounds, and the final round is sent without tools so
 the model is forced to answer rather than looping on an 8 tok/s budget. Toward a remote

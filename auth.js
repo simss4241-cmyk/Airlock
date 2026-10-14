@@ -6,7 +6,7 @@
  * Airlock was built as a desktop app: one person, their own machine, no login.
  * Hosting it changes that completely — every route is reachable by anyone who
  * knows the URL, which means reading and deleting other people's packets and
- * spending the owner's Token Factory credits through /api/escalate.
+ * spending the owner's Token Factory credits on remote replies.
  *
  * So the rule is conditional rather than absolute:
  *

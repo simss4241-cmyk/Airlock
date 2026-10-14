@@ -4,7 +4,7 @@
  * ─────────────────────────── Airlock's stream contract ───────────────────────────
  *
  * A provider is an async generator that turns a chat request into a stream of
- * chunks. Every provider yields the SAME shape, so `/api/chat` never branches on
+ * chunks. Every provider yields the SAME shape, so the duet runner never branches on
  * where a model runs.
  *
  * That shape is Ollama's native chunk format. Not because it is a good neutral
@@ -62,22 +62,6 @@ const tierOf = model => registry.tierOf(model);
 /** Strict membership of this side of the boundary. What the gate asks. */
 const isLocal = model => registry.isLocal(model);
 
-/**
- * What actually carried a request, for the audit trail's transport field.
- *
- * Not the same as tier: an Ollama cloud model is remote, but it went out through the
- * local Ollama to ollama.com, not to Token Factory. Recording every remote crossing as
- * 'token-factory' named a carrier that was never involved.
- */
-function transportOf(model) {
-    // The registry knows which catalogue named the model — a fact, so it goes first.
-    // Routing (owns) is only a fallback for a model the registry has never seen.
-    const entry = registry._entries.get(model);
-    if (entry?.via === 'ollama-cloud') return 'ollama-cloud';
-    if (entry?.source === 'remote') return 'token-factory';
-    if (entry?.source === 'local') return 'ollama';
-    return providerFor(model) === tokenfactory ? 'token-factory' : 'ollama';
-}
 
 /**
  * The local model someone opens on when they have not chosen one — and the one seated
@@ -307,7 +291,7 @@ class GateRefusal extends ProviderError {
 
 module.exports = {
     chat, complete, parseJson, repairJson, capabilities, list,
-    tierOf, isLocal, transportOf, defaultLocalModel, providerFor, ProviderError, GateRefusal,
+    tierOf, isLocal, defaultLocalModel, providerFor, ProviderError, GateRefusal,
     // Resolving the catalogue is a boundary concern, so callers that rule on a crossing
     // reach it through here rather than importing registry.js behind this file's back.
     ensureFresh: registry.ensureFresh,

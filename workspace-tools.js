@@ -5,10 +5,9 @@
 // Read-only, confined by files.js to the workspace root of the thread a request names.
 // Bounded rounds so a confused model can't spin the loop forever on an 8 tok/s budget.
 //
-// One module for both callers — /api/chat and the duet runner — because the thing a tool
-// result is, for the boundary, has to be identical in both: the same message shape the
-// kernel describes to the gate, the same label in "what has crossed", the same hash. Two
-// copies would be two chances for one path to record a file differently from the other.
+// One module for the tool definitions, the runner and the result's shape, because the thing
+// a tool result is, for the boundary, has to be exact: the message shape the kernel
+// describes to the gate, the label in "what has crossed", the hash.
 
 const fs = require('fs').promises;
 const files = require('./files');

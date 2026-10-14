@@ -6,7 +6,7 @@
  * Audit finding 3: every route was reachable by anything that could reach the
  * port. Correct for a desktop app, a hard blocker for a hosted demo — a visitor
  * could read and delete other visitors' packets and spend the owner's Token
- * Factory credits through /api/escalate.
+ * Factory credits through a remote reply.
  *
  * These run entirely offline against the middleware, with fake req/res objects.
  * The properties worth pinning are the conditional ones: OPEN without a token

@@ -3,7 +3,7 @@
 /**
  * Boundary tests — the gate, the crossing, and the audit trail.
  *
- * The property under test is not "escalation works". It is that nothing reaches
+ * The property under test is not "a crossing works". It is that nothing reaches
  * the network unless the LOCAL gate released it, and that whatever did cross is
  * recorded as having crossed. A privacy boundary that works when everything is
  * healthy and leaks when the gate is slow is not a boundary.
@@ -11,26 +11,15 @@
  * So the fail-closed cases run first and run offline: an unreachable gate and an
  * unparseable gate answer must both produce a refusal, not a release.
  *
- * Needs a running server. Local-tier tests need Ollama. The three sections that make a
- * REAL remote call — the live crossing, the chat crossing, the forced trace — spend
- * Nebius credits, so they run only when asked: AIRLOCK_BOUNDARY_TEST_REMOTE=1, the same
- * opt-in duet_test uses. Having a key is not the same as agreeing to spend it on a test.
- * tools/kernel_http_test.js covers the crossing machinery end to end for free, against a
- * fake remote on localhost.
+ * Needs a running server. The live gate needs Ollama. Nothing here makes a remote call:
+ * the crossing machinery end to end — a model's request, tool results, the record — is
+ * tools/duet_tools_test.js, for free, against a fake remote on localhost.
  *
  *   node tools/boundary_test.js            # against http://localhost:8100
  *   AIRLOCK_URL=http://localhost:8126 node tools/boundary_test.js
- *   AIRLOCK_BOUNDARY_TEST_REMOTE=1 node tools/boundary_test.js   # spends credits
  */
 
-// The live remote sections, and why each skipped when it does.
-const liveRemote = () => {
-    if (!process.env.NEBIUS_API_KEY || !process.env.AIRLOCK_MODEL_CLASSIFIER) return 'no NEBIUS_API_KEY';
-    if (process.env.AIRLOCK_BOUNDARY_TEST_REMOTE !== '1') return 'set AIRLOCK_BOUNDARY_TEST_REMOTE=1 — it spends credits';
-    return null;
-};
-
-try { process.loadEnvFile(); } catch { /* remote tests will skip */ }
+try { process.loadEnvFile(); } catch { /* no .env: the defaults apply */ }
 
 const { runGate, readDecision, resolveGateModel } = require('../boundary');
 const providers = require('../providers');
@@ -221,7 +210,7 @@ async function auditTests() {
 
     const before = await api('GET', `/api/threads/${threadId}/exposure`);
     ok(before.status === 200, 'exposure endpoint answers');
-    ok(before.body.packetCount === 0, 'a thread that never escalated has crossed nothing');
+    ok(before.body.packetCount === 0, 'a thread nothing has left has crossed nothing');
     ok(Array.isArray(before.body.actors) && before.body.actors.length === 0, 'and names no actors');
 
     // A manual handoff is still a crossing: a human carried it off the machine.
@@ -251,52 +240,21 @@ async function auditTests() {
        'a packet written after the crossing is NOT reported as exposed');
 }
 
-// ─────────────────── live gate + escalation ───────────────────
+// ─────────────────── the live gate ───────────────────
 
 async function liveTests() {
-    console.log('\nlive gate and escalation');
+    console.log('\nthe live gate');
 
-    const gate = await api('POST', `/api/threads/${threadId}/gate`, { actor: 'Nemotron Super' });
-    if (gate.status !== 200) { skipped('gate endpoint unavailable: ' + gate.text.slice(0, 80)); return; }
+    const model = await resolveGateModel({});
+    if (!model) { skipped('the live gate (no local model installed)'); return; }
 
-    ok(typeof gate.body.gate.release === 'boolean', 'gate returns a boolean ruling');
-    ok(typeof gate.body.gate.reason === 'string' && gate.body.gate.reason.length > 0, 'with a stated reason');
-    ok(gate.body.gate.model, 'naming the model that ruled');
-    console.log(`       ruling: release=${gate.body.gate.release} — ${gate.body.gate.reason}`);
-
-    if (liveRemote()) {
-        skipped(`the live crossing (${liveRemote()})`);
-        return;
-    }
-
-    const model = process.env.AIRLOCK_MODEL_CLASSIFIER;
-
-    // Refusing to escalate to a local model is a design guarantee, not a bug:
-    // nothing would cross, so there would be nothing to gate or record.
-    const localTarget = await api('POST', `/api/threads/${threadId}/escalate`, {
-        actor: 'Local', model: 'llama3.2:latest'
-    });
-    ok(localTarget.status === 400, 'escalating to a local model is refused');
-    ok(/local tier/i.test(localTarget.body?.error || ''), 'and explains why');
-
-    const esc = await api('POST', `/api/threads/${threadId}/escalate`, {
-        actor: 'Nemotron Super', model, force: true
-    });
-    ok(esc.status === 200, 'escalation completes');
-    if (esc.status !== 200) { console.log('       ' + esc.text.slice(0, 200)); return; }
-
-    ok(esc.body.escalated === true, 'reports that it crossed');
-    ok(esc.body.packet && esc.body.packet.tier === 'remote', 'verdict packet stamped remote');
-    ok(esc.body.packet.model === model, 'and attributed to the model, not the seat');
-    ok(esc.body.usage.reply > 0, `remote usage recorded (${esc.body.usage.prompt} prompt / ${esc.body.usage.reply} reply)`);
-    ok(esc.body.crossed > 0, `crossings recorded (${esc.body.crossed})`);
-
-    const exposure = await api('GET', `/api/threads/${threadId}/exposure`);
-    ok(exposure.body.actors.includes('Nemotron Super'), 'exposure names the Nemotron seat');
-    const note = exposure.body.packets[0].crossings.map(c => c.note).join(' ');
-    ok(/token-factory/.test(note), 'and records that it went over Token Factory');
-    ok(new Set(exposure.body.packets[0].crossings.map(c => c.actor)).size > 1,
-       'a packet that crossed twice lists both crossings');
+    const gate = await runGate(
+        'We should cache the provenance query; it walks the whole log each time.\n'
+        + 'Agreed. Index on (event, packet_id) would cover the exposure lookup.', { config: {} });
+    ok(typeof gate.release === 'boolean', 'the gate returns a boolean ruling');
+    ok(typeof gate.reason === 'string' && gate.reason.length > 0, 'with a stated reason');
+    ok(gate.model, 'naming the model that ruled');
+    console.log(`       ruling: release=${gate.release} — ${gate.reason}`);
 }
 
 // ─────────────────── the gate must be local, and consent must not outlive its thread ───
@@ -410,138 +368,29 @@ async function gateOwnershipTests() {
 
 }
 
-// ─────────────────── the chat path crosses too ───────────────────
+// ─────────────────── who wrote a packet decides its tier ───────────────────
 //
-// This is the hole the audit found. Selecting a remote model in the dropdown
-// sends the whole conversation to a remote endpoint, and nothing recorded it:
-// the reply came back stamped `local` and /api/exposure reported zero crossings,
-// which made the product's central claim false exactly where crossing is easiest.
+// A reply produced across the boundary must never be stamped local, and the client does
+// not get to say otherwise. No remote call needed: the stamp is read from the model's tier.
 
-async function chatPathTests() {
-    console.log('\nchat path records its crossing');
+async function tierStampTests() {
+    console.log('\npackets are stamped by where they were produced');
+    const remote = 'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B';
 
-    if (liveRemote()) {
-        skipped(`the chat crossing (${liveRemote()})`);
-        return;
-    }
-    const model = process.env.AIRLOCK_MODEL_CLASSIFIER;
+    const t = await api('POST', '/api/threads', { folderId, title: 'Tier stamps' });
+    const tid = t.body.id;
 
-    const t = await api('POST', '/api/threads', { folderId, title: 'Chat crossing' });
-    const chatThread = t.body.id;
-
-    const u = await api('POST', '/api/packets', {
-        threadId: chatThread, role: 'user', content: 'Reply with the single word ok.'
-    });
+    const u = await api('POST', '/api/packets', { threadId: tid, role: 'user', content: 'Reply with the single word ok.' });
     ok(u.body.tier === 'local', 'a packet you wrote is stamped local');
 
-    const before = await api('GET', `/api/threads/${chatThread}/exposure`);
-    ok(before.body.packetCount === 0, 'nothing has crossed yet');
-
-    const chat = await api('POST', '/api/chat', {
-        threadId: chatThread, model,
-        messages: [{ role: 'user', content: 'Reply with the single word ok.' }],
-        packetIds: [u.body.id]
-    });
-    ok(chat.status === 200, 'remote chat completes');
-
-    // The gate runs on a thread's first remote turn, so a benign message should be
-    // released rather than withheld.
-    //
-    // A withholding is a real failure and is reported as one. What it must NOT do is
-    // leave silently: everything below depends on a crossing having happened, and a bare
-    // `return` dropped roughly ten assertions out of the run without counting them
-    // anywhere. The total simply came out smaller, which reads like a smaller suite
-    // rather than a truncated one — and the gate's ruling is a model's judgement, so it
-    // does occasionally withhold a harmless sentence. Say so out loud instead.
-    const blocked = chat.body && chat.body.blocked;
-    ok(!blocked, 'a benign first turn is released by the gate'
-        + (blocked ? ' - got: ' + (chat.body.gate && chat.body.gate.reason) : ''));
-
-    if (blocked) {
-        skipped('the rest of the chat-crossing section — the gate withheld this run, so '
-            + 'there is no crossing to inspect and the assertion count will be lower');
-        return;
-    }
-
-    const after = await api('GET', `/api/threads/${chatThread}/exposure`);
-    ok(after.body.packetCount === 1, 'the sent packet is now recorded as crossed');
-    ok(after.body.actors.includes(model), 'and the actor is the model it went to');
-    const note = (after.body.packets[0] && after.body.packets[0].crossings[0].note) || '';
-    ok(/chat/.test(note), 'the transport says chat, not token-factory');
-    ok(/gate=released/.test(note), 'and the note records that the gate released it');
-
-    // A reply produced remotely must not be stamped local.
-    const a = await api('POST', '/api/packets', {
-        threadId: chatThread, role: 'assistant', content: 'ok', model
-    });
+    const a = await api('POST', '/api/packets', { threadId: tid, role: 'assistant', content: 'ok', model: remote });
     ok(a.body.tier === 'remote', 'a reply from a remote model is stamped remote');
 
-    const localReply = await api('POST', '/api/packets', {
-        threadId: chatThread, role: 'assistant', content: 'ok', model: 'llama3.2:latest'
-    });
+    const localReply = await api('POST', '/api/packets', { threadId: tid, role: 'assistant', content: 'ok', model: 'llama3.2:latest' });
     ok(localReply.body.tier === 'local', 'a reply from a local model is stamped local');
 
-    // The client cannot assert a tier it likes.
-    const lying = await api('POST', '/api/packets', {
-        threadId: chatThread, role: 'assistant', content: 'ok', model, tier: 'local'
-    });
+    const lying = await api('POST', '/api/packets', { threadId: tid, role: 'assistant', content: 'ok', model: remote, tier: 'local' });
     ok(lying.body.tier === 'remote', 'a client-supplied tier is ignored');
-
-    // Second turn, same words. Every turn is ruled on now (kernel.js), but only on what
-    // has not been ruled on before — and these exact messages have been, so this costs no
-    // gate call and cannot be refused. It used to pass because the THREAD was cleared,
-    // which also let different words through unjudged. Re-sending the same packet must
-    // still not add a second crossing row for the same actor.
-    const again = await api('POST', '/api/chat', {
-        threadId: chatThread, model,
-        messages: [{ role: 'user', content: 'Reply with the single word ok.' }],
-        packetIds: [u.body.id]
-    });
-    ok(again.status === 200 && !(again.body && again.body.blocked),
-       're-sending words already ruled on is not re-gated');
-
-    const third = await api('GET', `/api/threads/${chatThread}/exposure`);
-    ok(third.body.crossingCount === 1,
-       `re-sending the same packet does not duplicate the crossing (${third.body.crossingCount})`);
-}
-
-// ─────────────────── force leaves a trace ───────────────────
-//
-// force:true skips the gate. That is allowed, but it must never be invisible:
-// before this, a forced crossing's provenance row was indistinguishable from a
-// properly gated one.
-
-async function forceTests() {
-    console.log('\nforced crossings are recorded as forced');
-
-    if (liveRemote()) {
-        skipped(`the forced trace (${liveRemote()})`);
-        return;
-    }
-    const model = process.env.AIRLOCK_MODEL_CLASSIFIER;
-
-    const t = await api('POST', '/api/threads', { folderId, title: 'Forced' });
-    const forcedThread = t.body.id;
-    await api('POST', '/api/packets', {
-        threadId: forcedThread, role: 'user',
-        content: 'Is an index on (event, packet_id) worth the write cost?'
-    });
-
-    const esc = await api('POST', `/api/threads/${forcedThread}/escalate`, {
-        actor: 'Nemotron Nano', model, force: true
-    });
-    ok(esc.status === 200 && esc.body.escalated, 'a forced escalation completes');
-    if (!esc.body.escalated) return;
-
-    const exposure = await api('GET', `/api/threads/${forcedThread}/exposure`);
-    const note = (exposure.body.packets[0] && exposure.body.packets[0].crossings[0].note) || '';
-    ok(/gate=FORCED/.test(note), 'the crossing note says the gate was FORCED');
-
-    // The ruling itself is recorded against the packet the crossing produced.
-    const prov = await api('GET', `/api/packets/${esc.body.packet.id}/provenance`);
-    const gated = (prov.body || []).find(r => r.event === 'gated');
-    ok(Boolean(gated), 'a `gated` event is recorded on the verdict packet');
-    ok(gated && /FORCED/.test(gated.note || ''), 'naming it a bypass rather than a release');
 }
 
 (async () => {
@@ -562,8 +411,7 @@ async function forceTests() {
         await auditTests();
         await liveTests();
         await gateOwnershipTests();
-        await chatPathTests();
-        await forceTests();
+        await tierStampTests();
     } finally {
         await teardown();
     }

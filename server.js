@@ -87,7 +87,7 @@ const DEFAULTS = {
 // Defined in workspace-tools.js, shared with the duet runner so a tool result is the same
 // thing to the kernel, and to the crossing record, whichever path produced it.
 
-const { MAX_TOOL_ROUNDS, TOOLS, usableRoot, runCalls } = require('./workspace-tools');
+const { TOOLS } = require('./workspace-tools');
 
 /**
  * Per-model capabilities, cached.
@@ -423,277 +423,6 @@ app.get('/api/health', async (req, res) => {
     }
 });
 
-// ── Chat: stream Ollama's NDJSON straight through, and abort if the client leaves ──
-app.post('/api/chat', async (req, res) => {
-    // One visitor, a bounded number of generations at once. The GPU and the duet queue are
-    // shared by every visitor on a hosted instance; without this, one tab sending in a loop
-    // starves the rest. A no-op on a desk.
-    const slot = sandbox.takeSlot();
-    if (!slot) {
-        return res.status(429).json({ error: 'You already have replies in progress. '
-            + 'Wait for one to finish, or stop it, before sending another.' });
-    }
-    res.on('close', slot);
-    res.on('finish', slot);
-
-    const controller = new AbortController();
-
-    // Abort upstream only when the *response* closes early (user hit Stop / closed the
-    // window). Do NOT hang this off `req` — express.json() drains the body, Node then
-    // auto-destroys the consumed stream, and req emits 'close' before we ever call Ollama.
-    res.on('close', () => {
-        if (!res.writableEnded) controller.abort();
-    });
-
-    const { messages, model, threadId, packetIds = [] } = req.body;
-
-    const chosen = model || config.model;
-    const caps = await modelCaps(chosen);
-    const canThink = caps.includes('thinking');
-    const workspaceRoot = threadId ? store.getThread(Number(threadId))?.workspace_root : null;
-
-    // usableRoot: the folder still exists, and is still permitted — see workspace-tools.js.
-    const useTools = await usableRoot(workspaceRoot) && caps.includes('tools');
-
-    // The conversation grows as tools run: assistant tool_calls, then tool results.
-    const convo = [...messages];
-
-    // Flushed lazily, on the first byte we actually write. The upstream call does
-    // not happen until the generator is first pulled, so a refusal (bad key, model
-    // gone, Ollama down) still lands before any header and can be answered with a
-    // real status code instead of an error chunk inside a 200 stream.
-    const ensureHeaders = () => {
-        if (res.headersSent) return;
-        res.setHeader('Content-Type', 'application/x-ndjson');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.flushHeaders();
-    };
-    const send = obj => { ensureHeaders(); res.write(JSON.stringify(obj) + '\n'); };
-
-    // Every tool round is a real Ollama call that really costs tokens, but only the last
-    // round's `done` chunk reaches the client (see below). Total them here or a tool-using
-    // answer looks as cheap as a one-shot reply.
-    const usage = { prompt: 0, reply: 0, rounds: 0 };
-    let usageSent = false;
-    const sendUsage = () => {
-        if (usageSent) return;
-        usageSent = true;
-        send({ airlock_usage: usage });
-        // The one place every /api/chat turn's total passes through: on the ledger too.
-        if (usage.prompt || usage.reply) {
-            try {
-                store.recordUsage({ purpose: 'reply', model: chosen, tier: providers.tierOf(chosen),
-                    prompt: usage.prompt, reply: usage.reply, threadId: threadId || null });
-            } catch (err) { console.error('chat usage not recorded:', err.message); }
-        }
-    };
-
-    // ── the boundary ──
-    //
-    // Every request to a model that is not positively local is ruled on by kernel.js, and
-    // every TURN is: a clearance covers the exact messages it was issued for, so a secret
-    // typed on turn nine is judged on turn nine. It used to be once per thread, with the
-    // answer remembered — affordable only because the gate model was slow. Only what has
-    // not been ruled on before is sent to the gate, so a long thread does not re-read its
-    // own history every turn.
-    //
-    // ⚠ `crosses` is `!== 'local'`, never `=== 'remote'`: a model nothing recognises is
-    // treated as a crossing. The inverted test used to skip the gate for any tier that was
-    // not the exact string 'remote'.
-    //
-    // The first ruling happens before any header is written, so a refusal is a clean 200
-    // with the reason rather than an error inside a stream.
-    const tier = providers.tierOf(chosen);
-    const crosses = tier !== 'local';
-    let gateRuling = null;
-    let clearance = null;
-
-    if (crosses) {
-        const first = await kernel.clear({ model: chosen, messages: convo, config, threadId: threadId || null });
-        if (!first.ok) {
-            // Nothing has been sent. 200, because the request succeeded and the
-            // answer was no — the client renders the reason rather than an error.
-            return res.status(200).json({ blocked: true, gate: first.ruling, tier });
-        }
-        clearance = first.token;
-        gateRuling = first.ruling;
-    }
-
-    // Tool results that have been produced but not yet sent. They are not packets, so the
-    // packet-level crossing record cannot see them; they are recorded against the request
-    // that caused them, as they cross. See store.recordArtifactCrossing.
-    let pendingArtifacts = [];
-    const anchorPacket = packetIds.length ? packetIds[packetIds.length - 1] : null;
-
-    try {
-        for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-            const lastRound = round === MAX_TOOL_ROUNDS;   // stop offering tools; force an answer
-            let roundRecorded = false;
-
-            if (crosses) {
-                // ⚠ Every round after the first carries something new: the tool results
-                // the model asked for. Those are file contents, and they used to follow the
-                // round-0 ruling out of the machine without one of their own. The kernel
-                // rules on just what is new; a refusal stops the turn here, before any of
-                // it is sent, and says which results were withheld.
-                if (round > 0) {
-                    const next = await kernel.clear({ model: chosen, messages: convo, config, threadId: threadId || null });
-                    if (!next.ok) {
-                        send({
-                            airlock_blocked: {
-                                gate: next.ruling,
-                                round,
-                                withheld: pendingArtifacts.map(a => a.label)
-                            }
-                        });
-                        sendUsage();
-                        return res.end();
-                    }
-                    clearance = next.token;
-                    gateRuling = next.ruling;
-                }
-
-                // Every round is a separately billed remote call, so every round is charged.
-                // This used to be round 0 only, and tested `=== 'remote'`.
-                const over = auth.spendRemote();
-                if (over) {
-                    if (!res.headersSent) return res.status(429).json({ error: over });
-                    send({ error: over });
-                    break;
-                }
-            }
-
-            // One generator whatever the tier: the provider layer has already
-            // normalised the remote stream into this same chunk shape.
-            const stream = providers.chat({
-                model: chosen,
-                messages: convo,
-                config,
-                // Omitted entirely when unsupported - sending `false` is still a request
-                // to a model that has no thinking channel.
-                ...(canThink ? { think: config.think !== false } : {}),
-                tools: useTools && !lastRound ? TOOLS : undefined,
-                signal: controller.signal,
-                // Checked by providers.chat and again by egress; if it no longer covers
-                // what is being sent, the gate runs there instead of the request going.
-                clearance
-            });
-
-            // Collect rather than blind-pipe: we need the tool calls, and the per-round
-            // `done` chunk must not reach the client until the last round or it would
-            // finalise the message while tools are still running.
-            let content = '', thinking = '', toolCalls = [], finalChunk = null;
-
-            for await (const chunk of stream) {
-                // First chunk back proves the request was accepted, which is the
-                // moment the content is provably across. Recording on dispatch
-                // instead would log crossings that never happened.
-                //
-                // ⚠ `crosses`, not `tier === 'remote'` — the same polarity as the gate, so
-                // a turn that was gated as a crossing is also recorded as one.
-                if (crosses && !roundRecorded) {
-                    roundRecorded = true;
-                    try {
-                        const opts = { actor: chosen, model: chosen, transport: 'chat', gate: gateRuling };
-                        if (round === 0) store.recordCrossings(packetIds, opts);
-                        if (pendingArtifacts.length) {
-                            if (anchorPacket) store.recordArtifactCrossing(anchorPacket, { ...opts, artifacts: pendingArtifacts });
-                            else console.error('tool results crossed with no packet to record them against:',
-                                pendingArtifacts.map(a => a.label).join(', '));
-                            pendingArtifacts = [];
-                        }
-                    } catch (err) {
-                        console.error('crossing not recorded:', err.message);
-                    }
-                }
-
-                if (chunk.message?.thinking) thinking += chunk.message.thinking;
-                if (chunk.message?.content) content += chunk.message.content;
-                if (chunk.message?.tool_calls?.length) toolCalls.push(...chunk.message.tool_calls);
-
-                if (chunk.done) { finalChunk = chunk; continue; }
-                ensureHeaders();
-                res.write(JSON.stringify(chunk) + '\n');
-            }
-
-            if (finalChunk) {
-                usage.prompt += finalChunk.prompt_eval_count ?? 0;
-                usage.reply += finalChunk.eval_count ?? 0;
-                usage.rounds++;
-            }
-
-            // No tools requested — this round is the answer. Usage goes first so the client
-            // has the totals before `done` finalises the message.
-            if (!toolCalls.length) {
-                sendUsage();
-                if (finalChunk) send(finalChunk);
-                break;
-            }
-
-            const asked = {
-                role: 'assistant',
-                content,
-                ...(thinking ? { thinking } : {}),
-                tool_calls: toolCalls
-            };
-            convo.push(asked);
-
-            // The model's own request, going back to the model that made it, is not new
-            // exposure — only the results it asked for are. Acknowledged so the next
-            // ruling judges the file contents, not the far side's own words.
-            if (crosses) kernel.acknowledge([asked]);
-
-            // ⚠ Only what was offered runs. A model can name a tool on a request that offered
-            // none — no workspace, a folder gone or no longer permitted, a model without tool
-            // support — and it is told so; nothing on disk is touched. Same rule as the duet.
-            if (!useTools) {
-                for (const call of toolCalls) {
-                    const name = String(call.function?.name || 'tool');
-                    send({ airlock_tool: { name, args: {}, ok: false, summary: `${name} not offered — not run` } });
-                    convo.push({ role: 'tool', tool_name: name,
-                        content: `${name} is not available on this request: no workspace files were offered.` });
-                }
-                continue;
-            }
-
-            for (const { message, card, artifact } of await runCalls(toolCalls, workspaceRoot)) {
-                // Custom line the client renders as a tool card. Ollama never emits this key.
-                send({ airlock_tool: card });
-                convo.push(message);
-                if (crosses) pendingArtifacts.push(artifact);
-            }
-        }
-
-        // Reached only if the loop ran out of rounds while the model was still asking for
-        // tools. Rare, but the tokens were still spent, so don't lose them.
-        sendUsage();
-        res.end();
-    } catch (err) {
-        if (err.name === 'AbortError') return;   // user hit Stop; nothing to report
-
-        // The safety net in providers.chat() ran the gate itself and it said no. Nothing
-        // was sent; answer it the way a refusal is answered, not as a malfunction.
-        if (err.name === 'GateRefusal') {
-            if (!res.headersSent) return res.status(200).json({ blocked: true, gate: err.gate, tier: err.tier });
-            send({ airlock_blocked: { gate: err.gate, withheld: pendingArtifacts.map(a => a.label) } });
-            return res.end();
-        }
-
-        const tier = err.tier || 'local';
-        console.error(`${tier} provider error:`, err.message);
-
-        if (!res.headersSent) {
-            // Pass an upstream status straight through where there is one. A 401 from
-            // the remote tier is a key problem, not a gateway problem, and answering
-            // 502 would send the user hunting in the wrong place.
-            if (err.status) res.status(err.status).json({ error: err.message });
-            else res.status(502).json({ error: 'Ollama unreachable: ' + err.message });
-        } else {
-            send({ error: err.message });
-            res.end();
-        }
-    }
-});
 
 // ─────────────────────── Workspace ───────────────────────
 
@@ -874,25 +603,6 @@ app.get('/api/workspace/browse', async (req, res) => {
     }
 });
 
-// Direct filesystem access for the UI (the same functions the tools call).
-const fsRoute = handler => async (req, res) => {
-    try {
-        res.json(await handler(req));
-    } catch (err) {
-        res.status(400).json({ error: err.message });
-    }
-};
-
-const requestWorkspace = async req => {
-    const thread = store.getThread(Number(req.query.threadId));
-    if (!thread) throw new Error('Pick a thread first.');
-    if (thread.workspace_root) await files.permitRoot(thread.workspace_root);
-    return thread.workspace_root;
-};
-
-app.get('/api/fs/list', fsRoute(async req => files.listDirectory(await requestWorkspace(req), req.query.path || '.')));
-app.get('/api/fs/read', fsRoute(async req => files.readTextFile(await requestWorkspace(req), req.query.path)));
-app.get('/api/fs/find', fsRoute(async req => files.findFiles(await requestWorkspace(req), req.query.q)));
 
 // ─────────────────────── Duet: two participants, one conversation ───────────────────────
 //
@@ -957,9 +667,9 @@ app.patch('/api/duet/participants/:id', duetRoute(req => {
 /**
  * Send to one participant, and stream its reply.
  *
- * NDJSON rather than SSE, matching /api/chat — one JSON object per line, each tagged with
+ * NDJSON rather than SSE — Ollama's own shape: one JSON object per line, each tagged with
  * the message id it belongs to, so a client running both panes at once never has to guess
- * whose token it just received. Closing the response is the stop signal, as on /api/chat.
+ * whose token it just received. Closing the response is the stop signal.
  */
 app.post('/api/duet/:id/send', async (req, res) => {
     // One visitor, a bounded number of generations at once. The GPU and the duet queue are
@@ -1046,8 +756,6 @@ app.get('/api/stats', ok(() => {
     if (sandbox.sandboxed()) delete s.dbPath;
     return s;
 }));
-app.get('/api/travelled', ok(req => store.getTravelled(req.query.limit)));
-app.get('/api/search', ok(req => store.search(req.query)));
 
 app.post('/api/folders', ok(req => {
     if (!req.body.name) throw new Error('A folder needs a name.');
@@ -1130,141 +838,15 @@ app.post('/api/folders/:id/reorder', ok(req => store.reorderFolder(id(req), req.
 
 app.patch('/api/folders/:id', ok(req => store.renameFolder(id(req), req.body.name)));
 
-/**
- * The drag-out target. Chromium's `DownloadURL` payload points here, so dropping a thread
- * on the desktop writes a real file — the browser fetches this URL and honours the
- * filename in Content-Disposition. Plain text/markdown, not JSON.
- */
-app.get('/api/threads/:id/brief.md', (req, res) => {
-    try {
-        const brief = store.buildBrief(id(req), { actor: req.query.actor });
-        const slug = brief.thread.title.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-        res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
-        res.setHeader('Content-Disposition',
-            `attachment; filename="airlock-${slug}.md"`);
-        res.send(brief.markdown);
-    } catch (err) {
-        res.status(400).type('text/plain').send(err.message);
-    }
-});
 
-/** What has crossed: one thread, or the whole desk. */
-app.get('/api/exposure', ok(() => store.getExposure()));
 
 // What this desk has spent, in tokens, per model and purpose — from the ledger, which every
 // model call writes to (reply, gate, review). ?threadId= narrows it to one thread.
 app.get('/api/usage', ok(req => store.getUsage(req.query.threadId ? Number(req.query.threadId) : null)));
 app.get('/api/threads/:id/exposure', ok(req => store.getExposure(id(req))));
 
-/** The gate's ruling on a thread, without sending anything anywhere. */
-app.post('/api/threads/:id/gate', async (req, res) => {
-    try {
-        const brief = store.buildBrief(id(req), { actor: req.body?.actor || 'the committee' });
-        const gate = await runGate(brief.markdown, { config });
-        res.json({ gate, packets: brief.packetIds.length });
-    } catch (err) {
-        res.status(400).json({ error: err.message });
-    }
-});
 
-/**
- * Escalate a thread across the boundary, for real.
- *
- * Order matters and is the whole point: gate first, cross second, record third.
- * Nothing reaches the network until the local gate has released it, and nothing
- * is recorded as having crossed unless it actually did.
- */
-app.post('/api/threads/:id/escalate', async (req, res) => {
-    const threadId = id(req);
-    const { actor, model, force = false } = req.body || {};
 
-    try {
-        if (!actor) throw new Error('Escalation needs an actor — which seat is this for?');
-        if (!model) throw new Error('Escalation needs a model.');
-
-        const tier = providers.tierOf(model);
-        if (tier === 'local') {
-            throw new Error(`${model} is on the local tier — nothing would cross, so there is nothing to gate.`);
-        }
-        if (tier !== 'remote') {
-            // Escalation is a deliberate trip across the boundary to a known reviewer.
-            // A model Airlock cannot place is not one, whatever the gate would say.
-            throw new Error(`Airlock cannot place ${model} on either side of the boundary, so it cannot be an oversight seat.`);
-        }
-
-        const brief = store.buildBrief(threadId, { actor });
-        if (!brief.packetIds.length) {
-            throw new Error('Nothing to escalate — this thread has no packets yet.');
-        }
-
-        // 1. The gate. Local, deterministic, fail-closed — and bound to the exact brief:
-        // the clearance covers these words, going to this model, and nothing else.
-        const messages = [{ role: 'user', content: brief.markdown }];
-        const cleared = force
-            // An operator override still goes through the kernel, so the crossing has a
-            // clearance like any other and the record says a person decided. Its ruling
-            // names no model (model: null) because none ruled: naming config.model here
-            // once claimed a gate model that never ran — on a keyed machine a REMOTE id,
-            // implying a remote model had approved its own crossing.
-            ? kernel.override({ model, messages, actor: 'the operator' })
-            : await kernel.clear({ model, messages, config, threadId });
-        const gate = cleared.ruling;
-
-        if (!gate.release) {
-            // Refused. Nothing has touched the network, and nothing is recorded
-            // as crossed, because nothing crossed.
-            return res.status(200).json({ escalated: false, gate, packets: brief.packetIds.length });
-        }
-
-        // 2. The crossing.
-        const over = auth.spendRemote();
-        if (over) return res.status(429).json({ error: over, gate });
-
-        const verdict = await providers.complete({ model, messages, config, clearance: cleared.token });
-        try {
-            store.recordUsage({ purpose: 'review', model, tier: 'remote',
-                prompt: verdict.usage?.prompt, reply: verdict.usage?.reply, threadId });
-        } catch (err) { console.error('review usage not recorded:', err.message); }
-
-        if (!verdict.content) {
-            throw new Error(`${model} returned no verdict text.`);
-        }
-
-        // 3. The record. One transaction: the verdict packet, a `reviewed` stamp
-        // on everything the brief covered, and a `crossed` stamp on the same —
-        // because those are different facts and the audit needs both.
-        const recorded = store.recordHandoff(threadId, {
-            actor,
-            verdict: verdict.content,
-            packetIds: brief.packetIds,
-            model,
-            tier: 'remote',
-            // What actually carried it. An Ollama cloud model is remote too, and did not
-            // go anywhere near Token Factory.
-            transport: providers.transportOf(model),
-            gate
-        });
-
-        res.json({
-            escalated: true,
-            gate,
-            packet: recorded.packet,
-            signed: recorded.signed,
-            crossed: recorded.crossed,
-            model,
-            usage: verdict.usage,
-            reasoning: verdict.thinking ? verdict.thinking.length : 0
-        });
-    } catch (err) {
-        const status = err.status || 400;
-        res.status(status).json({ error: err.message });
-    }
-});
-
-// Oversight handoff, carried by hand. Out: a brief to paste wherever you like.
-// Back in: the verdict, as a packet plus signatures on what was reviewed.
-// The live path is /escalate above; this one is still how a human seat works.
-app.get('/api/threads/:id/brief', ok(req => store.buildBrief(id(req), { actor: req.query.actor })));
 
 // ─────────────────────── Carry out by hand ───────────────────────
 //
@@ -1374,7 +956,7 @@ app.get('/api/packets/:id', ok(req => {
 
 app.delete('/api/packets/:id', ok(req => (store.deletePacket(id(req)), { ok: true })));
 
-/** Single-packet drag-out target, mirroring /api/threads/:id/brief.md. */
+/** Single-packet drag-out target: Chromium's DownloadURL fetches this and writes a real file. */
 app.get('/api/packets/:id/packet.md', (req, res) => {
     try {
         const p = store.getPacket(id(req));
@@ -1433,7 +1015,6 @@ const leaving = (req, operation) => {
 
 app.post('/api/packets/:id/move', ok(req => leaving(req, () => store.movePacket(id(req), req.body))));
 app.post('/api/packets/:id/fork', ok(req => leaving(req, () => store.forkPacket(id(req), req.body))));
-app.post('/api/packets/:id/review', ok(req => store.reviewPacket(id(req), req.body)));
 
 /**
  * Seat participants on threads that predate "every thread is a duet".

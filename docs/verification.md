@@ -768,3 +768,28 @@ same test fails: the fenced file's contents reached the fake remote.
 
 No page code calls `/api/chat` any more (the duet is the only view); the route survives for
 the HTTP tests that exercise the kernel through it.
+
+## Verified 2026-10-14 — routes nothing used, removed
+
+Ten routes the page no longer called, most left by the single-chat view and the retired
+Oversight lane, are gone: `POST /api/chat`, `POST /api/threads/:id/escalate` (a dormant route
+that sent a whole thread to a remote model), `/api/fs/list|read|find` (the old file browser),
+`POST /api/packets/:id/review`, `/api/search`, `/api/travelled`, `/api/threads/:id/brief` and
+`brief.md`, `POST /api/threads/:id/gate`, and the desk-wide `/api/exposure` (the per-thread one
+stays). With them went what only they used: `kernel.override` — a clearance minted without
+the gate, now with no caller — `providers.transportOf`, and `search`, `getTravelled` and
+`reviewPacket` in the store. server.js is 419 lines shorter. Every one answers 404 on a fresh
+server.
+
+What their tests proved was kept where it still applies. `kernel_http_test` is gone; its
+fenced-root case moved to `duet_tools_test` (the duet always refused it; now it is held to
+that), and the brief's content is checked on the carry route that builds it for real.
+`boundary_test`'s tier stamps no longer need a key, so they run every time; its live gate is
+asked directly. `sandbox_http_test`'s remote allowances are spent through duet sends, behind a
+stand-in gate — measured first against the real 14B, which withheld a second "Say hello,
+please." with a reason that was not about it: the gate's over-withholding, inside a test.
+
+All suites green: auth 26, clearance 7, duet_chatter 28, duet_context 91, duet_request 34,
+duet_tools 44, files 53, hosting 26, kernel 32, provider 58, sandbox_http 42, sandbox 19,
+secrets 58, web 43, workspace_http 17, workspace ✓; against a throwaway server, smoke 66,
+duet 48 (2 skipped: remote, opt-in), boundary 49.

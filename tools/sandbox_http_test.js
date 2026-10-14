@@ -117,10 +117,6 @@ async function isolation() {
         ok(!bTree.text.includes(MARK), "B's tree does not contain A's thread");
         // Every negative below has its positive twin: the same request, made by A, finds the
         // marker. Without that, a missing route or an empty result would pass as isolation.
-        const aSearch = await A.api('GET', `/api/search?q=${MARK}`);
-        const bSearch = await B.api('GET', `/api/search?q=${MARK}`);
-        ok(aSearch.text.includes(MARK) && !bSearch.text.includes(MARK),
-           "search finds A's text for A, and not for B");
         const aByNumber = await A.api('GET', `/api/threads/${thread.id}/packets`);
         const byNumber = await B.api('GET', `/api/threads/${thread.id}/packets`);
         ok(aByNumber.text.includes(MARK) && !byNumber.text.includes(MARK),
@@ -415,11 +411,49 @@ async function budgets() {
         });
     });
     await new Promise(r => fake.listen(8199, '127.0.0.1', r));
+    // A stand-in gate that always releases. What is under test is the allowance, which is
+    // counted after the gate; a real gate model's ruling would make it flaky (measured: the
+    // 14B withheld a second "Say hello, please." with a reason that was not about it).
+    const GATE = 'stand-in-gate:1b';
+    const fakeOllama = http.createServer((req, res) => {
+        let body = ''; req.on('data', d => body += d);
+        req.on('end', () => {
+            const json = obj => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+            if (req.url === '/api/tags') return json({ models: [{ name: GATE, size: 1e9 }] });
+            if (req.url === '/api/show') return json({ capabilities: ['completion'] });
+            if (req.url === '/api/version') return json({ version: '0.0.0-stand-in' });
+            if (req.url === '/api/ps') return json({ models: [] });
+            if (req.url === '/api/chat') {
+                res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+                return res.end(JSON.stringify({ message: { role: 'assistant',
+                    content: '{"release": true, "reason": "stand-in gate", "concerns": []}' }, done: true }) + '\n');
+            }
+            res.writeHead(404); res.end();
+        });
+    });
+    await new Promise(r => fakeOllama.listen(8197, '127.0.0.1', r));
     const env = {
         NEBIUS_API_KEY: 'fake-key-for-a-local-test', NEBIUS_BASE_URL: 'http://127.0.0.1:8199',
+        OLLAMA_URL: 'http://127.0.0.1:8197', AIRLOCK_GATE_MODEL: GATE,
         AIRLOCK_REMOTE_ALLOW: '', AIRLOCK_SANDBOX_REMOTE_BUDGET: '1', AIRLOCK_REMOTE_BUDGET: '2'
     };
-    const ask = v => v.api('POST', '/api/chat', { model: FAKE_MODEL, messages: [{ role: 'user', content: 'Say hello, please.' }] });
+    // One remote turn for a visitor, through the duet — the only way a turn crosses now.
+    // { done, error } — error is the allowance message when the turn was refused for it.
+    let asked = 0;
+    const ask = async v => {
+        const tree = await v.api('GET', '/api/tree');
+        const threadId = tree.body[0].threads[0].id;
+        const right = (await v.api('GET', `/api/duet/${threadId}`)).body.participants.find(x => x.slot === 'b');
+        await v.api('PATCH', `/api/duet/participants/${right.id}`, { model: FAKE_MODEL });
+        const r = await streamed(s, v, `/api/duet/${threadId}/send`,
+            { participantId: right.id, text: 'Say hello, please.', clientRequestId: `budget-${++asked}` });
+        const blocked = r.events.find(e => e.type === 'blocked');
+        return {
+            done: r.events.some(e => e.type === 'done'),
+            error: r.events.find(e => e.type === 'error')?.error
+                || (blocked ? `withheld by the gate: ${blocked.gate?.reason}` : r.json?.error || '')
+        };
+    };
 
     let s = await serve(env);
     try {
@@ -429,23 +463,24 @@ async function budgets() {
 
         const A = visitor(s), B = visitor(s), C = visitor(s);
         const a1 = await ask(A), a2 = await ask(A);
-        ok(a1.status === 200 && a2.status === 429 && /This sandbox has used/.test(a2.body?.error || ''),
-           "a visitor's own allowance runs out for them", `${a1.status} ${a2.status} ${a2.body?.error || ''}`);
+        ok(a1.done && /This sandbox has used/.test(a2.error),
+           "a visitor's own allowance runs out for them", `${a1.error} | ${a2.error}`);
         const b1 = await ask(B);
-        ok(b1.status === 200, 'while the next visitor still has theirs');
+        ok(b1.done, 'while the next visitor still has theirs', b1.error);
         const c1 = await ask(C);
-        ok(c1.status === 429 && /shared remote allowance for today/.test(c1.body?.error || ''),
-           'until the demo\'s daily total is spent, for everyone', `${c1.status} ${c1.body?.error || ''}`);
+        ok(/shared remote allowance for today/.test(c1.error),
+           'until the demo\'s daily total is spent, for everyone', c1.error);
 
         const dir = s.dir;
         await s.stop();
         s = await serve({ ...env, AIRLOCK_SANDBOX_DIR: dir });
         const d1 = await ask(visitor(s));
-        ok(d1.status === 429 && /shared remote allowance/.test(d1.body?.error || ''),
-           'and a restart does not refill it — the known gap in the per-process counter', `${d1.status}`);
+        ok(/shared remote allowance/.test(d1.error),
+           'and a restart does not refill it — the known gap in the per-process counter', d1.error);
     } finally {
         await s.stop();
         await new Promise(r => fake.close(r));
+        await new Promise(r => fakeOllama.close(r));
     }
 }
 

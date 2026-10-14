@@ -10,7 +10,11 @@
  * no regression net, which is how a shared-root bug gets reintroduced quietly.
  *
  * Spawns its own server on a spare port against a throwaway database, so it never reads or
- * writes the real airlock.db. Ollama is not needed — nothing here calls /api/chat.
+ * writes the real airlock.db. Ollama is not needed — nothing here calls a model.
+ *
+ * What a thread's root lets a model READ is tested where reading happens: files_test.js for
+ * containment (no escaping the root), duet_tools_test.js for a model's tool calls through
+ * its own thread's root, and refused for a root that is no longer permitted.
  */
 
 const assert = require('node:assert/strict');
@@ -149,31 +153,14 @@ async function shutdown(child) {
             bothA.body.root === wsA && bothB.body.root === wsB,
             `${bothA.body.root} vs ${bothB.body.root}`);
 
-        // ── each thread reads only its own root ──
-        const listA = await get(`/api/fs/list?threadId=${a.id}&path=.`);
-        const listB = await get(`/api/fs/list?threadId=${b.id}&path=.`);
-        const namesA = listA.body.entries.map(e => e.name);
-        const namesB = listB.body.entries.map(e => e.name);
-        check('thread A sees only its own files',
-            namesA.includes('alpha.md') && !namesA.includes('beta.md'), namesA.join(','));
-        check('thread B sees only its own files',
-            namesB.includes('beta.md') && !namesB.includes('alpha.md'), namesB.join(','));
-
-        const readA = await get(`/api/fs/read?threadId=${a.id}&path=alpha.md`);
-        check('a thread can read inside its root', readA.status === 200);
-        const crossRead = await get(`/api/fs/read?threadId=${a.id}&path=../workspace-b/beta.md`);
-        check('a thread cannot read another thread\'s root',
-            crossRead.status === 400, JSON.stringify(crossRead.body));
-
         // ── clearing is per-thread ──
         await post('/api/workspace', { threadId: a.id, root: null });
         check('clearing one thread clears it',
             (await get(`/api/workspace?threadId=${a.id}`)).body.root === null);
         check('clearing one thread leaves the other alone',
             (await get(`/api/workspace?threadId=${b.id}`)).body.root === wsB);
-        const clearedList = await get(`/api/fs/list?threadId=${a.id}&path=.`);
-        check('a cleared thread loses file access', clearedList.status === 400,
-            JSON.stringify(clearedList.body));
+        check('a cleared thread has no root a tool could read',
+            (await get(`/api/workspace?threadId=${a.id}`)).body.exists === false);
 
         // ── bad input ──
         const relative = await post('/api/workspace', { threadId: b.id, root: 'workspace-b' });
@@ -208,17 +195,13 @@ async function shutdown(child) {
         // ── a vanished root reports itself instead of looking empty ──
         await post('/api/workspace', { threadId: a.id, root: wsA });
         await fsp.rename(wsA, `${wsA}-moved`);
-        const goneFind = await get(`/api/fs/find?threadId=${a.id}&q=alpha`);
-        check('find on a vanished root errors instead of returning 0 matches',
-            goneFind.status === 400 && /no longer exists/i.test(goneFind.body.error),
-            JSON.stringify(goneFind.body));
         const goneState = await get(`/api/workspace?threadId=${a.id}`);
         check('workspace state reports the root as missing',
             goneState.body.root === wsA && goneState.body.exists === false,
             JSON.stringify(goneState.body));
         await fsp.rename(`${wsA}-moved`, wsA);
-        check('and works again once the folder is back',
-            (await get(`/api/fs/find?threadId=${a.id}&q=alpha`)).body.count === 1);
+        check('and is reported present again once the folder is back',
+            (await get(`/api/workspace?threadId=${a.id}`)).body.exists === true);
     } finally {
         await shutdown(child);
     }

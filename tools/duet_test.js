@@ -409,13 +409,6 @@ async function scrub() {
         'duet messages are ordinary packets in the classic thread view',
         `${flatCount} vs ${finalState.messages.length}`);
 
-    const brief = await get(`/api/threads/${thread.id}/brief`);
-    ok(brief.markdown?.includes('Only once, please.'),
-        'the oversight brief still builds over a duet thread');
-
-    ok((await get('/api/search?q=' + encodeURIComponent('Only once, please.'))).length >= 1,
-        'duet messages are searchable like any other packet');
-
     // ── leaving a conversation: move and fork out of a duet ──
     //
     // A message dragged to another thread must stop claiming a participant of the thread it

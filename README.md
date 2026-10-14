@@ -95,7 +95,6 @@ node tools/web_test.js             # web search and fetch: the gate, given links
 node tools/clearance_test.js       # retired per-thread consent is removed from old databases
 node tools/secrets_test.js         # the credential scanner in front of the gate (offline)
 node tools/kernel_test.js          # the kernel, both locks, one door
-node tools/kernel_http_test.js     # tool results crossing, end to end (fake remote)
 node tools/hosting_test.js         # what a hosted instance lets a visitor reach
 node tools/sandbox_test.js         # every store call routed to its visitor's database
 node tools/sandbox_http_test.js    # two visitors, two sandboxes, and the ways around it
@@ -111,7 +110,7 @@ PORT=8126 AIRLOCK_DB=/tmp/airlock-verify.db npm start
 AIRLOCK_URL=http://localhost:8126 node tools/boundary_test.js
 ```
 
-`workspace_http_test.js`, `kernel_http_test.js`, `hosting_test.js`,
+`workspace_http_test.js`, `hosting_test.js`,
 `sandbox_http_test.js`, `duet_tools_test.js` and `duet_chatter_test.js` start their own
 servers and are not affected. The last two also fake both sides — a remote on localhost
 and a stand-in Ollama — so they need neither a key nor a model, and prove the plumbing
@@ -123,15 +122,10 @@ friction separately; `--set=holdout` runs cases kept apart for checking a change
 only. See [docs/verification.md](docs/verification.md) for the numbers.
 
 The remote suites **skip** rather than fail without a Nebius key, so the tests
-run on a clean clone with no credentials. With a key they *still* skip every call
-that would spend it, unless asked — `AIRLOCK_BOUNDARY_TEST_REMOTE=1` for
-`boundary_test.js`, `AIRLOCK_DUET_TEST_REMOTE=1` for `duet_test.js` — because
-having a key is not the same as agreeing to spend it on a test. The crossing
-machinery itself is covered for free by `kernel_http_test.js`, against a fake remote.
-
-⚠ The gate's ruling is a model's judgement, so `boundary_test.js` can occasionally
-withhold a message it should release. That is reported as a failure and the dependent
-assertions are marked `skip` — it no longer silently truncates the run.
+run on a clean clone with no credentials. With a key, `duet_test.js` *still* skips every
+call that would spend it unless asked — `AIRLOCK_DUET_TEST_REMOTE=1` — because having a
+key is not the same as agreeing to spend it on a test. The crossing machinery itself is
+covered for free by `duet_tools_test.js`, against a fake remote.
 
 Which local model gates is set by `AIRLOCK_GATE_MODEL`, and it is a real trade, measured
 with `tools/gate_bench.js`: `nemotron-3-nano:4b` is fast (~0.3 s a ruling, 2.8 GB) but
@@ -220,14 +214,14 @@ airlock chamber below them, where every message enters and every crossing is mar
 
 ## The gate
 
-Escalation crosses a line, so something has to decide whether it may. That
+Crossing is a line, so something has to decide whether each crossing may happen. That
 decision is made by the **local** model, always, and it is the one part of this
 design that is not negotiable.
 
 ### ⚠ The gate cannot be a remote model
 
 The obvious implementation is to let Nemotron Nano judge the brief — it is fast,
-it is cheap, and deciding what to escalate is exactly the kind of cheap
+it is cheap, and deciding what may leave is exactly the kind of cheap
 classification a small model is for.
 
 It cannot work. To let a remote model rule on whether content may leave, you
@@ -281,14 +275,12 @@ same ruling twice, and a yes/no does not need a reasoning channel that costs
     gate  ->  cross  ->  record
 
 Nothing reaches the network before the gate releases it, and nothing is recorded
-as having crossed unless it actually did. A refusal returns `200` with
-`escalated: false` and the reason, because the request succeeded — the answer
-was simply no.
+as having crossed unless it actually did. A withheld turn is answered as a ruling,
+not an error — the request succeeded; the answer was simply no.
 
 ## What has ever left this machine
 
     GET /api/threads/:id/exposure
-    GET /api/exposure
 
 This is the query the boundary exists to make answerable, and it reads the
 append-only provenance log rather than any mutable field — so a packet that has
@@ -355,7 +347,7 @@ round is a new crossing: it gets its own ruling, a refusal stops the turn before
 anything is sent and says which results were withheld, and a released result is
 recorded in the exposure query by name, size and content hash. Before the kernel,
 file contents followed the first ruling out of the machine without one of their
-own, and never appeared in *"what has crossed"* — `tools/kernel_http_test.js`
+own, and never appeared in *"what has crossed"* — `tools/duet_tools_test.js`
 demonstrates both, against a fake remote on localhost, so the proof costs nothing
 and sends nothing.
 
@@ -392,11 +384,10 @@ The client does not get to assert which side of the boundary produced something.
 
 ### ⚠ A forced crossing says so, permanently
 
-`force: true` skips the gate. That is allowed — an operator may know better than
-a local model — but it is never invisible. The crossing note carries
-`gate=FORCED` instead of `gate=released`, and a `gated` event is recorded against
-the verdict packet naming it a bypass. An override that leaves no trace is the
-one thing an audit trail must not permit.
+There is one override: ⇱ Carry out's **Carry it anyway**. That is allowed — an operator
+may know better than a local model — but it is never invisible. The crossing note
+carries `gate=FORCED` instead of `gate=released`, permanently. An override that leaves
+no trace is the one thing an audit trail must not permit.
 
 ## Asking a bigger model
 
@@ -411,13 +402,11 @@ the gate rules first, and the crossing is recorded like any other.
 | Nemotron 3 Super 120B | the standard review |
 | Nemotron 3 Ultra 550B | deep review, a million-token window |
 
-Which of them exist comes from `.env` by way of `/api/health`. The whole-thread
-review behind the old seats is still an API — `POST /api/threads/:id/escalate`,
-gate first, cross second, record third — and still tested, with no button.
+Which of them exist comes from `.env` by way of `/api/health`.
 
 ## Two tiers, one stream
 
-`providers/` is the seam. The duet runner (and the older `/api/chat` route) pull one
+`providers/` is the seam. The duet runner pulls one
 async generator and never branch on where a model runs; each provider adapts its API to
 a single chunk shape.
 
@@ -612,8 +601,8 @@ on CPU alone, so the host does not need a GPU for the gate.
 
 | File | Role |
 |---|---|
-| `server.js` | Express host: `/api/health`, `/api/config`, duet send, packet routes, Carry out, `/api/usage`, `/api/exposure` |
-| `db.js` | The packet store — schema, provenance log, token ledger, move/fork/nest/review, search. One database per `createCore` |
+| `server.js` | Express host: `/api/health`, `/api/config`, duet send, packet routes, Carry out, `/api/usage`, a thread's exposure |
+| `db.js` | The packet store — schema, provenance log, token ledger, move/fork/nest. One database per `createCore` |
 | `sandbox.js` | Which store a call belongs to: the desk's one database, or the visitor's sandbox; the sandbox lifecycle |
 | `kernel.js` | Whether content may leave: per-turn clearances bound to the exact words and destination |
 | `boundary.js` | The gate — a local model that rules on a crossing, deterministic, fails closed |
@@ -622,7 +611,7 @@ on CPU alone, so the host does not need a GPU for the gate.
 | `providers/registry.js` | Which side of the boundary each model is on, read from the providers' own catalogues |
 | `providers/egress.js` | The only file allowed to reach the network; refuses content without a clearance |
 | `files.js` | Read-only workspace access, containment, and which folders a root may be |
-| `workspace-tools.js` | The file tools and their runner, shared by the duet and `/api/chat` |
+| `workspace-tools.js` | The file tools and their runner, for the duet |
 | `duet-store.js` · `duet-runner.js` · `duet-context.js` | Two participants over one conversation, chatter included — see [docs/duet.md](docs/duet.md) |
 | `auth.js` | Access token and remote spend cap. Off unless configured |
 | `public/index.html` · `app.js` · `duet.js` · `styles.css` | Frontend — no dependencies, no CDN, works offline. `duet.js` is the timeline, the panes and chatter |

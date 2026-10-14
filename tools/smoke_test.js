@@ -9,8 +9,7 @@
  * you are free to rename or delete those, and this must still pass.
  *
  * Covers move (drag), fork (alt-drag, keeps a tether), nest (drop onto a packet),
- * reorder, re-tray, rename, review signatures, the oversight brief + handoff, and the
- * .md download endpoint that Chromium's DownloadURL drag points at.
+ * reorder, re-tray, rename, and recording a reply carried back by hand (the handoff).
  */
 
 const BASE = process.env.AIRLOCK_URL || 'http://localhost:8100';
@@ -98,10 +97,6 @@ async function scrub() {
         hop && hop.from_thread === 'smoke-hardware' && hop.to_thread === 'smoke-code',
         hop ? `${hop.from_thread} -> ${hop.to_thread}` : 'no move event');
 
-    check('appears in the travelled feed',
-        (await get('/api/travelled')).some(t => t.id === p.id
-            && t.origin_thread === 'smoke-hardware' && t.current_thread === 'smoke-code'));
-
     // ── fork: mitosis with a tether ──
     const fork = (await post(`/api/packets/${p.id}/fork`, { toThreadId: RUN.id })).json;
     check('fork is a distinct packet', fork.id !== p.id);
@@ -145,62 +140,14 @@ async function scrub() {
     check('rejects nesting a packet into its own descendant',
         (await post(`/api/packets/${master.id}/move`, { parentId: a.id })).status === 400);
 
-    // ── review signatures ──
-    await post(`/api/packets/${p.id}/review`, { actor: 'Spark', note: 'capacity math checks out' });
-    await post(`/api/packets/${p.id}/review`, { actor: 'Claude', note: 'flagged air-capture rate' });
-    const full = await get(`/api/packets/${p.id}`);
-    check('two signatures on the packet', full.reviews.length === 2,
-        full.reviews.map(r => r.actor).join(', '));
-    check('signatures name their actors',
-        full.reviews.some(r => r.actor === 'Claude') && full.reviews.some(r => r.actor === 'Spark'));
-    check('rejects a review with no actor',
-        (await post(`/api/packets/${p.id}/review`, { note: 'anonymous' })).status === 400);
-
-    // ── search ──
-    const today = new Date().toISOString().slice(0, 10);
-    const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
-    const nextYear = `${new Date().getUTCFullYear() + 1}-01-01`;
-
-    check('search by thread finds the fork',
-        (await get(`/api/search?thread=${encodeURIComponent('smoke-run')}`)).some(x => x.id === fork.id));
-    check('search by tray works',
-        (await get(`/api/search?folder=${encodeURIComponent(FIXTURE)}`)).some(x => x.id === p.id));
-    check('bare "to" date includes today (end-of-day bound)',
-        (await get(`/api/search?thread=smoke-code&from=${today}&to=${today}`)).some(x => x.id === p.id));
-    check('date range excludes out-of-window packets',
-        !(await get(`/api/search?thread=smoke-code&to=${yesterday}`)).some(x => x.id === p.id));
-    check('future window returns nothing',
-        (await get(`/api/search?from=${nextYear}`)).length === 0);
-
-    const byText = await get('/api/search?q=air-capture');
-    check('content search works', byText.some(x => x.id === p.id));
-    check('role filter narrows correctly',
-        (await get('/api/search?role=assistant&q=air-capture')).length === 0);
-    check('search rows carry tray + thread + origin names', byText[0]?.folder_name
-        && byText[0]?.thread_title && byText[0]?.origin_thread_title === 'smoke-hardware');
-
-    // ── oversight handoff ──
-    const brief = await get(`/api/threads/${RUN.id}/brief?actor=Claude`);
-    check('brief names its thread and tray',
-        brief.thread.title === 'smoke-run' && brief.thread.folder === FIXTURE);
-    check('brief is markdown with a heading', brief.markdown.startsWith('# Airlock brief'));
-    check('brief addresses the named actor', brief.markdown.includes('Asked of Claude'));
-
-    const runNow = flat(await get(`/api/threads/${RUN.id}/packets`));
-    check('brief includes the content of every packet it covers',
-        runNow.every(x => brief.markdown.includes(x.content.slice(0, 40))),
-        `${runNow.length} packet(s)`);
-    check('brief packetIds match the thread contents',
-        runNow.length === brief.packetIds.length && runNow.every(x => brief.packetIds.includes(x.id)));
-
-    const codeBrief = await get(`/api/threads/${CODE.id}/brief?actor=Spark`);
-    check('brief surfaces provenance for travelled packets',
-        codeBrief.markdown.includes('was born in **smoke-hardware**'));
-
+    // ── a reply carried back by hand ──
+    // The brief is built and checked on the carry route (duet_tools_test); here, what
+    // the handoff records when the reply comes back.
+    const codeIds = flat(await get(`/api/threads/${CODE.id}/packets`)).map(x => x.id);
     const beforeHandoff = (await get('/api/stats')).packets;
     const handoff = (await post(`/api/threads/${CODE.id}/handoff`, {
         actor: 'Claude', verdict: 'Reasoning holds. Watch the air-capture rate.',
-        packetIds: codeBrief.packetIds
+        packetIds: codeIds
     })).json;
     check('handoff lands the verdict as a real packet',
         handoff.packet.role === 'assistant' && handoff.packet.thread_id === CODE.id);
@@ -208,7 +155,7 @@ async function scrub() {
     check('handoff adds exactly one packet', (await get('/api/stats')).packets === beforeHandoff + 1);
 
     const signed = await get(`/api/threads/${CODE.id}/packets`);
-    const stamped = flat(signed).find(x => codeBrief.packetIds.includes(x.id));
+    const stamped = flat(signed).find(x => codeIds.includes(x.id));
     check('reviewed packets carry the signature for the badge',
         (stamped?.reviewers || '').includes('Claude'), stamped?.reviewers || 'none');
     check('verdict packet does not sign itself',
@@ -217,20 +164,6 @@ async function scrub() {
         (await post(`/api/threads/${CODE.id}/handoff`, { actor: 'Claude' })).status === 400);
     check('rejects a handoff with no actor',
         (await post(`/api/threads/${CODE.id}/handoff`, { verdict: 'looks fine' })).status === 400);
-    check('brief on a missing thread errors cleanly', !!(await get('/api/threads/999999/brief')).error);
-
-    // ── the drag-out file ──
-    const dl = await fetch(`${BASE}/api/threads/${CODE.id}/brief.md`);
-    const body = await dl.text();
-    check('brief.md serves markdown',
-        (dl.headers.get('content-type') || '').includes('text/markdown'));
-    check('brief.md sets a download filename',
-        /attachment; filename="airlock-smoke-code\.md"/.test(dl.headers.get('content-disposition') || ''),
-        dl.headers.get('content-disposition'));
-    check('brief.md body is the brief, not JSON', body.startsWith('# Airlock brief'));
-    check('brief.md 400s on a missing thread',
-        (await fetch(`${BASE}/api/threads/999999/brief.md`)).status === 400);
-
     // ── rename / re-tray ──
     const renamed = (await api('PATCH', `/api/threads/${HW.id}`, { title: 'smoke-hardware ✓' })).json;
     check('thread rename sticks', renamed.title === 'smoke-hardware ✓');

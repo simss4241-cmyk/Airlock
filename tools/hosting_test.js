@@ -169,11 +169,12 @@ async function httpTests() {
         ok(Array.isArray(state.body.allowedRoots) && state.body.allowedRoots.length === 1,
            'and the allowed roots are listed, so the UI can offer them');
 
-        const list = await hosted.api('GET', `/api/fs/list?threadId=${threadId}&path=.`);
-        ok(list.status === 400, 'the carried-over root cannot be listed', JSON.stringify(list.body));
+        // There is no route that reads a workspace for the page any more: the old file
+        // browser's are gone, so the only reader is a model's tool call — and that checks the
+        // root when it is USED, not only when it is set (duet_tools_test, the fenced case).
         const read = await hosted.api('GET', `/api/fs/read?threadId=${threadId}&path=service-account.json`);
-        ok(read.status === 400 && !JSON.stringify(read.body).includes('not-for-visitors'),
-           'nor its files read — the check is made when a root is USED, not only when it is set');
+        ok(read.status === 404 && !JSON.stringify(read.body).includes('not-for-visitors'),
+           'the old file-browser routes are gone: nothing of the carried-over root is served');
 
         const escape = await hosted.api('POST', '/api/workspace', { threadId, root: path.parse(tmp).root });
         ok(escape.status === 400 && /limited to/.test(escape.body.error),
@@ -181,8 +182,8 @@ async function httpTests() {
 
         const good = await hosted.api('POST', '/api/workspace', { threadId, root: inside });
         ok(good.status === 200, 'a folder inside the allowlist can be set', JSON.stringify(good.body));
-        const fine = await hosted.api('GET', `/api/fs/read?threadId=${threadId}&path=notes.md`);
-        ok(fine.status === 200 && /fine to read/.test(fine.body.content || ''), 'and read');
+        const now = await hosted.api('GET', `/api/workspace?threadId=${threadId}`);
+        ok(now.body.permitted === true && now.body.exists === true, 'and is reported as permitted', JSON.stringify(now.body));
 
         const browse = await hosted.api('GET', `/api/workspace/browse?threadId=${threadId}`);
         ok(browse.status === 403, 'the server-side folder picker is not offered to a visitor');

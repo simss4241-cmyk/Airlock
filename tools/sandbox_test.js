@@ -66,12 +66,10 @@ async function main() {
 
     const bSees = sandbox.run(B, () => ({
         tree: JSON.stringify(store.getTree()),
-        search: JSON.stringify(store.search({ q: MARK })),
         sameId: store.getThread(aThread.id),
         packets: JSON.stringify(store.getThreadPackets(aThread.id))
     }));
     ok(!bSees.tree.includes(MARK), "B's tree does not contain A's thread");
-    ok(!bSees.search.includes(MARK), "B's search cannot find A's text");
     ok(!bSees.packets.includes(MARK),
        "asking B's store for A's thread id by number returns nothing of A's",
        `B got ${bSees.packets.slice(0, 80)}`);

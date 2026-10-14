@@ -146,7 +146,7 @@ Each pane has a **⛁ files** switch. It is on by default for a side on this mac
 off by default for a side across the boundary: letting a cloud model read your files is
 something you switch on, never something you find on. The server offers the tools only
 when the request asks, the thread has a workspace that still exists and is permitted, and
-the model can call tools (`workspace-tools.js`, shared with `/api/chat`).
+the model can call tools (`workspace-tools.js`).
 
 Local file contents are ruled on whenever they enter a cloud-bound context, not only when
 they are first read. There are four routes, and all four are tested end to end against a
@@ -447,15 +447,15 @@ before stays exactly as above: shared by both lanes, owned by neither.
 | `duet-context.js` | pure context assembly — no db, no network, no provider |
 | `duet-runner.js` | orchestration, relays, tool rounds, the queue, the gate, crossings, the token ledger |
 | `web.js` | web search (Tavily) and page fetch, through egress; address checks; HTML to text |
-| `workspace-tools.js` | the file tools, shared with `/api/chat` |
+| `workspace-tools.js` | the file tools and their runner |
 | `public/evidence.js` | what counts as a file reference, and whether anyone in the thread has seen it |
 | `public/echo.js` | what counts as a repeat — one rule for the run, the mark and the tests |
 | `public/figures.js` | what counts as a figure, and the numbers a tool result showed |
 | `public/restate.js` | which words of a reply were already said, word for word, by someone else |
 | `public/duet.js` | the timeline and its lines, the panes, chatter, the chamber and its doors |
-| `tools/duet_context_test.js` | 86 assertions, offline: context, what counts as a repeat, a path, a restated run, a figure |
-| `tools/duet_test.js` | 50 assertions over HTTP |
-| `tools/duet_tools_test.js` | 38 assertions: files, and every route to the cloud — fakes both sides |
+| `tools/duet_context_test.js` | 91 assertions, offline: context, what counts as a repeat, a path, a restated run, a figure |
+| `tools/duet_test.js` | 48 assertions over HTTP |
+| `tools/duet_tools_test.js` | 44 assertions: files, a fenced folder, the brief, and every route to the cloud — fakes both sides |
 | `tools/web_test.js` | 43 assertions: search and fetch, the gate on queries, given links only, the door, private addresses |
 | `tools/duet_request_test.js` | 34 assertions: asking you for a result, answers, search and line ranges — fake model |
 | `tools/duet_chatter_test.js` | 28 assertions: relays, refusals, interjections, the ledger — fakes both sides |

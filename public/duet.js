@@ -97,7 +97,7 @@ const tierOfModel = name => state.models.find(m => m.name === name)?.tier || 'un
  * The server knows the answer and says so: duet-runner.js sets requestMeta.crossed on a
  * reply only once the first chunk comes back from the far side, which is the moment the
  * content is provably across — the same moment it writes the `crossed` provenance event
- * that /api/exposure reads. This mirrors that rule, and nothing weaker:
+ * that the thread's exposure reads. This mirrors that rule, and nothing weaker:
  *
  *   requestMeta.crossed           the server recorded it
  *   streaming, with any output    a chunk came back from a remote model; not settled yet,
