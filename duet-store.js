@@ -45,11 +45,12 @@ const STATUS = {
     CANCELLED: 'cancelled',
     FAILED: 'failed',
     INTERRUPTED: 'interrupted',  // server died mid-stream; same exclusion as failed
-    BLOCKED: 'blocked'           // the local gate refused to let this context cross
+    BLOCKED: 'blocked',          // the local gate refused to let this context cross
+    DELETED: 'deleted'           // the user deleted it: text erased, record kept (db.js deletePacket)
 };
 
 const TERMINAL = new Set([
-    STATUS.COMPLETE, STATUS.CANCELLED, STATUS.FAILED, STATUS.INTERRUPTED, STATUS.BLOCKED
+    STATUS.COMPLETE, STATUS.CANCELLED, STATUS.FAILED, STATUS.INTERRUPTED, STATUS.BLOCKED, STATUS.DELETED
 ]);
 
 const SLOTS = ['a', 'b'];
@@ -280,7 +281,8 @@ function createDuet(db, store) {
             model: row.model ?? null,
             images: row.images ? JSON.parse(row.images) : [],
             requestMeta: row.request_meta ? JSON.parse(row.request_meta) : null,
-            createdAt: row.created_at
+            createdAt: row.created_at,
+            ...(row.deleted_at ? { deletedAt: row.deleted_at } : {})
         };
     }
 

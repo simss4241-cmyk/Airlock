@@ -761,7 +761,8 @@ app.post('/api/folders', ok(req => {
     if (!req.body.name) throw new Error('A folder needs a name.');
     return store.createFolder(req.body.name);
 }));
-app.delete('/api/folders/:id', ok(req => (store.deleteFolder(id(req)), { ok: true })));
+// A tray or thread goes with its words; what crossed from it stays on the record (db.js).
+app.delete('/api/folders/:id', ok(req => ({ ok: true, crossingsKept: store.deleteFolder(id(req)) })));
 
 /**
  * What a brand new duet opens with: one participant on this machine, one across the
@@ -819,7 +820,10 @@ app.post('/api/threads', async (req, res) => {
         res.status(400).json({ error: err.message });
     }
 });
-app.delete('/api/threads/:id', ok(req => (store.deleteThread(id(req)), { ok: true })));
+app.delete('/api/threads/:id', ok(req => ({ ok: true, crossingsKept: store.deleteThread(id(req)) })));
+
+/** What crossed from threads since deleted: where it went and when. There is no content to show. */
+app.get('/api/crossings/deleted', ok(() => store.getDeletedCrossings()));
 app.get('/api/threads/:id/packets', ok(req => store.getThreadPackets(id(req))));
 
 app.patch('/api/threads/:id', ok(req => {
@@ -954,7 +958,14 @@ app.get('/api/packets/:id', ok(req => {
     return { ...p, provenance: store.getProvenance(p.id), reviews: store.getReviews(p.id) };
 }));
 
-app.delete('/api/packets/:id', ok(req => (store.deletePacket(id(req)), { ok: true })));
+/**
+ * Delete a message: text erased, a stub left, any crossing kept on the record — deleting
+ * here cannot recall what already left. Answers with the message as the page draws it.
+ */
+app.delete('/api/packets/:id', ok(req => {
+    store.deletePacket(id(req));
+    return { ok: true, message: duet.getMessage(id(req)) };
+}));
 
 /** Single-packet drag-out target: Chromium's DownloadURL fetches this and writes a real file. */
 app.get('/api/packets/:id/packet.md', (req, res) => {

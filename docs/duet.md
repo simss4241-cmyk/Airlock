@@ -353,6 +353,15 @@ and the sentence is underlined; both say what the reply did run instead. The rul
 could not open", "I recommend opening", "I have not opened". Over every reply on the desk
 on 2026-10-05 it found one: the measured one. Steel, like the other evidence marks.
 
+**Any message can be deleted.** ✕ delete, beside ⧉ copy, erases its words, images and
+anything quoted from it — from the conversation, from every later context (a deleted message
+has status `deleted`, and context takes only `complete`), and from the file on disk
+(`secure_delete`, then a WAL checkpoint). A stub stays: "Deleted by you at 14:32." Its record
+does not go: if it had crossed, the crossing stays in the exposure query, the stub says to
+whom, and a `deleted` event says it came after. Deleting here cannot recall what already
+left, and nothing pretends it can. Deleting a thread or tray keeps its crossings too, in
+`deleted_crossings` — where and when, no content — counted in the rail's footer.
+
 **The run lives in the page.** Close the tab, or switch threads, and it stops, so a
 conversation with a cloud model cannot keep spending with nobody watching.
 
@@ -455,7 +464,7 @@ before stays exactly as above: shared by both lanes, owned by neither.
 | `public/duet.js` | the timeline and its lines, the panes, chatter, the chamber and its doors |
 | `tools/duet_context_test.js` | 91 assertions, offline: context, what counts as a repeat, a path, a restated run, a figure |
 | `tools/duet_test.js` | 48 assertions over HTTP |
-| `tools/duet_tools_test.js` | 44 assertions: files, a fenced folder, the brief, and every route to the cloud — fakes both sides |
+| `tools/duet_tools_test.js` | 57 assertions: files, a fenced folder, the brief, deleting, and every route to the cloud — fakes both sides |
 | `tools/web_test.js` | 43 assertions: search and fetch, the gate on queries, given links only, the door, private addresses |
 | `tools/duet_request_test.js` | 34 assertions: asking you for a result, answers, search and line ranges — fake model |
 | `tools/duet_chatter_test.js` | 28 assertions: relays, refusals, interjections, the ledger — fakes both sides |

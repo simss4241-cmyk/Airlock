@@ -712,6 +712,29 @@ main {
     opacity: 1;
 }
 
+/* Delete sits beside copy, as quiet until hovered; it turns red only under the pointer,
+   because it is the one control here that cannot be undone. */
+.msg-delete {
+    font: inherit;
+    font-size: 10px;
+    letter-spacing: .5px;
+    color: var(--muted);
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    padding: 1px 5px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity .12s, color .12s, border-color .12s;
+}
+.msg:hover .msg-delete,
+.msg-delete:focus-visible { opacity: .8; }
+.msg-delete:hover { color: var(--danger); border-color: var(--danger); opacity: 1; }
+
+/* What a deleted message leaves: a quiet stub, not an empty box. */
+.duet-deleted .bubble { background: none; border-style: dashed; opacity: .75; }
+.deleted-note { margin: 0; color: var(--muted); font-size: .9em; font-style: italic; }
+
 /* ── Packet physics ── */
 
 /* nesting: a packet inside a packet sits indented, on a connector rail */

@@ -448,6 +448,57 @@ async function main() {
         await api('POST', `/api/threads/${t3.id}/carried`, { token: forced.body.token });
         ok((await exposureNotes(t3.id)).some(n => /gate=FORCED/.test(n)),
             'and the record says the gate was bypassed, permanently');
+
+        // ── 5. deleting: the words go, the record stays ──
+        // Asked for 2026-10-14: any input or output can be deleted. Deleting erases the text
+        // on this machine — from the conversation, from every later context, from the file
+        // on disk — and keeps the crossing: the far side still has it, and the record must
+        // not pretend otherwise.
+        console.log('\n5. deleting a message, and a thread');
+        const DELETE_MARK = 'violet-heron-take-back-3c7e';
+        const { thread: t5, right: r5 } = await duetThread(folderId, 'take back');
+        const s5 = await send(t5.id, { participantId: r5.id, text: `My locker code is ${DELETE_MARK}.`, clientRequestId: 'del-1' });
+        const asked5 = s5.events.find(e => e.type === 'user')?.message;
+        ok(Boolean(s5.last('done')) && received.some(b => b.includes(DELETE_MARK)),
+            'a message crosses to the remote side', trace(s5));
+        const before5 = await api('GET', `/api/threads/${t5.id}/exposure`);
+        ok(before5.body.packets.some(p => p.packetId === asked5?.id), 'and is on the record as crossed');
+
+        const del = await api('DELETE', `/api/packets/${asked5?.id}`);
+        ok(del.status === 200 && del.body?.message?.status === 'deleted' && del.body.message.content === '',
+            'deleting it erases the text and marks it deleted', JSON.stringify(del.body).slice(0, 200));
+        ok(del.body?.message?.requestMeta?.crossed === true && del.body.message.requestMeta.crossedTo?.includes(FAKE_MODEL),
+            'and the stub still says it had crossed, and to whom', JSON.stringify(del.body?.message?.requestMeta));
+
+        const conv5 = (await api('GET', `/api/duet/${t5.id}`)).body;
+        ok(!JSON.stringify(conv5).includes(DELETE_MARK), 'the conversation no longer holds the words');
+        const after5 = await api('GET', `/api/threads/${t5.id}/exposure`);
+        const rec5 = after5.body.packets.find(p => p.packetId === asked5?.id);
+        ok(rec5 && rec5.deletedAt && rec5.preview === '' && rec5.crossings.length >= 1,
+            'the crossing stays on the record, with no preview and the time it was deleted', JSON.stringify(rec5));
+        const prov5 = await api('GET', `/api/packets/${asked5?.id}/provenance`);
+        ok((prov5.body || []).some(e => e.event === 'deleted' && /after crossing/.test(e.note || '')),
+            'and the deletion itself is recorded, saying it came after the crossing');
+
+        const n5 = received.length;
+        const s5b = await send(t5.id, { participantId: r5.id, text: 'What did I tell you a moment ago?', clientRequestId: 'del-2' });
+        ok(Boolean(s5b.last('done')) && !received.slice(n5).some(b => b.includes(DELETE_MARK)),
+            'a later turn to the remote side does not carry the deleted words', trace(s5b));
+
+        const onDisk = ['duet-tools.db', 'duet-tools.db-wal']
+            .map(f => path.join(tmp, f)).filter(f => fs.existsSync(f))
+            .some(f => fs.readFileSync(f).includes(DELETE_MARK));
+        ok(!onDisk, 'and the words are not left in the database file, or its write-ahead log');
+
+        const again5 = await api('DELETE', `/api/packets/${asked5?.id}`);
+        ok(again5.status === 200, 'deleting it twice is harmless');
+
+        const gone = await api('DELETE', `/api/threads/${t5.id}`);
+        ok(gone.status === 200 && gone.body?.crossingsKept >= 1, 'deleting the thread keeps its crossings', JSON.stringify(gone.body));
+        const kept5 = await api('GET', '/api/crossings/deleted');
+        ok((kept5.body || []).some(k => k.thread === 'take back' && k.actor === FAKE_MODEL && !JSON.stringify(k).includes(DELETE_MARK)),
+            'they are listed as crossed from a deleted thread — where and when, with no content');
+        ok(((await api('GET', '/api/stats')).body?.deletedCrossings || 0) >= 1, 'and counted in the desk stats');
     } finally {
         child.kill();
         if (child.exitCode === null) await new Promise(r => child.once('exit', r));

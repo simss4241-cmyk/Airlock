@@ -793,3 +793,24 @@ All suites green: auth 26, clearance 7, duet_chatter 28, duet_context 91, duet_r
 duet_tools 44, files 53, hosting 26, kernel 32, provider 58, sandbox_http 42, sandbox 19,
 secrets 58, web 43, workspace_http 17, workspace ✓; against a throwaway server, smoke 66,
 duet 48 (2 skipped: remote, opt-in), boundary 49.
+
+## Verified 2026-10-14 — deleting: the words go, the record stays
+
+Asked for by the user: any input or output can be deleted. Before this, `DELETE
+/api/packets/:id` existed with no button — and it hard-deleted the row, which cascaded into
+its provenance and erased the record of it crossing. Deleting a thread did the same for
+every crossing in it. Chosen with the user: text gone, record kept, for messages and threads.
+
+A deleted message's content, images and request details are erased (an answer's quote of it
+too), its status becomes `deleted` so no context includes it, and a stub stays. Its crossing
+rows are untouched; the stub and a `deleted` provenance event say to whom it had gone.
+`PRAGMA secure_delete` and a WAL checkpoint after each delete keep the words off the disk.
+Threads and trays copy their crossings into `deleted_crossings` (no content) before going;
+the rail's footer counts them, with where and when on hover.
+
+`duet_tools_test` 57/57 (13 new): the message crosses, is deleted, leaves the conversation and
+a later remote turn's context, keeps its crossing with no preview, is not in the db file or
+its WAL, deletes twice harmlessly; the thread's deletion keeps the crossing, listed with no
+content. Mutation check: with `secure_delete` and the checkpoint switched off, the on-disk
+assertion fails — the words were still in the file. Seen in the page on a throwaway server.
+All suites green.

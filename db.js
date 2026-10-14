@@ -25,6 +25,10 @@ function openDatabase(file) {
     const db = new DatabaseSync(file);
     db.exec('PRAGMA journal_mode = WAL');
     db.exec('PRAGMA foreign_keys = ON');
+    // Deleting a message is how a user takes something back out of the desk — a pasted
+    // key, a private note. Without this SQLite only unlinks the old text, and it sits in
+    // free pages until something happens to reuse them.
+    db.exec('PRAGMA secure_delete = ON');
     return db;
 }
 
@@ -120,6 +124,21 @@ function createCore(db, file) {
         packet_id   INTEGER REFERENCES packets(id) ON DELETE SET NULL
     );
     CREATE INDEX IF NOT EXISTS idx_usage_model ON token_usage(model);
+
+    -- Crossings whose thread was deleted. Deleting a thread removes its words; it must not
+    -- remove the fact that some of them left this machine, because the far side still has
+    -- them. No content here — only where it went, when, and where it came from.
+    CREATE TABLE IF NOT EXISTS deleted_crossings (
+        id            INTEGER PRIMARY KEY,
+        packet_id     INTEGER,
+        thread_title  TEXT,
+        folder_name   TEXT,
+        role          TEXT,
+        actor         TEXT,
+        note          TEXT,
+        crossed_at    TEXT,
+        deleted_at    TEXT NOT NULL
+    );
     `);
 
     /**
@@ -167,6 +186,9 @@ function createCore(db, file) {
     const packetColumns = db.prepare('PRAGMA table_info(packets)').all();
     if (!packetColumns.some(column => column.name === 'tier')) {
         db.exec("ALTER TABLE packets ADD COLUMN tier TEXT");
+    }
+    if (!packetColumns.some(column => column.name === 'deleted_at')) {
+        db.exec("ALTER TABLE packets ADD COLUMN deleted_at TEXT");
     }
 
     // Every packet written before this column existed predates the remote tier
@@ -260,12 +282,56 @@ function createCore(db, file) {
         return db.prepare('SELECT * FROM threads WHERE id = ?').get(id);
     }
 
+    /**
+     * Copy the crossing records of every packet in these threads into deleted_crossings,
+     * before the threads go. Content is not copied: only where it went and when.
+     */
+    function archiveCrossings(threadIds) {
+        if (!threadIds.length) return 0;
+        const marks = threadIds.map(() => '?').join(',');
+        return Number(db.prepare(`
+            INSERT INTO deleted_crossings (packet_id, thread_title, folder_name, role, actor, note, crossed_at, deleted_at)
+            SELECT pr.packet_id, t.title, f.name, p.role, pr.actor, pr.note, pr.created_at, ?
+            FROM provenance pr
+            JOIN packets p ON p.id = pr.packet_id
+            JOIN threads t ON t.id = p.thread_id
+            LEFT JOIN folders f ON f.id = t.folder_id
+            WHERE pr.event = 'crossed' AND p.thread_id IN (${marks})
+        `).run(now(), ...threadIds).changes);
+    }
+
+    /** Delete threads, keeping what crossed from them. One transaction: all of it, or none. */
+    function deleteThreadsKeepingCrossings(threadIds, remove) {
+        db.exec('BEGIN');
+        try {
+            const archived = archiveCrossings(threadIds);
+            remove();
+            db.exec('COMMIT');
+            return archived;
+        } catch (err) {
+            db.exec('ROLLBACK');
+            throw err;
+        }
+    }
+
     function deleteThread(id) {
-        db.prepare('DELETE FROM threads WHERE id = ?').run(id);
+        return deleteThreadsKeepingCrossings([Number(id)],
+            () => db.prepare('DELETE FROM threads WHERE id = ?').run(id));
     }
 
     function deleteFolder(id) {
-        db.prepare('DELETE FROM folders WHERE id = ?').run(id);
+        const threads = db.prepare('SELECT id FROM threads WHERE folder_id = ?').all(id).map(r => r.id);
+        return deleteThreadsKeepingCrossings(threads,
+            () => db.prepare('DELETE FROM folders WHERE id = ?').run(id));
+    }
+
+    /** What crossed from threads since deleted — newest first. No content: there is none. */
+    function getDeletedCrossings(limit = 200) {
+        return db.prepare(`
+            SELECT packet_id AS packetId, thread_title AS thread, folder_name AS folder, role,
+                   actor, note, crossed_at AS crossedAt, deleted_at AS deletedAt
+            FROM deleted_crossings ORDER BY id DESC LIMIT ?
+        `).all(Math.min(Number(limit) || 200, 1000));
     }
 
     function renameThread(id, title) {
@@ -552,8 +618,61 @@ function createCore(db, file) {
         `).all(id);
     }
 
-    function deletePacket(id) {
-        db.prepare('DELETE FROM packets WHERE id = ?').run(id);
+    /**
+     * Delete a message: its words, images and anything quoted from it are erased, and a stub
+     * stays in the conversation saying when. Its provenance — above all any crossing — is
+     * kept: deleting here cannot recall what already left, and the record must not pretend
+     * it can. A deleted message has status 'deleted', so no model's context includes it.
+     *
+     * Refused while a reply is still being written: there is no settled text to erase yet.
+     */
+    function deletePacket(id, { actor = 'you' } = {}) {
+        const packet = db.prepare('SELECT * FROM packets WHERE id = ?').get(id);
+        if (!packet) throw new Error(`No packet ${id}`);
+        if (packet.deleted_at) return getPacket(id);
+        const hasDuet = 'status' in packet && 'request_meta' in packet;
+        if (hasDuet && packet.status === 'streaming') {
+            throw new Error('That reply is still being written — stop it first, then delete it.');
+        }
+
+        const crossed = db.prepare("SELECT actor FROM provenance WHERE packet_id = ? AND event = 'crossed'").all(id);
+        const meta = hasDuet && packet.request_meta ? JSON.parse(packet.request_meta) : {};
+        // Only what says where it went and what it cost. No text, no tool results, no
+        // quoted figures — those are the words being taken back.
+        const kept = {
+            ...(meta.model ? { model: meta.model } : {}),
+            ...(meta.tier ? { tier: meta.tier } : {}),
+            ...(meta.usage ? { usage: meta.usage } : {}),
+            ...(crossed.length || meta.crossed ? { crossed: true } : {}),
+            ...(crossed.length ? { crossedTo: [...new Set(crossed.map(c => c.actor))] } : {}),
+            deleted: { from: packet.status || 'complete' }
+        };
+        const when = now();
+
+        db.exec('BEGIN');
+        try {
+            if (hasDuet) {
+                db.prepare(`UPDATE packets SET content = '', images = NULL, request_meta = ?, status = 'deleted', deleted_at = ? WHERE id = ?`)
+                    .run(JSON.stringify(kept), when, id);
+                // An answer quotes the request it answers; the request is gone, so is the quote.
+                for (const row of db.prepare("SELECT id, request_meta FROM packets WHERE thread_id = ? AND request_meta LIKE '%\"answers\"%'").all(packet.thread_id)) {
+                    const m = JSON.parse(row.request_meta);
+                    if (m.answers?.id !== Number(id)) continue;
+                    m.answers = { ...m.answers, request: '' };
+                    db.prepare('UPDATE packets SET request_meta = ? WHERE id = ?').run(JSON.stringify(m), row.id);
+                }
+            } else {
+                db.prepare("UPDATE packets SET content = '', images = NULL, deleted_at = ? WHERE id = ?").run(when, id);
+            }
+            record(id, 'deleted', { actor, note: crossed.length ? `content deleted after crossing to ${kept.crossedTo.join(', ')}` : 'content deleted' });
+            db.exec('COMMIT');
+        } catch (err) {
+            db.exec('ROLLBACK');
+            throw err;
+        }
+        // The old text may still sit in the write-ahead log until a checkpoint copies it out.
+        try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch { /* a reader holds it; the next one will */ }
+        return getPacket(id);
     }
 
 
@@ -906,7 +1025,7 @@ function createCore(db, file) {
     function getExposure(threadId = null) {
         const rows = db.prepare(`
             SELECT pr.packet_id, pr.actor, pr.note, pr.created_at,
-                   p.thread_id, p.role, p.tier, p.content, t.title AS thread
+                   p.thread_id, p.role, p.tier, p.content, p.deleted_at, t.title AS thread
             FROM provenance pr
             JOIN packets p ON p.id = pr.packet_id
             LEFT JOIN threads t ON t.id = p.thread_id
@@ -922,7 +1041,8 @@ function createCore(db, file) {
                 threadId: r.thread_id,
                 thread: r.thread,
                 role: r.role,
-                preview: (r.content || '').slice(0, 120),
+                preview: r.deleted_at ? '' : (r.content || '').slice(0, 120),
+                ...(r.deleted_at ? { deletedAt: r.deleted_at } : {}),
                 crossings: []
             };
             entry.crossings.push({ actor: r.actor, note: r.note, at: r.created_at, kind: crossingKind(r.note, r.actor) });
@@ -968,6 +1088,7 @@ function createCore(db, file) {
             forks: one('SELECT COUNT(*) AS c FROM packets WHERE forked_from IS NOT NULL').c,
             provenance: one('SELECT COUNT(*) AS c FROM provenance').c,
             reviews: one("SELECT COUNT(*) AS c FROM provenance WHERE event = 'reviewed'").c,
+            deletedCrossings: one('SELECT COUNT(*) AS c FROM deleted_crossings').c,
             dbPath: file
         };
     }
@@ -979,7 +1100,7 @@ function createCore(db, file) {
         createThread, deleteThread, getThread, renameThread, moveThreadToFolder, reorderThread,
         setThreadWorkspace, migrateWorkspaceRoot, getMeta, setMeta,
         createPacket, getPacket, getThreadPackets, movePacket, forkPacket, deletePacket,
-        getProvenance, getReviews, stats, subtreeIds,
+        getProvenance, getReviews, stats, subtreeIds, getDeletedCrossings,
         buildBrief, recordHandoff, recordCarry, getExposure, recordCrossings, recordArtifactCrossing,
         recordUsage, getUsage
     };

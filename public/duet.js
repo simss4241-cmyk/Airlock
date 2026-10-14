@@ -543,6 +543,41 @@ function credentialsCached(message) {
 
 // ─────────────────────────── rendering ───────────────────────────
 
+/**
+ * What a deleted message leaves behind: who said it, when it was deleted, and — if it had
+ * crossed — that it had, and to whom. Deleting here erases the words on this machine; it
+ * cannot recall them from where they went, and the stub does not pretend otherwise.
+ */
+function deletedHtml(message, who) {
+    const meta = message.requestMeta || {};
+    const when = saidAt({ createdAt: message.deletedAt }).trim();
+    const to = meta.crossedTo?.length ? meta.crossedTo.join(', ') : null;
+    const crossed = meta.crossed
+        ? ` It had already crossed${to ? ` to ${escapeHtml(to)}` : ''} — that record stays, and deleting here cannot recall it.`
+        : '';
+    return `<div class="msg ${message.role === 'user' ? 'user' : 'assistant'} duet-deleted${meta.crossed ? ' remote' : ''}" data-message="${message.id}">
+                <span class="who">${who}<span class="msg-id"> · #${message.id}</span>${
+                    meta.crossed ? ' <span class="badge travel">↗ crossed</span>' : ''}</span>
+                <div class="bubble"><p class="deleted-note">Deleted by you${when ? ` ${escapeHtml(when)}` : ''}.${crossed}</p></div>
+            </div>`;
+}
+
+/**
+ * Delete one message, after saying exactly what that does. The server erases the text and
+ * keeps the record; the answer is the message as it now stands, drawn in place.
+ */
+async function deleteMessage(message) {
+    const crossedTo = didCross(message) ? (message.requestMeta?.crossedTo?.join(', ') || nameOf(message)) : null;
+    const ask = 'Delete this message?\n\nIts text is erased from this desk, and no model will see it again.'
+        + (crossedTo ? `\n\nIt already crossed to ${crossedTo}. That record stays: deleting here cannot recall it.` : '');
+    if (!confirm(ask)) return;
+    const res = await fetch(`/api/packets/${message.id}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error || !data.message) { alert(data.error || 'That message could not be deleted.'); return; }
+    upsert(data.message);
+    schedulePaint();
+}
+
 const STATUS_NOTE = {
     cancelled: 'stopped',
     failed: 'failed',
@@ -553,6 +588,7 @@ const STATUS_NOTE = {
 function messageHtml(message, { showAddressing = false } = {}) {
     const mine = message.role === 'user';
     const who = escapeHtml(nameOf(message));
+    if (message.status === 'deleted') return deletedHtml(message, who);
 
     // In the shared log the addressing is the whole point, so it is spelled out. In a pane
     // it would be noise — everything there is already to or from that participant.
@@ -699,6 +735,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
         ? `<span class="grip" aria-hidden="true">⠿ drag</span>`
           + `<button class="prov-copy" type="button"`
           + ` title="Copy this with its provenance — works where a drag doesn't">⧉ copy</button>`
+          + `<button class="msg-delete" type="button" title="Delete this message">✕ delete</button>`
         : '';
 
     return `<div class="${classes.join(' ')}" data-message="${message.id}">
@@ -1110,6 +1147,7 @@ const AIR_TAG = {
     failed: 'failed',
     blocked: 'withheld',
     interrupted: 'interrupted',
+    deleted: 'deleted',
     streaming: '…'
 };
 
@@ -1195,6 +1233,10 @@ function wireHandoff(scope) {
         node.querySelector('.prov-copy')?.addEventListener('click', ev => {
             ev.stopPropagation();
             copyWithProvenance(message, packetId, ev.currentTarget);
+        });
+        node.querySelector('.msg-delete')?.addEventListener('click', ev => {
+            ev.stopPropagation();
+            deleteMessage(message);
         });
 
         const handle = node.querySelector('.who[draggable]');

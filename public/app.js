@@ -856,6 +856,7 @@ function renderRail() {
         const count = +x.closest('.thread').querySelector('.count').textContent || 0;
         const warn = count
             ? `Delete thread "${name}" and its ${count} packet(s)? This cannot be undone.`
+                + '\n\nAnything that crossed to a remote model stays on the record: where it went and when, not what it said.'
             : `Delete empty thread "${name}"?`;
         if (!confirm(warn)) return;
 
@@ -872,7 +873,8 @@ function renderRail() {
         const packets = threads.reduce((n, t) => n + t.packet_count, 0);
 
         if (!confirm(`Delete tray "${name}"?\n\nThis also deletes ${threads.length} thread(s) `
-            + `and ${packets} packet(s). This cannot be undone.`)) return;
+            + `and ${packets} packet(s). This cannot be undone.`
+            + '\n\nAnything that crossed to a remote model stays on the record: where it went and when, not what it said.')) return;
 
         await fetch(`/api/folders/${id}`, { method: 'DELETE' });
         if (threads.some(t => t.id === activeThread?.id)) { leaveThread(); }
@@ -981,6 +983,15 @@ async function loadTree() {
     renderRail();
     const s = await (await fetch('/api/stats')).json();
     el.storeStats.textContent = `${s.packets} packets · ${s.nested} nested · ${s.forks} forks · ${s.reviews} reviews`;
+    // Crossings outlive the threads they came from: say so, and where they went, on hover.
+    el.storeStats.title = '';
+    if (s.deletedCrossings) {
+        el.storeStats.textContent += ` · ${s.deletedCrossings} crossed from deleted threads`;
+        const kept = await (await fetch('/api/crossings/deleted')).json().catch(() => []);
+        el.storeStats.title = 'Crossings from threads since deleted — the words are gone, the record is not:\n'
+            + (Array.isArray(kept) ? kept.slice(0, 20) : []).map(k =>
+                `"${k.thread}" → ${k.actor}, ${new Date(k.crossedAt).toLocaleString()}`).join('\n');
+    }
 }
 
 async function selectThread(id, title) {
