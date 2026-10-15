@@ -131,7 +131,11 @@ covered for free by `duet_tools_test.js`, against a fake remote.
 Which local model gates is set by `AIRLOCK_GATE_MODEL`, and it is a real trade, measured
 with `tools/gate_bench.js`: `nemotron-3-nano:4b` is fast (~0.3 s a ruling, 2.8 GB) but
 **released about a third of what it should have withheld**; `qwen2.5:14b` released
-nothing on either test set but is slower (~0.8 s) and withholds more harmless turns. A
+nothing on either test set and is slower (~0.8 s). Its friction was a prompt problem, not
+a model one: told to withhold anything *containing* a secret, it withheld anything that
+*mentioned* one — a question about key rotation, a placeholder, a request to read a file.
+Rewritten to say "contains, not talks about" (2026-10-15), it withholds none of a fresh
+held-out set's harmless turns where the old prompt withheld half, and still leaks none. A
 deterministic secret scanner runs in front of whichever you choose, so known credential
 formats never depend on the model. Without a name the gate takes the *smallest* installed
 model over a floor, because a gate that stalls fails closed and reaches you as a refusal
