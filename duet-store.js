@@ -112,7 +112,11 @@ function createDuet(db, store) {
         // JSON: model, tier, snapshot seq, context size, budget, the packet ids the context
         // was built from, and the gate ruling if one was needed. Enough to answer, after the
         // fact, exactly what a given reply was shown and what of it left the machine.
-        request_meta: 'TEXT'
+        request_meta: 'TEXT',
+        // The model's reasoning, kept for the user to read under its reply. It used to be
+        // streamed to the page and dropped — only its length was stored — so it vanished on
+        // a reload. Never part of any model's context: duet-context.js builds from content.
+        thinking: 'TEXT'
     };
 
     const existingColumns = new Set(db.prepare('PRAGMA table_info(packets)').all().map(c => c.name));
@@ -282,6 +286,7 @@ function createDuet(db, store) {
             images: row.images ? JSON.parse(row.images) : [],
             requestMeta: row.request_meta ? JSON.parse(row.request_meta) : null,
             createdAt: row.created_at,
+            ...(row.thinking ? { thinking: row.thinking } : {}),
             ...(row.deleted_at ? { deletedAt: row.deleted_at } : {})
         };
     }
@@ -371,13 +376,14 @@ function createDuet(db, store) {
      * reading — but the status is what decides whether a model ever sees it again, and only
      * `complete` qualifies.
      */
-    function finishMessage(id, { content = null, status, requestMeta = null }) {
+    function finishMessage(id, { content = null, status, requestMeta = null, thinking = null }) {
         if (!TERMINAL.has(status)) throw new Error(`Not a terminal status: ${status}`);
 
         const sets = ['status = ?'];
         const args = [status];
 
         if (content != null) { sets.push('content = ?'); args.push(content); }
+        if (thinking) { sets.push('thinking = ?'); args.push(thinking); }
         if (requestMeta) { sets.push('request_meta = ?'); args.push(JSON.stringify(requestMeta)); }
 
         args.push(Number(id));

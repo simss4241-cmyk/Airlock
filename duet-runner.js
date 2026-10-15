@@ -375,8 +375,11 @@ async function generate({
 
     // Every settled generation that actually ran goes on the token ledger — complete,
     // stopped, failed or withheld mid-turn alike: the tokens were spent either way.
-    const settle = (status, content, extra = {}) => {
-        const settled = duet.finishMessage(reply.id, { content, status, requestMeta: { ...requestMeta, ...extra } });
+    // `reasoning` is passed in, not read from the stream's variable: a turn the gate
+    // withholds settles before that variable exists.
+    const settle = (status, content, extra = {}, reasoning = null) => {
+        const settled = duet.finishMessage(reply.id, { content, status, thinking: reasoning,
+            requestMeta: { ...requestMeta, ...extra } });
         const u = extra.usage;
         if (u && (u.prompt || u.reply)) {
             try {
@@ -695,7 +698,7 @@ async function generate({
             reply = settle(STATUS.BLOCKED, content, {
                 gate: gateRuling, withheld, usage: usageOut, ...trace,
                 crossed: crossingRecorded || undefined
-            });
+            }, thinking);
             emit({ type: 'blocked', message: reply, gate: gateRuling, tier, withheld });
             return reply;
         }
@@ -706,7 +709,7 @@ async function generate({
             ttftMs: firstTokenAt ? firstTokenAt - queuedAt : null,
             crossed: crossingRecorded || undefined,
             ...trace
-        });
+        }, thinking);
 
         emit({ type: 'done', message: reply, usage: usageOut, thinking, done: finalChunk });
         return reply;
@@ -722,7 +725,7 @@ async function generate({
             error: aborted ? null : err.message,
             crossed: crossingRecorded || undefined,
             ...(toolTrace.length ? { tools: toolTrace } : {})
-        });
+        }, thinking);
 
         emit(aborted
             ? { type: 'cancelled', message: reply }

@@ -652,7 +652,7 @@ function createCore(db, file) {
         db.exec('BEGIN');
         try {
             if (hasDuet) {
-                db.prepare(`UPDATE packets SET content = '', images = NULL, request_meta = ?, status = 'deleted', deleted_at = ? WHERE id = ?`)
+                db.prepare(`UPDATE packets SET content = '', images = NULL, request_meta = ?, status = 'deleted', deleted_at = ?${'thinking' in packet ? ', thinking = NULL' : ''} WHERE id = ?`)
                     .run(JSON.stringify(kept), when, id);
                 // An answer quotes the request it answers; the request is gone, so is the quote.
                 for (const row of db.prepare("SELECT id, request_meta FROM packets WHERE thread_id = ? AND request_meta LIKE '%\"answers\"%'").all(packet.thread_id)) {

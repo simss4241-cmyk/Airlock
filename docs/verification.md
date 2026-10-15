@@ -880,3 +880,13 @@ Tuning stopped at 2/32 on first turns rather than bend the prompt to the last tw
 
 Ruling time unchanged: p50 ~0.73 s. This held-out set is now spent; the next round needs
 fresh cases. Tests: kernel 35, secrets 58, duet_tools 60, duet_chatter 28, boundary 49.
+
+## Verified 2026-10-15 — a reply keeps its reasoning
+
+Reported by the user: a reply's reasoning was gone. It was never kept — streamed to the page
+live, then dropped; only `thinkingChars` was stored — so a reload or a thread switch lost it.
+It now has its own column, `thinking`, written when the reply settles (finished, withheld
+mid-turn, or stopped), read back under the reply, and erased with it on delete. It is never
+part of a model's context: duet-context.js builds from content alone. `duet_tools_test`
+63/63 (3 new: stored apart from the text, not in a later remote turn's context, erased on
+delete including on disk). All suites green.

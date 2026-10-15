@@ -464,7 +464,7 @@ before stays exactly as above: shared by both lanes, owned by neither.
 | `public/duet.js` | the timeline and its lines, the panes, chatter, the chamber and its doors |
 | `tools/duet_context_test.js` | 91 assertions, offline: context, what counts as a repeat, a path, a restated run, a figure |
 | `tools/duet_test.js` | 48 assertions over HTTP |
-| `tools/duet_tools_test.js` | 57 assertions: files, a fenced folder, the brief, deleting, and every route to the cloud — fakes both sides |
+| `tools/duet_tools_test.js` | 63 assertions: files, a fenced folder, the brief, deleting, and every route to the cloud — fakes both sides |
 | `tools/web_test.js` | 43 assertions: search and fetch, the gate on queries, given links only, the door, private addresses |
 | `tools/duet_request_test.js` | 34 assertions: asking you for a result, answers, search and line ranges — fake model |
 | `tools/duet_chatter_test.js` | 28 assertions: relays, refusals, interjections, the ledger — fakes both sides |

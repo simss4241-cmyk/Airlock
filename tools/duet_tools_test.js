@@ -118,6 +118,13 @@ const fake = http.createServer((req, res) => {
                 }, { choices: [{ delta: {}, finish_reason: 'tool_calls' }],
                      usage: { prompt_tokens: 10, completion_tokens: 5 } }]);
             }
+            // Section 7: a reply that reasons first, the way a reasoning model streams it.
+            if (last.role === 'user' && /Think it through\./.test(text)) {
+                return sse(res, [
+                    { choices: [{ delta: { reasoning_content: 'Weighing it: the teal-lantern-reasoning-91b2 option is cheaper.' } }] },
+                    ...answer('Go with the cheaper one.')
+                ]);
+            }
             // Section 6 needs a reply no earlier section produced: "Noted." is ruled on, and
             // released, long before it runs.
             return sse(res, answer(last.role === 'tool' ? 'Read it.'
@@ -530,6 +537,27 @@ async function main() {
         const shown7 = gateAsked.slice(g7).join('\n');
         ok(localReply && shown7.includes(localReply.slice(0, 20)),
             'a reply the side wrote under a local model is ruled on when it crosses', `${localReply.slice(0, 40)} | ${shown7.slice(-200)}`);
+
+        // ── 7. a reply's reasoning stays with it ──
+        // Seen on the desk 2026-10-15: a reply's reasoning showed while it streamed and was
+        // gone after a reload — only its length was stored. Kept now, for reading; never
+        // sent back to a model; erased with the reply.
+        console.log('\n7. a reply\'s reasoning is kept, and kept to itself');
+        const REASONING_MARK = 'teal-lantern-reasoning-91b2';
+        const { thread: t8, right: r8 } = await duetThread(folderId, 'reasoning');
+        const s8 = await send(t8.id, { participantId: r8.id, text: 'Think it through.', clientRequestId: 'think-1' });
+        const reply8 = s8.last('done')?.message;
+        const stored8 = (await api('GET', `/api/duet/${t8.id}`)).body.messages.find(m => m.id === reply8?.id);
+        ok(stored8?.thinking?.includes(REASONING_MARK) && stored8.content === 'Go with the cheaper one.',
+            'the reasoning is stored with the reply, apart from its text', JSON.stringify(stored8).slice(0, 200));
+        const n8 = received.length;
+        await send(t8.id, { participantId: r8.id, text: 'And the other option?', clientRequestId: 'think-2' });
+        ok(!received.slice(n8).some(b => b.includes(REASONING_MARK)), 'and it is never sent back to a model as context');
+        await api('DELETE', `/api/packets/${reply8?.id}`);
+        const gone8 = (await api('GET', `/api/duet/${t8.id}`)).body.messages.find(m => m.id === reply8?.id);
+        const onDisk8 = ['duet-tools.db', 'duet-tools.db-wal'].map(f => path.join(tmp, f)).filter(f => fs.existsSync(f))
+            .some(f => fs.readFileSync(f).includes(REASONING_MARK));
+        ok(gone8?.status === 'deleted' && !gone8.thinking && !onDisk8, 'deleting the reply erases its reasoning too, on disk as well');
     } finally {
         child.kill();
         if (child.exitCode === null) await new Promise(r => child.once('exit', r));
