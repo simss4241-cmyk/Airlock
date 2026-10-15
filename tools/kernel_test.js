@@ -131,6 +131,25 @@ async function main() {
     ok(!kernel.covers(forged, REMOTE, msgs) && !kernel.isIssuedFor(forged, REMOTE),
        'a clearance-shaped object the kernel did not issue is worth nothing');
 
+    // ── a model's own earlier reply, going back to it ──
+    // Measured 2026-10-14: every follow-up turn put the remote side's previous reply to the
+    // gate on its own ("assistant: fine"), and the 14B withheld it. Its own words, going back
+    // to it, expose nothing — but only to IT.
+    console.log('\na model\'s own earlier reply is not put to the gate — for that model only');
+    shown = stubGate(RELEASE);
+    const said = { role: 'assistant', content: 'fine' };
+    const turn2 = [{ role: 'user', content: 'Say hello, please.' }, said, { role: 'user', content: 'And again?' }];
+    await kernel.clear({ model: REMOTE, messages: [turn2[0]] });
+    shown.length = 0;
+    const back = await kernel.clear({ model: REMOTE, messages: turn2, ownWords: [said] });
+    ok(back.ok && back.fresh === 1 && shown.length === 1 && !/assistant: fine/.test(shown[0]) && /And again\?/.test(shown[0]),
+       'the gate reads only the new message, not the model\'s own reply', `fresh=${back.fresh} shown=${JSON.stringify(shown)}`);
+    ok(kernel.covers(back.token, REMOTE, turn2), 'and the clearance still covers everything sent, its own reply included');
+    shown.length = 0;
+    const elsewhere = await kernel.clear({ model: OTHER, messages: [said] });
+    ok(elsewhere.fresh === 1 && shown.some(t => /assistant: fine/.test(t)),
+       'the same words going to a different model ARE ruled on: not remembered as released');
+
     // ── acknowledgement ──
     console.log('\nthe far side\'s own words are not re-judged');
     shown = stubGate(RELEASE);

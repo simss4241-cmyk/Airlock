@@ -15,7 +15,7 @@
  * the crossing machinery end to end — a model's request, tool results, the record — is
  * tools/duet_tools_test.js, for free, against a fake remote on localhost.
  *
- *   node tools/boundary_test.js            # against http://localhost:8100
+ *   node tools/boundary_test.js --live     # against the desk on :8100 — it writes to it
  *   AIRLOCK_URL=http://localhost:8126 node tools/boundary_test.js
  */
 
@@ -25,6 +25,19 @@ const { runGate, readDecision, resolveGateModel } = require('../boundary');
 const providers = require('../providers');
 
 const BASE = process.env.AIRLOCK_URL || 'http://localhost:8100';
+
+// ⚠ Not your desk by accident. This suite writes to whatever server it reaches — trays,
+// threads, packets, and records that outlive them — and :8100 is where a desk runs. On
+// 2026-10-14 a run against the live desk left two simulated crossings in its archive.
+// Point it at a scratch server with AIRLOCK_URL, or say --live to mean the desk.
+if (!process.env.AIRLOCK_URL && !process.argv.includes('--live')) {
+    console.log('\nRefusing to run against http://localhost:8100 — that is usually your live desk.\n'
+        + 'Start a scratch server and point at it:\n'
+        + '  PORT=8126 AIRLOCK_DB=/tmp/airlock-verify.db npm start\n'
+        + '  AIRLOCK_URL=http://localhost:8126 node ' + require('path').relative(process.cwd(), process.argv[1]) + '\n'
+        + 'or add --live if you really mean the desk.\n');
+    process.exit(1);
+}
 
 let pass = 0, fail = 0, skip = 0;
 const ok = (cond, label, detail = '') => {

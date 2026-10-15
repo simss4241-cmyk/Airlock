@@ -118,7 +118,10 @@ const fake = http.createServer((req, res) => {
                 }, { choices: [{ delta: {}, finish_reason: 'tool_calls' }],
                      usage: { prompt_tokens: 10, completion_tokens: 5 } }]);
             }
-            return sse(res, answer(last.role === 'tool' ? 'Read it.' : 'Noted.'));
+            // Section 6 needs a reply no earlier section produced: "Noted." is ruled on, and
+            // released, long before it runs.
+            return sse(res, answer(last.role === 'tool' ? 'Read it.'
+                : /Hello there\./.test(text) ? 'Hello back — words only section 6 hears.' : 'Noted.'));
         }
         res.writeHead(404); res.end();
     });
@@ -499,6 +502,34 @@ async function main() {
         ok((kept5.body || []).some(k => k.thread === 'take back' && k.actor === FAKE_MODEL && !JSON.stringify(k).includes(DELETE_MARK)),
             'they are listed as crossed from a deleted thread — where and when, with no content');
         ok(((await api('GET', '/api/stats')).body?.deletedCrossings || 0) >= 1, 'and counted in the desk stats');
+
+        // ── 6. a model's own earlier reply is not put to the gate ──
+        // Measured 2026-10-14: on every follow-up turn the gate was shown the remote side's
+        // previous reply on its own, and the 14B withheld "assistant: fine". The far side's
+        // own words going back to it are not new exposure — but only when this same remote
+        // model wrote them.
+        console.log('\n6. a remote model\'s own earlier reply, going back to it');
+        const { thread: t6, right: r6 } = await duetThread(folderId, 'own words');
+        await send(t6.id, { participantId: r6.id, text: 'Hello there.', clientRequestId: 'own-1' });
+        const g6 = gateAsked.length;
+        const s6 = await send(t6.id, { participantId: r6.id, text: 'And one more thing.', clientRequestId: 'own-2' });
+        const shown6 = gateAsked.slice(g6).join('\n');
+        ok(Boolean(s6.last('done')), 'the follow-up crosses', trace(s6));
+        ok(/And one more thing\./.test(shown6) && !/Hello back/.test(shown6),
+            'the gate reads the new message, not the remote side\'s own reply', shown6.slice(-300));
+
+        // A reply this side wrote under a LOCAL model is local text: switched to a remote
+        // model, the side sends it as context, and it is ruled on.
+        const { thread: t7, right: r7 } = await duetThread(folderId, 'switched side');
+        await api('PATCH', `/api/duet/participants/${r7.id}`, { model: GATE_MODEL });
+        const s7a = await send(t7.id, { participantId: r7.id, text: 'Jot down a thought.', clientRequestId: 'sw-1' });
+        const localReply = s7a.last('done')?.message?.content || '';
+        await api('PATCH', `/api/duet/participants/${r7.id}`, { model: FAKE_MODEL });
+        const g7 = gateAsked.length;
+        await send(t7.id, { participantId: r7.id, text: 'Now carry on.', clientRequestId: 'sw-2' });
+        const shown7 = gateAsked.slice(g7).join('\n');
+        ok(localReply && shown7.includes(localReply.slice(0, 20)),
+            'a reply the side wrote under a local model is ruled on when it crosses', `${localReply.slice(0, 40)} | ${shown7.slice(-200)}`);
     } finally {
         child.kill();
         if (child.exitCode === null) await new Promise(r => child.once('exit', r));

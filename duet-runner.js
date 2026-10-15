@@ -142,11 +142,26 @@ function queueFor(tier, limit) {
  *
  * Returns { ok, ruling, token }.
  */
-async function clearCrossing({ model, wire, config, threadId = null }) {
+async function clearCrossing({ model, wire, config, threadId = null, ownWords = [] }) {
     // The gate reads exactly what would be sent — system prompt, both participants' words,
-    // the lot — minus what it has already ruled on. No model is named: boundary.js
-    // resolves a LOCAL one itself, and refuses outright if handed a remote id.
-    return kernel.clear({ model, messages: wire, config, threadId });
+    // the lot — minus what it has already ruled on, and minus the model's own earlier
+    // replies (see ownWordsOf). No model is named: boundary.js resolves a LOCAL one
+    // itself, and refuses outright if handed a remote id.
+    return kernel.clear({ model, messages: wire, config, threadId, ownWords });
+}
+
+/**
+ * The wire messages that are `model`'s own words: this side's earlier replies that THIS
+ * remote model wrote. In the wire, a side's own reply is an `assistant` message carrying
+ * its text exactly (duet-context.js, rule 1). A reply this side wrote under a different
+ * model — a local one before the side was switched, or another remote — is not its own
+ * words to this model, and stays with the gate.
+ */
+function ownWordsOf({ wire, snapshot, participant, model }) {
+    const mine = new Set(snapshot
+        .filter(m => m.authorId === participant.id && m.model === model && m.tier === 'remote' && m.content)
+        .map(m => m.content));
+    return wire.filter(w => w.role === 'assistant' && mine.has(w.content));
 }
 
 // ─────────────────────────── generation ───────────────────────────
@@ -385,7 +400,8 @@ async function generate({
         emit({ type: 'gating', messageId: reply.id });
 
         try {
-            const cleared = await clearCrossing({ model, wire, config, threadId });
+            const cleared = await clearCrossing({ model, wire, config, threadId,
+                ownWords: ownWordsOf({ wire, snapshot, participant, model }) });
             gateRuling = cleared.ruling;
             clearance = cleared.token;
         } catch (err) {
@@ -503,7 +519,8 @@ async function generate({
                     // and a refusal ends the turn here.
                     if (round > 0) {
                         emit({ type: 'gating', messageId: reply.id });
-                        const next = await kernel.clear({ model, messages: convo, config, threadId });
+                        const next = await kernel.clear({ model, messages: convo, config, threadId,
+                            ownWords: ownWordsOf({ wire, snapshot, participant, model }) });
                         if (!next.ok) {
                             gateRuling = next.ruling;
                             withheld = pendingArtifacts.map(a => a.label);

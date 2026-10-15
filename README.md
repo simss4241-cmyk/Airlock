@@ -100,10 +100,11 @@ node tools/sandbox_test.js         # every store call routed to its visitor's da
 node tools/sandbox_http_test.js    # two visitors, two sandboxes, and the ways around it
 ```
 
-⚠ `smoke_test`, `boundary_test` and `duet_test` test **whatever server is answering on
-:8100**, not the code in front of you. An instance left running from before a change
-will pass or fail on its own old code, and nothing in the output says so. Restart it
-after pulling, or point them at a fresh one on a scratch database:
+⚠ `smoke_test`, `boundary_test` and `duet_test` test **whatever server they are pointed
+at**, and they write to it — trays, threads, and records that outlive them. So they refuse
+to run against :8100, where a desk usually is, unless told to (`--live`). Point them at a
+fresh server on a scratch database — which also means they test the code in front of you,
+not an instance left running from before a change:
 
 ```
 PORT=8126 AIRLOCK_DB=/tmp/airlock-verify.db npm start

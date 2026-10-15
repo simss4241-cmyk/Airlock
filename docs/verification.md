@@ -814,3 +814,24 @@ its WAL, deletes twice harmlessly; the thread's deletion keeps the crossing, lis
 content. Mutation check: with `secure_delete` and the checkpoint switched off, the on-disk
 assertion fails — the words were still in the file. Seen in the page on a throwaway server.
 All suites green.
+
+## Verified 2026-10-14 — a model's own words, going back to it
+
+Found while porting a test: on every follow-up turn to a remote side, the gate was shown that
+side's previous reply on its own — captured, the whole gate input was `assistant: fine` —
+and the 14B, asked whether one word may leave, withheld it. Sending a model its own words
+exposes nothing; the kernel had `acknowledge` for this, but used it only inside tool rounds.
+
+Now the duet passes `kernel.clear` the recipient's own earlier replies (`ownWords`), which are
+left out of what the gate reads — scoped to that one clearance, never remembered as released,
+so the same words going to a different model are ruled on. "Own" means written by THIS remote
+model: a reply the side wrote under a local model, before being switched, is local text and
+stays with the gate. `kernel_test` 35/35 (3 new), `duet_tools_test` 60/60 (3 new). Mutation
+check: with the fix off, the end-to-end assertion fails — after giving the fake remote a reply
+no earlier section produced; with "Noted." the test passed either way, because those words
+had been ruled on and released sections before.
+
+Also: `boundary_test`, `smoke_test` and `duet_test` now refuse to run against :8100 without
+`AIRLOCK_URL` or `--live`. A run against the live desk this day left two simulated crossings
+(a faked handoff) in its deleted-crossings archive; they were removed by hand, with the user's
+agreement, and the guard is so it cannot happen again.

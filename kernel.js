@@ -150,15 +150,23 @@ const COVERED = Object.freeze({
 /**
  * Rule on everything in `messages` that has not been ruled on before, for `model`.
  *
+ * `ownWords`: messages that `model` itself wrote — its own earlier replies, going back to
+ * it as context. Sending a model its own words exposes nothing new, so they are not put to
+ * the gate. Measured 2026-10-14: on every follow-up turn the gate was shown the remote
+ * side's previous reply alone — "assistant: fine" — and the 14B, asked whether one word may
+ * leave, withheld it. Scoped to THIS clearance only, never remembered as released: the same
+ * words going to a different model are new exposure there, and are ruled on.
+ *
  * Returns { ok: true, token, ruling, fresh } or { ok: false, ruling, fresh }.
  * A local destination needs no clearance and gets { ok: true, token: null, local: true }.
  */
-async function clear({ model, messages = [], config = {}, threadId = null }) {
+async function clear({ model, messages = [], config = {}, threadId = null, ownWords = [] }) {
     if (providers.tierOf(model) === 'local') return { ok: true, token: null, local: true, fresh: 0 };
 
     const units = messages.map(m => ({ m, h: unitHash(m) }));
+    const own = new Set(ownWords.map(unitHash));
     const seen = new Set();
-    const fresh = units.filter(u => !released().has(u.h) && !seen.has(u.h) && seen.add(u.h));
+    const fresh = units.filter(u => !released().has(u.h) && !own.has(u.h) && !seen.has(u.h) && seen.add(u.h));
 
     if (fresh.some(u => u.m.images?.length)) {
         return {
