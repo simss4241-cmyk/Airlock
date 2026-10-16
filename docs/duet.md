@@ -353,6 +353,25 @@ and the sentence is underlined; both say what the reply did run instead. The rul
 could not open", "I recommend opening", "I have not opened". Over every reply on the desk
 on 2026-10-05 it found one: the measured one. Steel, like the other evidence marks.
 
+**The gate reads what the User wrote.** A remote turn crosses with Airlock's system prompt, but the gate reads only the parts of it the User wrote — the side's role, the standing prompt once they have changed it from Airlock's default, renamed participants (`gateViewOfSystem`, built from the same inputs as the prompt, never by trimming it) — and none of Airlock's own wording, which holds nothing of theirs. Nor does it reread a remote model's own earlier replies going back to it (`ownWords`), or words it released before a restart: released rulings are kept as hashes in `released_units`, in the current scope's own store, never the words. The clearance still covers each message exactly as sent.
+
+**A calculator, with its working on the record.** Any side that can call tools is offered
+`calculate` (arithmetic: + − × ÷ ^, brackets, sqrt, round, min, max…) and `convert` (units of
+one kind: pressure, length, mass, time, volume, speed, data, temperature). `public/calc.js` is
+a parser, never eval; anything outside its grammar is refused. It runs here and reads nothing
+of the user's, so it has no switch, and its result going back to a remote model is not put to
+the gate. A card shows the working (`calculate 480 + 455 = 935`); the record keeps the
+expression, the result and the numbers it used. Number tracing follows the chain: 935 is
+sourced when its inputs are — "computed as 480 + 455, by … · 480 from you · 455 from you" — and
+a result computed from a number with no source keeps that number's underline: the sum is
+checked, the premise is not. Counting numbers (0–12) and powers of ten need no source: the 2 in
+an average is a count, not a reading.
+
+**A reply reads in the order it happened.** Each tool call records where it fell in the
+reply's reasoning (`at`), so a reply that thought, called a tool and thought again shows
+reasoning → the call's card → reasoning → the answer. Only the model's own words, split where
+the calls were made — never edited. Older replies keep their cards together above the text.
+
 **Any message can be deleted.** ✕ delete, beside ⧉ copy, erases its words, images and
 anything quoted from it — from the conversation, from every later context (a deleted message
 has status `deleted`, and context takes only `complete`), and from the file on disk
@@ -460,11 +479,12 @@ before stays exactly as above: shared by both lanes, owned by neither.
 | `public/evidence.js` | what counts as a file reference, and whether anyone in the thread has seen it |
 | `public/echo.js` | what counts as a repeat — one rule for the run, the mark and the tests |
 | `public/figures.js` | what counts as a figure, and the numbers a tool result showed |
+| `public/calc.js` | the calculator: a parser, units, and how a result is written |
 | `public/restate.js` | which words of a reply were already said, word for word, by someone else |
 | `public/duet.js` | the timeline and its lines, the panes, chatter, the chamber and its doors |
-| `tools/duet_context_test.js` | 91 assertions, offline: context, what counts as a repeat, a path, a restated run, a figure |
+| `tools/duet_context_test.js` | 107 assertions, offline: context, what counts as a repeat, a path, a restated run, a figure, the calculator |
 | `tools/duet_test.js` | 48 assertions over HTTP |
-| `tools/duet_tools_test.js` | 63 assertions: files, a fenced folder, the brief, deleting, and every route to the cloud — fakes both sides |
+| `tools/duet_tools_test.js` | 70 assertions: files, a fenced folder, the brief, deleting, and every route to the cloud — fakes both sides |
 | `tools/web_test.js` | 43 assertions: search and fetch, the gate on queries, given links only, the door, private addresses |
 | `tools/duet_request_test.js` | 34 assertions: asking you for a result, answers, search and line ranges — fake model |
 | `tools/duet_chatter_test.js` | 28 assertions: relays, refusals, interjections, the ledger — fakes both sides |

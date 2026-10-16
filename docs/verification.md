@@ -890,3 +890,84 @@ mid-turn, or stopped), read back under the reply, and erased with it on delete. 
 part of a model's context: duet-context.js builds from content alone. `duet_tools_test`
 63/63 (3 new: stored apart from the text, not in a later remote turn's context, erased on
 delete including on disk). All suites green.
+
+## Verified 2026-10-16 — a calculator, and a reply's timeline
+
+Decided with the user: small models are poor at arithmetic, and number tracing could only
+call a worked-out number "new". `calculate` and `convert` (`public/calc.js`, a parser — never
+eval) are offered to any tool-capable side, with no switch: they run here and read nothing of
+the user's, and a result going back to a remote model is acknowledged, not gated. The record
+keeps each call's expression, result and inputs. Number tracing gives a computed number its
+chain when every input is sourced, and keeps an unsourced input's underline on the result
+("500 has no source: the sum is checked, the premise is not"). Counting numbers 0–12 and
+powers of ten are exempt — an average's divisor is a count. Also asked for: every tool call
+records where it fell in the reasoning (`at`, server-side for the record and page-side live),
+and the page shows reasoning → card → reasoning → answer.
+
+`duet_context_test` 101/101 (10 new: precedence, exact results, refusals of non-arithmetic
+such as `process.exit()` and `constructor`, units, the tool shape). `duet_tools_test` 67/67 (4
+new: the call runs here, one gate call for the turn, the working and inputs on the record, `at`
+between the first and second reasoning). Three older assertions that only `request_result`
+is offered without files now allow the calculator — it reads nothing. In the page on a
+throwaway server: 935 from two numbers the user gave reads sourced with its chain; 1000 from
+an invented 500 keeps the dashed underline; the reply renders in timeline order.
+
+## Verified 2026-10-16 — the gate reads what the User wrote
+
+Seen on the desk right after the calculator went in: "loop A reads 480 kPa and loop B 455,
+what's the combined pressure?" withheld — "Contains real pressure readings." Rebuilt from a
+copy of the desk database: the gate had read 2,246 characters — Airlock's whole system prompt
+(the seat, model names, today's date, the rules about files and "figures"), the left side's
+readout of gauge.txt, and the question. Re-run: withheld three times in four on the SAME input
+(released once — it sat on the edge). Taken apart: the question alone, the readout alone, and
+the two together were all released; Airlock's system prompt ALONE was withheld, for "a real
+model name that could be a secret in a different context".
+
+Two changes, decided with the user:
+
+1. **The gate reads only what the User wrote in the system prompt** — the role, the standing
+   prompt, renamed participants — via `gateViewOfSystem`, built from the same inputs as the
+   prompt, never by trimming it, so nothing of the User's can hide in the skipped part. With
+   none, the system prompt is not read at all. `kernel.clear` takes `shownAs`; the clearance
+   still covers the message exactly as sent. The same turn, re-run: **released 5 of 5**, the
+   gate reading 777 characters instead of 2,246.
+2. **Released rulings survive a restart**: hashes only, in `released_units`, in the current
+   scope's own store; wired by the server at boot, so tests that never boot it stay in memory.
+   Every restart used to make the next remote turn re-judge a thread's whole history.
+
+Bench, tuning set, qwen2.5:14b: a first turn as the gate now reads it (`--shape=first`, with a
+role set) 0/27 leaks, 0/32 friction; the old full-prompt shape (`--shape=full`) 0/27, 3/32.
+`kernel_test` 41/41 (6 new: shownAs empty and with a role, the clearance still covering the
+message, a release kept as a hash and honoured after a simulated restart, new words still
+gated). `duet_context_test` 105/105 (4 new). `duet_tools_test` 69/69 (2 new: a real first turn
+reads none of Airlock's wording; with a role set, it reads the role). All suites green.
+
+**Same day, the next withhold.** With the change live, the cloud side withheld the same
+question again: "specific gauge readings that could be sensitive". The live gate had read 837
+tokens; a replay read 656. The difference was the standing prompt — and it was not the user's:
+the desk's config held Airlock's own shipped default ("a larger model may later review that
+thread across the boundary… name files, lines, commands"), identical to the example config,
+and the gate view treated any standing prompt as the user's. Replayed with it: withheld 4 of
+4. The default now lives in duet-context.js (`DEFAULT_APP_PROMPT`, used by the server too), and
+the gate reads the standing prompt only once the user has changed it from that. The same
+turn, replayed with the desk's real config: **released 4 of 4**, the gate reading 656 tokens
+and none of the system prompt. `duet_context_test` 107/107 (2 new).
+
+Also seen, not resolved: `duet_test`'s "a stopped reply is recorded as cancelled" failed twice
+in about eight runs against a real local model — it stops a reply at its first token, and a
+reply that finishes first is recorded complete. A timing race in the test; whether the newly
+offered calculator changes how often the 4B answers in one burst was not established.
+
+**And then the first real remote tool round.** With the gate fixed, the cloud side was released,
+called the calculator (480 + 455 = 935) — and the turn failed: Token Factory rejected the next
+round, "3 validation errors … ChatCompletionMessageFunctionToolCallParam type: Field required".
+A remote model's tool round had never run for real: the duet sent the model's own tool calls
+back without `type: 'function'`, and named each tool result's call by the TOOL's name rather
+than the call's id. The fake remote in `duet_tools_test` accepted both, and a provider test
+asserted the wrong id outright. Files, web and the calculator were all affected on a remote side.
+
+`providers/tokenfactory.js` now converts a tool round as a whole (`toOpenAIMessages`): calls
+carry `type: 'function'` and string arguments, and each result answers the earliest unanswered
+call of its tool by id. The fake remote now validates as strictly as vLLM and fails the suite on
+any malformed request; with the old conversion, five tool-round assertions fail against it.
+`duet_tools_test` 70/70, `provider_test` 59/59 (the wrong assertion replaced by two). All green.

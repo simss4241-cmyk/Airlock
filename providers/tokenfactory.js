@@ -116,11 +116,44 @@ function splitThink(text, open) {
     return out;
 }
 
-/** Ollama's tool results use {role:'tool', tool_name}; OpenAI wants tool_call_id. */
+/**
+ * Ollama's conversation shape, in OpenAI's. Two things differ in a tool round, and a strict
+ * endpoint rejects the whole request over either — measured 2026-10-16, Token Factory (vLLM):
+ * "3 validation errors … ChatCompletionMessageFunctionToolCallParam type: Field required",
+ * the first time a remote model's tool round ran for real (the fake remote checks neither):
+ *
+ *   - a model's tool call must say `type: 'function'`, with its arguments as a string;
+ *   - a tool result must name the call it answers by id (`tool_call_id`). Ollama names the
+ *     TOOL instead; the result is matched to the earliest unanswered call of that name in
+ *     the preceding assistant turn, so two calls to one tool are not confused.
+ */
+function toOpenAIMessages(messages) {
+    let pending = [];                       // the last assistant turn's calls, not yet answered
+    return messages.map(m => {
+        if (m.role === 'assistant' && m.tool_calls?.length) {
+            const calls = m.tool_calls.map((c, i) => ({
+                id: c.id || `call_${i}`,
+                type: 'function',
+                function: {
+                    name: c.function?.name || '',
+                    arguments: typeof c.function?.arguments === 'string'
+                        ? c.function.arguments : JSON.stringify(c.function?.arguments ?? {})
+                }
+            }));
+            pending = [...calls];
+            return { role: 'assistant', content: m.content || '', tool_calls: calls };
+        }
+        if (m.role === 'tool') {
+            const at = Math.max(0, pending.findIndex(c => c.function.name === m.tool_name));
+            const call = m.tool_call_id ? null : pending.splice(at, 1)[0];
+            return { role: 'tool', tool_call_id: m.tool_call_id || call?.id || m.tool_name, content: m.content };
+        }
+        return toOpenAIMessage(m);
+    });
+}
+
+/** One message that is not part of a tool round. */
 function toOpenAIMessage(m) {
-    if (m.role === 'tool') {
-        return { role: 'tool', tool_call_id: m.tool_call_id || m.tool_name, content: m.content };
-    }
     if (m.images?.length) {
         return {
             role: m.role,
@@ -148,7 +181,7 @@ async function* chat({ model, messages, config, tools, signal, clearance }) {
 
     const payload = {
         model,
-        messages: messages.map(toOpenAIMessage),
+        messages: toOpenAIMessages(messages),
         stream: true,
         // Without this the final chunk carries no usage at all and the token
         // counter silently reads zero for the whole remote turn.
@@ -259,4 +292,4 @@ async function* chat({ model, messages, config, tools, signal, clearance }) {
     };
 }
 
-module.exports = { tier, owns, capabilities, list, chat, splitThink, toOpenAIMessage, knownIds };
+module.exports = { tier, owns, capabilities, list, chat, splitThink, toOpenAIMessage, toOpenAIMessages, knownIds };

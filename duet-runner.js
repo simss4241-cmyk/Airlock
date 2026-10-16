@@ -47,6 +47,7 @@ const sandbox = require('./sandbox');
 const { buildContext, CHARS_PER_TOKEN, REPLY_RESERVE_TOKENS } = require('./duet-context');
 const workspace = require('./workspace-tools');
 const web = require('./web');
+const calc = require('./public/calc');
 const figures = require('./public/figures');
 
 /**
@@ -142,12 +143,13 @@ function queueFor(tier, limit) {
  *
  * Returns { ok, ruling, token }.
  */
-async function clearCrossing({ model, wire, config, threadId = null, ownWords = [] }) {
+async function clearCrossing({ model, wire, config, threadId = null, ownWords = [], systemForGate = '' }) {
     // The gate reads exactly what would be sent — system prompt, both participants' words,
     // the lot — minus what it has already ruled on, and minus the model's own earlier
     // replies (see ownWordsOf). No model is named: boundary.js resolves a LOCAL one
     // itself, and refuses outright if handed a remote id.
-    return kernel.clear({ model, messages: wire, config, threadId, ownWords });
+    return kernel.clear({ model, messages: wire, config, threadId, ownWords,
+        shownAs: wire[0]?.role === 'system' ? [{ message: wire[0], text: systemForGate }] : [] });
 }
 
 /**
@@ -335,7 +337,7 @@ async function generate({
     const snapshotSeq = trigger.seq;
     const snapshot = duet.getConversation(threadId, { maxSeq: snapshotSeq, completedOnly: true });
 
-    const { messages: wire, meta } = buildContext({
+    const { messages: wire, meta, systemForGate } = buildContext({
         participant,
         others,
         messages: snapshot,
@@ -403,7 +405,7 @@ async function generate({
         emit({ type: 'gating', messageId: reply.id });
 
         try {
-            const cleared = await clearCrossing({ model, wire, config, threadId,
+            const cleared = await clearCrossing({ model, wire, config, threadId, systemForGate,
                 ownWords: ownWordsOf({ wire, snapshot, participant, model }) });
             gateRuling = cleared.ruling;
             clearance = cleared.token;
@@ -442,7 +444,8 @@ async function generate({
     const offered = [
         ...(useTools ? workspace.TOOLS : []),
         ...(useWeb ? web.toolsFor() : []),
-        ...(canRequest ? [workspace.REQUEST_TOOL] : [])
+        // The calculator runs here and reads nothing of the user's, so it needs no switch.
+        ...(canRequest ? [workspace.REQUEST_TOOL, ...calc.TOOLS] : [])
     ];
 
     // The links a fetch may open: ones someone other than the model wrote — the user, in
@@ -523,7 +526,8 @@ async function generate({
                     if (round > 0) {
                         emit({ type: 'gating', messageId: reply.id });
                         const next = await kernel.clear({ model, messages: convo, config, threadId,
-                            ownWords: ownWordsOf({ wire, snapshot, participant, model }) });
+                            ownWords: ownWordsOf({ wire, snapshot, participant, model }),
+                            shownAs: wire[0]?.role === 'system' ? [{ message: wire[0], text: systemForGate }] : [] });
                         if (!next.ok) {
                             gateRuling = next.ruling;
                             withheld = pendingArtifacts.map(a => a.label);
@@ -625,6 +629,10 @@ async function generate({
 
                 // A request to the user is not run: it is recorded, and the model is told it
                 // went and that the answer is unknown until the user gives it.
+                // Where this round's calls sit in the reply's reasoning: set on every trace the
+                // round adds, so the page can show reasoning, then the calls, then reasoning again.
+                const roundStart = toolTrace.length;
+
                 const asks = toolCalls.filter(c => c.function?.name === 'request_result');
                 for (const call of asks) {
                     let args = call.function?.arguments ?? {};
@@ -658,7 +666,24 @@ async function generate({
                     if (crosses && out.trace.ok) pendingArtifacts.push({ label: out.trace.label });
                 }
 
-                const fileCalls = toolCalls.filter(c => !['request_result', 'web_search', 'fetch_url'].includes(c.function?.name));
+                // The calculator: run here, on numbers the model wrote. Its result is computed
+                // from the model's own expression and holds nothing of the user's, so going back
+                // to a remote model it is not new exposure — acknowledged, not put to the gate.
+                for (const call of toolCalls.filter(c => calc.NAMES.has(c.function?.name))) {
+                    const name = call.function.name;
+                    let args = call.function?.arguments ?? {};
+                    if (typeof args === 'string') { try { args = JSON.parse(args); } catch { args = {}; } }
+                    const out = calc.run(name, args);
+                    const message = { role: 'tool', tool_name: name,
+                        content: JSON.stringify(out.ok ? { result: out.result } : { error: out.error }) };
+                    convo.push(message);
+                    if (crosses) kernel.acknowledge([message]);
+                    toolTrace.push({ name, tool: name, target: out.calc?.expression || '', ok: out.ok, summary: out.summary,
+                        ...(out.calc ? { calc: out.calc } : {}) });
+                    emit({ type: 'tool', messageId: reply.id, name, args, ok: out.ok, summary: out.summary, calc: out.calc });
+                }
+
+                const fileCalls = toolCalls.filter(c => !['request_result', 'web_search', 'fetch_url', ...calc.NAMES].includes(c.function?.name));
                 const allowed = useTools ? fileCalls : [];
                 for (const call of useTools ? [] : fileCalls) {
                     const name = String(call.function?.name || 'tool');
@@ -674,6 +699,8 @@ async function generate({
                     emit({ type: 'tool', messageId: reply.id, ...card });
                     if (crosses) pendingArtifacts.push(artifact);
                 }
+
+                for (let k = roundStart; k < toolTrace.length; k++) toolTrace[k].at = thinking.length;
             }
         }), position => {
             // Position updates keep arriving as the queue drains; once this job is running

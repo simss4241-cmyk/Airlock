@@ -150,6 +150,47 @@ async function main() {
     ok(elsewhere.fresh === 1 && shown.some(t => /assistant: fine/.test(t)),
        'the same words going to a different model ARE ruled on: not remembered as released');
 
+    // ── what the gate reads instead of a message ──
+    console.log('\nshownAs: the gate reads the User\'s parts of a message, and the clearance covers all of it');
+    shown = stubGate(RELEASE);
+    const prompt0 = { role: 'system', content: 'You are the RIGHT participant. Never cite a file you have not seen.' };
+    const question = { role: 'user', content: 'What is the combined pressure?' };
+    shown.length = 0;
+    const skip = await kernel.clear({ model: REMOTE, messages: [prompt0, question], shownAs: [{ message: prompt0, text: '' }] });
+    ok(skip.ok && shown.length === 1 && !/Never cite a file/.test(shown[0]) && /combined pressure/.test(shown[0]),
+       'nothing of the User\'s in it: the system prompt is not read at all', JSON.stringify(shown));
+    ok(kernel.covers(skip.token, REMOTE, [prompt0, question]), 'and the clearance still covers it exactly as sent');
+    const promptRole = { ...prompt0, content: prompt0.content + ' Your role: Skeptic.' };
+    shown.length = 0;
+    await kernel.clear({ model: REMOTE, messages: [promptRole], shownAs: [{ message: promptRole, text: 'The role the User set: Skeptic.' }] });
+    ok(shown.length === 1 && /only what the User wrote/.test(shown[0]) && /Skeptic/.test(shown[0]) && !/Never cite a file/.test(shown[0]),
+       'with a role, the gate reads the role — and not Airlock\'s wording around it', JSON.stringify(shown));
+
+    // ── rulings that survive a restart ──
+    console.log('\nreleased rulings outlive a restart, as hashes only');
+    const memoryBefore = new Map(kernel._released);   // put back after: later sections rely on it
+    const kept = new Map();
+    const fakeStore = {
+        loadReleased: () => [...kept.values()],
+        rememberReleased: (hash, by, gateModel, at) => kept.set(hash, { hash, by, gateModel, at })
+    };
+    kernel.persistTo(fakeStore);
+    shown = stubGate(RELEASE);
+    const once = { role: 'user', content: 'a sentence ruled on before the restart' };
+    await kernel.clear({ model: REMOTE, messages: [once] });
+    ok([...kept.values()].some(r => r.hash === kernel.unitHash(once)) && ![...kept.values()].some(r => JSON.stringify(r).includes('ruled on before')),
+       'a release is kept — its hash, never its words');
+    kernel._forget();                                  // what a restart does to memory
+    shown.length = 0;
+    const after = await kernel.clear({ model: REMOTE, messages: [once] });
+    ok(after.ok && after.fresh === 0 && shown.length === 0, 'after a restart, words already released are not put to the gate again');
+    shown.length = 0;
+    const novel = await kernel.clear({ model: REMOTE, messages: [{ role: 'user', content: 'words never ruled on' }] });
+    ok(novel.fresh === 1 && shown.length === 1, 'and new words still are');
+    kernel.persistTo(null);
+    kernel._forget();
+    for (const [k, v] of memoryBefore) kernel._released.set(k, v);
+
     // ── acknowledgement ──
     console.log('\nthe far side\'s own words are not re-judged');
     shown = stubGate(RELEASE);

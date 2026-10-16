@@ -274,9 +274,36 @@ const outLink = (url, text) =>
  * them this reply went on to open; a fetch links to the page it read. Everything else is
  * the one-line card it always was.
  */
+/**
+ * A reply's reasoning, split where it made its calls, with each call's card in its place:
+ * what it thought, what it did, what it thought next. Only the model's own words are shown,
+ * never edited — split, not rewritten. The last piece is open while the reply streams.
+ */
+function reasoningTimeline(message, calls) {
+    const text = message.thinking;
+    const cuts = [...new Set(calls.map(t => Number.isFinite(t.at) ? Math.max(0, Math.min(text.length, t.at)) : text.length))]
+        .sort((a, b) => a - b);
+    const piece = (from, to, last) => {
+        const words = text.slice(from, to).trim();
+        return words ? `<details class="think"${last && message.streaming && !message.content ? ' open' : ''}>
+                   <summary>reasoning</summary>
+                   <div class="think-body">${escapeHtml(words)}</div>
+               </details>` : '';
+    };
+    let out = '', from = 0;
+    for (const cut of cuts) {
+        out += piece(from, cut, false);
+        const here = calls.map((t, i) => [t, i]).filter(([t]) =>
+            (Number.isFinite(t.at) ? Math.max(0, Math.min(text.length, t.at)) : text.length) === cut);
+        out += `<div class="tools">${here.map(([t, i]) => toolCard(t, calls, `${message.id}:${i}`)).join('')}</div>`;
+        from = cut;
+    }
+    return out + piece(from, text.length, true);
+}
+
 function toolCard(t, calls, key = '') {
     const name = t.name || t.tool || 'tool';
-    const classes = `tool${t.ok ? '' : ' bad'}${t.crossed ? ' web-out' : ''}`;
+    const classes = `tool${t.ok ? '' : ' bad'}${t.crossed ? ' web-out' : ''}${t.calc ? ' calc' : ''}`;
     const head = `<span class="tool-name">${escapeHtml(name)}</span>
                   <span class="tool-sum">${escapeHtml(t.summary || t.label || '')}</span>`;
 
@@ -493,6 +520,23 @@ function figureOrigins(message) {
                 for (const v of F.valuesIn(inner)) if (!origins.has(v) || origins.get(v).kind === 'model') source(v, origin);
             }
         }
+        for (const t of callsOf(m)) {
+            if (!t.calc || !t.ok) continue;
+            const result = F.valuesIn(t.calc.result).values().next().value;
+            if (!result) continue;
+            const inputs = (t.calc.inputs || []).map(raw => String(Number(raw)));
+            const unsourced = inputs.filter(v => !countingNumber(v)
+                && !['user', 'tool'].includes(origins.get(v)?.kind));
+            const working = `computed as ${t.calc.expression} = ${t.calc.result}, by ${sourceLabel(m)}`;
+            if (!unsourced.length) {
+                const from = [...new Set(inputs.filter(v => !countingNumber(v)))]
+                    .map(v => `${v} ${origins.get(v).label.split(': “')[0]}`);
+                source(result, { kind: 'tool', label: working + (from.length ? ` · ${from.join(' · ')}` : '') });
+            } else if (!origins.has(result)) {
+                const list = [...new Set(unsourced)].join(', ');
+                origins.set(result, { kind: 'model', label: `${working} — but ${list} ${unsourced.length > 1 ? 'have' : 'has'} no source: the sum is checked, the premise is not` });
+            }
+        }
         if (m.id === message.id) continue;
         for (const v of F.valuesIn(m.content)) {
             if (!origins.has(v)) origins.set(v, { kind: 'model', label: `first said by ${sourceLabel(m)}, with no source before that` });
@@ -502,6 +546,13 @@ function figureOrigins(message) {
     figureCache.set(key, origins);
     return origins;
 }
+
+/**
+ * Numbers a calculation may use without a source: counting numbers (0–12) and powers of ten.
+ * In "(480 + 455) / 2" the 2 is a count, not a reading; requiring a source for it would mark
+ * every average unsourced. Any other input must come from the user or a tool.
+ */
+const countingNumber = v => /^(?:[0-9]|1[0-2]|10|100|1000)$/.test(v);
 
 /** This reply's figures with no source: [{ v, origin }] — each value once. For the header mark. */
 function unsourcedFigures(message) {
@@ -690,7 +741,12 @@ function messageHtml(message, { showAddressing = false } = {}) {
     // from the stored trace once the reply has settled.
     const calls = (message.tools || message.requestMeta?.tools || [])
         .filter(t => (t.name || t.tool) !== 'request_result');
-    const toolCards = calls.length
+    // Reasoning and calls in the order they happened, when the record says where each call
+    // fell in the reasoning (`at`). Older replies, and replies that did not reason, keep
+    // the cards together above the text.
+    const timeline = message.thinking && calls.some(t => Number.isFinite(t.at))
+        ? reasoningTimeline(message, calls) : null;
+    const toolCards = calls.length && !timeline
         ? `<div class="tools">${calls.map((t, i) => toolCard(t, calls, `${message.id}:${i}`)).join('')}</div>`
         : '';
 
@@ -742,7 +798,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
                 <span class="who"${portable ? ' draggable="true"' : ''}>${who}${addressed}${
                     message.id ? `<span class="msg-id"> · #${message.id}</span>` : ''}${crossed}${echoMark}${restateMark}${figureMark}${unseenMark}${claimMark}${linkMark}${kept}${note}${handoff}</span>
                 <div class="bubble${message.streaming && message.content ? ' caret' : ''}">${
-                    think}${body}</div>
+                    timeline ?? think}${body}</div>
                 ${message.stats ? `<span class="stats">${escapeHtml(message.stats)}</span>` : ''}
             </div>`;
 }
@@ -1575,7 +1631,9 @@ function handleEvent(participantId, event, streamed) {
 
         case 'tool': {
             const message = messageById(event.messageId);
-            if (message) (message.tools ||= []).push({ name: event.name, ok: event.ok, summary: event.summary, crossed: event.crossed });
+            // `at`: how much reasoning had arrived when the call was made — its place in the timeline.
+            if (message) (message.tools ||= []).push({ name: event.name, ok: event.ok, summary: event.summary, crossed: event.crossed,
+                ...(event.calc ? { calc: event.calc } : {}), at: (message.thinking || '').length });
             schedulePaint(participantId);
             return streamed;
         }

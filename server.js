@@ -11,11 +11,16 @@ const files = require('./files');
 const providers = require('./providers');
 const { runGate, resolveGateModel } = require('./boundary');
 const kernel = require('./kernel');
+const { DEFAULT_APP_PROMPT } = require('./duet-context');
 const sandbox = require('./sandbox');
 const auth = require('./auth');
 const duet = require('./duet-store');
 const { generate: generateDuet, queueState } = require('./duet-runner');
 
+
+// The gate's released rulings outlive a restart (hashes only; kernel.js). Wired here, not in
+// the kernel, so a test that never boots the server keeps its rulings in memory.
+kernel.persistTo(store);
 const app = express();
 
 const PORT = Number(process.env.PORT) || 8100;
@@ -59,28 +64,9 @@ const DEFAULTS = {
     // the retired global root cannot be written back here and re-migrated; and whether tools
     // are offered is decided per request by whether that thread has a usable workspace, so a
     // global tools flag had no effect except to make the config file look like it did.
-    // Sent on every turn, and it crosses the boundary with the conversation when
-    // an Oversight model is selected - so it names no one and no machine.
-    //
-    // It earns its length by telling the model the one thing it cannot infer: an
-    // answer here is not a chat message, it is a packet that will be read later,
-    // out of order, possibly by a reviewer who was never in the conversation.
-    systemPrompt: [
-        'You are Airlock, a local-first reasoning desk.',
-        '',
-        'What you write is saved as a packet inside a thread, and a larger model may',
-        'later review that thread across the boundary. Write so that a reader arriving',
-        'with no other context can follow it.',
-        '',
-        'Lead with the answer, then the reasoning behind it. Be specific: name files,',
-        'lines, commands and versions rather than gesturing at them. Use code blocks',
-        'for code.',
-        '',
-        'Say plainly when you are not sure, and say what would settle it. An honest',
-        '"I do not know, and here is how to find out" beats a confident guess.',
-        '',
-        'Do not pad. No preamble, no restating the question, no offer to help further.'
-    ].join('\n')
+    // Airlock's default standing prompt — defined in duet-context.js, where the gate view
+    // can tell it apart from one the user wrote.
+    systemPrompt: DEFAULT_APP_PROMPT
 };
 
 // ─────────────────────── Workspace tools ───────────────────────

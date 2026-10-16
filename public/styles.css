@@ -1177,6 +1177,10 @@ main {
 .duet-timeline .msg:hover .fig-sourced,
 .fig-sourced.fig-shown { text-decoration: underline solid var(--muted); text-decoration-thickness: 1px; text-underline-offset: 3px; }
 
+/* A calculator call: the working, in a figure's monospace. */
+.tool.calc .tool-sum { font-family: var(--mono, ui-monospace, monospace); }
+.key-sub { font-size: .85em; opacity: .7; }
+
 /* The key to the marks. */
 .marks-key-btn { margin-left: 4px; width: 20px; padding: 0; justify-content: center; }
 dialog#marksKey { width: min(620px, 94vw); }

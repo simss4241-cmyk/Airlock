@@ -189,8 +189,8 @@ async function main() {
         console.log('\nwhat is offered');
         let n = bodies.length;
         await send(thread.id, { participantId: left.id, text: 'Hello there.', clientRequestId: 'hello' });
-        ok(JSON.stringify(toolNames(bodies[n])) === '["request_result"]',
-            'files off: a tool-capable side is offered request_result and nothing else', toolNames(bodies[n]).join(', '));
+        ok(JSON.stringify(toolNames(bodies[n])) === '["request_result","calculate","convert"]',
+            'files off: a tool-capable side is offered request_result and the calculator, and nothing that reads', toolNames(bodies[n]).join(', '));
         n = bodies.length;
         await send(thread.id, { participantId: left.id, text: 'Hello again.', tools: true, clientRequestId: 'hello-2' });
         const withFiles = toolNames(bodies[n]);

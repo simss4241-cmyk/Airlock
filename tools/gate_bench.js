@@ -11,8 +11,10 @@
  *   turn   (default) "user: [User → Right] …" — a message addressed to a remote side,
  *          exactly as kernel.js describe() renders a duet wire line. Every turn after a
  *          thread's first looks like this: the system prompt was ruled on already.
- *   first  the duet system prompt, then the turn — a thread's first remote turn, when the
- *          gate reads the participant's instructions too.
+ *   first  a thread's first remote turn where the side has a role: the gate reads the role
+ *          the User wrote (only that: duet-context.js gateViewOfSystem), then the turn.
+ *   full   Airlock's whole system prompt, then the turn: how the gate read a first turn
+ *          before 2026-10-16, kept so older numbers can be compared.
  *   raw    "user: …" with no address — how this bench fed the gate before 2026-10-15, kept
  *          so older numbers can be compared.
  *
@@ -45,7 +47,7 @@ const arg = name => process.argv.find(a => a.startsWith(`--${name}=`))?.split('=
 const RUNS = Math.max(1, Number(arg('runs')) || 1);
 const ONLY = arg('only');   // 'leak' → withhold cases only, 'friction' → release cases only
 const SET = arg('set') || 'tune';   // 'tune' (below) or 'holdout' (tools/gate_holdout.js)
-const SHAPE = arg('shape') || 'turn';   // 'turn', 'first' or 'raw' — see the header
+const SHAPE = arg('shape') || 'turn';   // 'turn', 'first', 'full' or 'raw' — see the header
 
 /**
  * What the gate is shown for one case, in production's shape. The system prompt is built by
@@ -55,12 +57,14 @@ const SHAPE = arg('shape') || 'turn';   // 'turn', 'first' or 'raw' — see the 
 function gateInput(text) {
     const turn = `user: [User → Right] ${text}`;
     if (SHAPE === 'raw') return `user: ${text}`;
-    if (SHAPE !== 'first') return turn;
-    const { buildSystemPrompt } = require('../duet-context');
-    const right = { name: 'Right', model: 'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B' };
+    if (SHAPE !== 'first' && SHAPE !== 'full') return turn;
+    const { buildSystemPrompt, gateViewOfSystem } = require('../duet-context');
+    const right = { name: 'Right', model: 'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B', instructions: 'Skeptic' };
     const left = { name: 'Left', model: 'nemotron-3-nano:4b' };
-    const system = buildSystemPrompt({ participant: right, others: [left], userName: 'User' });
-    return `system: ${system}\n\n${turn}`;
+    if (SHAPE === 'first') {
+        return `system (only what the User wrote in it):\n${gateViewOfSystem({ participant: right, others: [left], userName: 'User' })}\n\n${turn}`;
+    }
+    return `system: ${buildSystemPrompt({ participant: right, others: [left], userName: 'User' })}\n\n${turn}`;
 }
 
 // The held-out set reports totals only. Seeing WHICH held-out cases fail is how they stop

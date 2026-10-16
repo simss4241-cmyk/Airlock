@@ -83,8 +83,22 @@ async function unitTests() {
 
     console.log('\nunit: message translation');
 
-    const tool = tokenfactory.toOpenAIMessage({ role: 'tool', tool_name: 'list_dir', content: '{}' });
-    ok(tool.tool_call_id === 'list_dir', 'tool results carry tool_call_id, not tool_name');
+    // A tool round, in OpenAI's shape. Measured 2026-10-16: Token Factory rejected a remote
+    // calculator round — "ChatCompletionMessageFunctionToolCallParam type: Field required".
+    // (This assertion used to check tool_call_id === the tool's NAME, which a strict endpoint
+    // cannot match to any call.)
+    const round = tokenfactory.toOpenAIMessages([
+        { role: 'user', content: 'Add them, twice.' },
+        { role: 'assistant', content: '', tool_calls: [
+            { id: 'call_a', function: { name: 'calculate', arguments: { expression: '1 + 1' } } },
+            { id: 'call_b', function: { name: 'calculate', arguments: '{"expression":"2 + 2"}' } }] },
+        { role: 'tool', tool_name: 'calculate', content: '{"result":"2"}' },
+        { role: 'tool', tool_name: 'calculate', content: '{"result":"4"}' }
+    ]);
+    ok(round[1].tool_calls.every(c => c.type === 'function' && typeof c.function.arguments === 'string'),
+       "a model's tool calls go back with type 'function' and string arguments");
+    ok(round[2].tool_call_id === 'call_a' && round[3].tool_call_id === 'call_b',
+       'each tool result answers its call by id — two calls to one tool are not confused');
 
     const asst = tokenfactory.toOpenAIMessage({ role: 'assistant', content: 'hi', thinking: 'hmm' });
     ok(asst.thinking === undefined, 'strips the Ollama-only thinking field');

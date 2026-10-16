@@ -89,6 +89,65 @@ function todayLong(at = new Date()) {
     return at.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 
+/**
+ * Airlock's default standing prompt, sent on every turn unless the user replaces it in
+ * Settings. It names no one and no machine, because it crosses with the conversation. It
+ * earns its length by telling the model the one thing it cannot infer: an answer here is
+ * not a chat message, it is a packet that will be read later, out of order, possibly by a
+ * reader who was never in the conversation.
+ */
+const DEFAULT_APP_PROMPT = [
+    'You are Airlock, a local-first reasoning desk.',
+    '',
+    'What you write is saved as a packet inside a thread, and a larger model may',
+    'later review that thread across the boundary. Write so that a reader arriving',
+    'with no other context can follow it.',
+    '',
+    'Lead with the answer, then the reasoning behind it. Be specific: name files,',
+    'lines, commands and versions rather than gesturing at them. Use code blocks',
+    'for code.',
+    '',
+    'Say plainly when you are not sure, and say what would settle it. An honest',
+    '"I do not know, and here is how to find out" beats a confident guess.',
+    '',
+    'Do not pad. No preamble, no restating the question, no offer to help further.'
+].join('\n');
+
+/** Still Airlock's default, not edited? Line endings and edge spaces do not count as an edit. */
+const isDefaultAppPrompt = text => String(text || '').replace(/\r\n/g, '\n').trim() === DEFAULT_APP_PROMPT;
+
+/**
+ * What the GATE reads of the system prompt: only the parts the User wrote. The rest is
+ * Airlock's own wording — the participant's seat, the models' names, today's date, the
+ * transcript rules — the same in every thread and holding nothing of the User's, so there is
+ * nothing in it for the gate to protect. Measured 2026-10-16: on a thread's first remote turn
+ * the 14B, reading all 1,459 characters of it, withheld "loop A reads 480 kPa…" on three runs
+ * out of four, and withheld the system prompt ALONE for "a real model name".
+ *
+ * Built from the same inputs buildSystemPrompt uses, never by trimming its text: what the
+ * User wrote is read in full, and nothing of theirs can hide in the part that is skipped.
+ * Empty when the User wrote none of it — the gate then has nothing to read there at all.
+ */
+function gateViewOfSystem({ participant, others = [], appSystemPrompt, userName }) {
+    const parts = [];
+    // The standing prompt is the User's only once they have changed it. Airlock's default —
+    // "a larger model may later review that thread across the boundary… name files, lines" —
+    // was being read as theirs, and with the gauge readings it tipped the 14B to withhold.
+    if (appSystemPrompt && appSystemPrompt.trim() && !isDefaultAppPrompt(appSystemPrompt)) {
+        parts.push(`The ${userName}'s standing prompt: ${appSystemPrompt.trim()}`);
+    }
+    if (participant.instructions && participant.instructions.trim()) {
+        parts.push(`The role the ${userName} set for this participant: ${participant.instructions.trim()}`);
+    }
+    // A participant's name is the User's only when renamed from Left / Right (duet-store's
+    // DEFAULT_NAMES; this module stays free of the store).
+    const named = [participant, ...others].map(p => p.name).filter(n => n && !['Left', 'Right'].includes(n));
+    if (named.length) parts.push(`Participant names the ${userName} chose: ${named.join(', ')}`);
+    return parts.length
+        ? `(Airlock's standard instructions to this participant are not shown: none of their wording came from the ${userName}.)\n${parts.join('\n')}`
+        : '';
+}
+
 function buildSystemPrompt({ participant, others, appSystemPrompt, userName, dialogueWith = null, today = todayLong() }) {
     const lines = [];
 
@@ -220,6 +279,7 @@ function buildContext({
 
     const opts = { userName };
     const system = buildSystemPrompt({ participant, others, appSystemPrompt, userName, dialogueWith });
+    const systemForGate = gateViewOfSystem({ participant, others, appSystemPrompt, userName });
 
     // The budget is what is left after the system block and the reserved reply, measured
     // in characters because that is the only thing countable exactly without shipping a
@@ -285,6 +345,8 @@ function buildContext({
     const merged = mergeRuns([...included, ...entries]);
 
     return {
+        // What the gate reads of messages[0]: the parts the User wrote, nothing of Airlock's.
+        systemForGate,
         messages: [
             { role: 'system', content: system },
             ...merged.map(({ role, content, images }) =>
@@ -306,7 +368,7 @@ function buildContext({
 }
 
 module.exports = {
-    buildContext, buildSystemPrompt, label,
+    buildContext, buildSystemPrompt, gateViewOfSystem, DEFAULT_APP_PROMPT, isDefaultAppPrompt, label,
     CHARS_PER_TOKEN, REPLY_RESERVE_TOKENS, MIN_HISTORY_CHARS,
     OMISSION_MARKER, TRUNCATION_MARKER
 };

@@ -125,6 +125,15 @@ function createCore(db, file) {
     );
     CREATE INDEX IF NOT EXISTS idx_usage_model ON token_usage(model);
 
+    -- What the gate has released, so a restart does not re-judge every thread's history.
+    -- Hashes of the exact words, never the words. by: 'gate', 'origin' or 'operator'.
+    CREATE TABLE IF NOT EXISTS released_units (
+        hash        TEXT PRIMARY KEY,
+        by          TEXT NOT NULL,
+        gate_model  TEXT,
+        at          INTEGER NOT NULL
+    );
+
     -- Crossings whose thread was deleted. Deleting a thread removes its words; it must not
     -- remove the fact that some of them left this machine, because the far side still has
     -- them. No content here — only where it went, when, and where it came from.
@@ -323,6 +332,21 @@ function createCore(db, file) {
         const threads = db.prepare('SELECT id FROM threads WHERE folder_id = ?').all(id).map(r => r.id);
         return deleteThreadsKeepingCrossings(threads,
             () => db.prepare('DELETE FROM folders WHERE id = ?').run(id));
+    }
+
+    /** The gate's released rulings, oldest first, for the kernel to load at start. Hashes only. */
+    function loadReleased(limit = 50000) {
+        return db.prepare(`SELECT hash, by, gate_model AS gateModel, at FROM (
+            SELECT * FROM released_units ORDER BY at DESC LIMIT ?) ORDER BY at`).all(limit);
+    }
+
+    /** Keep one ruling; now and then, forget the oldest beyond the kernel's own bound. */
+    let releasedWrites = 0;
+    function rememberReleased(hash, by, gateModel, at) {
+        db.prepare('INSERT OR REPLACE INTO released_units (hash, by, gate_model, at) VALUES (?, ?, ?, ?)').run(hash, by, gateModel || null, at);
+        if (++releasedWrites % 1000 === 0) {
+            db.prepare('DELETE FROM released_units WHERE hash NOT IN (SELECT hash FROM released_units ORDER BY at DESC LIMIT 50000)').run();
+        }
     }
 
     /** What crossed from threads since deleted — newest first. No content: there is none. */
@@ -1100,7 +1124,7 @@ function createCore(db, file) {
         createThread, deleteThread, getThread, renameThread, moveThreadToFolder, reorderThread,
         setThreadWorkspace, migrateWorkspaceRoot, getMeta, setMeta,
         createPacket, getPacket, getThreadPackets, movePacket, forkPacket, deletePacket,
-        getProvenance, getReviews, stats, subtreeIds, getDeletedCrossings,
+        getProvenance, getReviews, stats, subtreeIds, getDeletedCrossings, loadReleased, rememberReleased,
         buildBrief, recordHandoff, recordCarry, getExposure, recordCrossings, recordArtifactCrossing,
         recordUsage, getUsage
     };

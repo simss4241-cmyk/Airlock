@@ -74,6 +74,8 @@ const ok = (cond, label, detail = '') => {
 
 /** Every chat body the "remote model" was sent, as raw text. */
 const received = [];
+/** Requests the fake remote refused as malformed — any at all is a failure (see the end). */
+const rejected = [];
 const leakedSince = n => received.slice(n).some(b => b.includes(CANARY_MARK) || b.includes('PRIVATE KEY'));
 
 function sse(res, chunks) {
@@ -82,6 +84,13 @@ function sse(res, chunks) {
     res.write('data: [DONE]\n\n');
     res.end();
 }
+
+// Offered to any side that can call tools, files or not: asking the user, and the calculator.
+const NOT_FILE_TOOLS = new Set(['request_result', 'calculate', 'convert']);
+
+// Section 8's reasoning, either side of a calculator call.
+const FIRST_THOUGHT = 'Two readings to combine: 480 and 455. ';
+const SECOND_THOUGHT = 'The calculator says 935, so that is the total.';
 
 const answer = text => [
     { choices: [{ delta: { content: text } }] },
@@ -101,6 +110,26 @@ const fake = http.createServer((req, res) => {
             const { messages = [], tools } = JSON.parse(body || '{}');
             const last = messages[messages.length - 1] || {};
 
+            // As strict as the real endpoint (vLLM, measured 2026-10-16): a tool call needs
+            // type 'function' and string arguments, and a tool result must answer a call by
+            // its id. This fake used to accept anything, so a malformed tool round passed
+            // here and failed on the first real remote tool call.
+            const ids = new Set();
+            const invalid = [];
+            for (const m of messages) {
+                for (const c of m.tool_calls || []) {
+                    if (c.type !== 'function') invalid.push(`tool call ${c.id} has no type 'function'`);
+                    if (typeof c.function?.arguments !== 'string') invalid.push(`tool call ${c.id} arguments are not a string`);
+                    ids.add(c.id);
+                }
+                if (m.role === 'tool' && !ids.has(m.tool_call_id)) invalid.push(`tool result answers no call: ${m.tool_call_id}`);
+            }
+            if (invalid.length) {
+                rejected.push(...invalid);
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                return res.end(JSON.stringify({ error: { message: `${invalid.length} validation errors: ${invalid.join('; ')}` } }));
+            }
+
             // Offered tools, the "model" decides for itself which file to open — the request
             // never names one. A request that NAMES a local file is withheld by the 14B gate
             // before anything is read ("the request involves a local file"), which would
@@ -117,6 +146,18 @@ const fake = http.createServer((req, res) => {
                     }] } }]
                 }, { choices: [{ delta: {}, finish_reason: 'tool_calls' }],
                      usage: { prompt_tokens: 10, completion_tokens: 5 } }]);
+            }
+            // Section 8: reason, call the calculator, reason again with its result.
+            if (last.role === 'user' && /Add the readings\./.test(text) && tools?.some(t => t.function?.name === 'calculate')) {
+                return sse(res, [
+                    { choices: [{ delta: { reasoning_content: FIRST_THOUGHT } }] },
+                    { choices: [{ delta: { tool_calls: [{ index: 0, id: 'calc_1', type: 'function',
+                        function: { name: 'calculate', arguments: JSON.stringify({ expression: '480 + 455' }) } }] } }] },
+                    { choices: [{ delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 10, completion_tokens: 5 } }
+                ]);
+            }
+            if (last.role === 'tool' && /"result":"935"/.test(last.content || '')) {
+                return sse(res, [{ choices: [{ delta: { reasoning_content: SECOND_THOUGHT } }] }, ...answer('The total is 935 kPa.')]);
             }
             // Section 7: a reply that reasons first, the way a reasoning model streams it.
             if (last.role === 'user' && /Think it through\./.test(text)) {
@@ -275,7 +316,7 @@ async function main() {
         // only when switched on. The fake calls read_file whenever it sees any tools at all —
         // exactly the model that names a tool it was not given.
         const offeredNames = received.slice(n0).flatMap(b => (JSON.parse(b).tools || []).map(t => t.function?.name));
-        ok(!offeredNames.some(n => n !== 'request_result'),
+        ok(!offeredNames.some(n => !NOT_FILE_TOOLS.has(n)),
             'a remote side not switched to files is never offered the file tools', offeredNames.join(', '));
         const notRun = s0.events.find(e => e.type === 'tool');
         ok(notRun && !notRun.ok && /not offered/.test(notRun.summary),
@@ -296,7 +337,7 @@ async function main() {
         }
         const nf = received.length;
         const sf = await send(tf.id, { participantId: rf.id, text: 'Please check the notes.', tools: true, clientRequestId: 'fenced-1' });
-        const fileTools = received.slice(nf).flatMap(b => (JSON.parse(b).tools || []).map(t => t.function?.name)).filter(n => n !== 'request_result');
+        const fileTools = received.slice(nf).flatMap(b => (JSON.parse(b).tools || []).map(t => t.function?.name)).filter(n => !NOT_FILE_TOOLS.has(n));
         ok(!fileTools.length, 'a fenced folder is offered no file tools, even switched on', fileTools.join(', '));
         const fencedCall = sf.events.find(e => e.type === 'tool');
         ok(!fencedCall || (!fencedCall.ok && /not offered/.test(fencedCall.summary)),
@@ -558,6 +599,42 @@ async function main() {
         const onDisk8 = ['duet-tools.db', 'duet-tools.db-wal'].map(f => path.join(tmp, f)).filter(f => fs.existsSync(f))
             .some(f => fs.readFileSync(f).includes(REASONING_MARK));
         ok(gone8?.status === 'deleted' && !gone8.thinking && !onDisk8, 'deleting the reply erases its reasoning too, on disk as well');
+
+        // ── 8. the calculator, and the reply's timeline ──
+        // A remote model reasons, calls the calculator, then reasons again. The call is run
+        // here; its result is not put to the gate (it holds nothing of the user's); the
+        // record keeps the working, and where in the reasoning the call was made.
+        console.log('\n8. the calculator, in the reply\'s timeline');
+        const { thread: t9, right: r9 } = await duetThread(folderId, 'calculator');
+        const g9 = gateAsked.length;
+        const s9 = await send(t9.id, { participantId: r9.id, text: 'Add the readings.', clientRequestId: 'calc-1' });
+        const card9 = s9.events.find(e => e.type === 'tool' && e.name === 'calculate');
+        ok(card9?.ok && card9.summary === '480 + 455 = 935', 'the model calls the calculator, and it runs here', JSON.stringify(card9));
+        ok(gateAsked.length - g9 === 1, 'the gate rules once — on the request; the computed result is not new exposure',
+            `${gateAsked.length - g9} gate calls`);
+        const reply9 = (await api('GET', `/api/duet/${t9.id}`)).body.messages.find(m => m.id === s9.last('done')?.message?.id);
+        const trace9 = reply9?.requestMeta?.tools?.find(t => t.name === 'calculate');
+        ok(trace9?.calc?.result === '935' && JSON.stringify(trace9.calc.inputs) === '["480","455"]',
+            'the record keeps the working and the numbers it used', JSON.stringify(trace9));
+        ok(reply9?.thinking?.startsWith(FIRST_THOUGHT) && reply9.thinking.includes(SECOND_THOUGHT) && trace9?.at === FIRST_THOUGHT.length,
+            'and where the call fell in the reasoning: after the first thought, before the second', `at=${trace9?.at} thinking=${reply9?.thinking}`);
+
+        // ── 9. what the gate reads on a thread's first remote turn ──
+        console.log('\n9. a first remote turn: the gate reads what the User wrote, not Airlock\'s wording');
+        const { thread: t10, right: r10 } = await duetThread(folderId, 'gate scope');
+        const g10 = gateAsked.length;
+        await send(t10.id, { participantId: r10.id, text: 'Loop A reads 480 kPa and loop B 455.', clientRequestId: 'scope-1' });
+        const shown10 = gateAsked.slice(g10).join('\n');
+        ok(/Loop A reads 480 kPa/.test(shown10) && !/You are the RIGHT participant|Never cite a file|Today's date/.test(shown10),
+            'with no role set, the gate reads the message and none of the system prompt', shown10.slice(0, 200));
+        const { thread: t11, right: r11 } = await duetThread(folderId, 'gate scope, with a role');
+        await api('PATCH', `/api/duet/participants/${r11.id}`, { instructions: 'Skeptic of every gauge' });
+        const g11 = gateAsked.length;
+        await send(t11.id, { participantId: r11.id, text: 'What do you make of it?', clientRequestId: 'scope-2' });
+        const shown11 = gateAsked.slice(g11).join('\n');
+        ok(/Skeptic of every gauge/.test(shown11) && !/Never cite a file/.test(shown11),
+            'with a role, the gate reads the role the User wrote — still none of Airlock\'s wording', shown11.slice(0, 240));
+        ok(!rejected.length, 'no request to the remote side was malformed', rejected.slice(0, 3).join(' | '));
     } finally {
         child.kill();
         if (child.exitCode === null) await new Promise(r => child.once('exit', r));

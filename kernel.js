@@ -66,9 +66,25 @@ const memories = new WeakMap();      // scope -> Map
 function released() {
     const scope = sandbox.scopeKey();
     let memory = memories.get(scope);
-    if (!memory) memories.set(scope, memory = new Map());
+    if (!memory) {
+        memories.set(scope, memory = new Map());
+        // A restart used to forget every ruling, so the next remote turn re-judged a whole
+        // thread's history — more for the gate to trip over, and slower. The record is hashes
+        // only, never text, kept in the current scope's own store (a visitor's sandbox, or
+        // the desk). Loading it can only make the gate read less, never let more through:
+        // a hash is released only if those exact words were released before.
+        if (persist) {
+            try {
+                for (const r of persist.loadReleased(MAX_REMEMBERED)) memory.set(r.hash, { by: r.by, at: r.at, gateModel: r.gateModel });
+            } catch (err) { console.error('released rulings not loaded:', err.message); }
+        }
+    }
     return memory;
 }
+
+/** Where rulings are kept between restarts. Set by the server at boot; tests stay in memory. */
+let persist = null;
+function persistTo(store) { persist = store; }
 
 /** Bound the memory a long-running process spends remembering rulings. */
 const MAX_REMEMBERED = 50_000;
@@ -101,7 +117,12 @@ function remember(hash, by, gateModel = null) {
         // gated again the next time it would leave.
         released().delete(released().keys().next().value);
     }
-    released().set(hash, { by, at: Date.now(), gateModel });
+    const at = Date.now();
+    released().set(hash, { by, at, gateModel });
+    if (persist) {
+        try { persist.rememberReleased(hash, by, gateModel, at); }
+        catch (err) { console.error('ruling not kept:', err.message); }
+    }
 }
 
 /** What the gate is shown for one message. Tool calls and results say what they are. */
@@ -157,16 +178,23 @@ const COVERED = Object.freeze({
  * leave, withheld it. Scoped to THIS clearance only, never remembered as released: the same
  * words going to a different model are new exposure there, and are ruled on.
  *
+ * `shownAs`: [{ message, text }] — what the gate reads for a message INSTEAD of its raw
+ * content: for the duet system prompt, only the parts the User wrote (duet-context.js
+ * gateViewOfSystem). Empty text means none of it is the User's, and it is not read at all.
+ * The clearance still covers the message exactly as sent; only what the gate reads changes.
+ *
  * Returns { ok: true, token, ruling, fresh } or { ok: false, ruling, fresh }.
  * A local destination needs no clearance and gets { ok: true, token: null, local: true }.
  */
-async function clear({ model, messages = [], config = {}, threadId = null, ownWords = [] }) {
+async function clear({ model, messages = [], config = {}, threadId = null, ownWords = [], shownAs = [] }) {
     if (providers.tierOf(model) === 'local') return { ok: true, token: null, local: true, fresh: 0 };
 
     const units = messages.map(m => ({ m, h: unitHash(m) }));
     const own = new Set(ownWords.map(unitHash));
+    const views = new Map(shownAs.map(v => [unitHash(v.message), String(v.text || '')]));
     const seen = new Set();
-    const fresh = units.filter(u => !released().has(u.h) && !own.has(u.h) && !seen.has(u.h) && seen.add(u.h));
+    const fresh = units.filter(u => !released().has(u.h) && !own.has(u.h) && !(views.has(u.h) && !views.get(u.h))
+        && !seen.has(u.h) && seen.add(u.h));
 
     if (fresh.some(u => u.m.images?.length)) {
         return {
@@ -185,7 +213,8 @@ async function clear({ model, messages = [], config = {}, threadId = null, ownWo
     let ruling = COVERED;
     if (fresh.length) {
         // Looked up at call time so a test can stand a stub in for the real gate.
-        ruling = await require('./boundary').runGate(fresh.map(u => describe(u.m)).join('\n\n'), { config });
+        ruling = await require('./boundary').runGate(fresh.map(u => views.has(u.h)
+            ? `${u.m.role} (only what the User wrote in it):\n${views.get(u.h)}` : describe(u.m)).join('\n\n'), { config });
         recordGateUsage(ruling, threadId);
         if (!ruling.release) return { ok: false, ruling, fresh: fresh.length };
         for (const u of fresh) remember(u.h, 'gate', ruling.model || null);
@@ -262,7 +291,8 @@ const isIssuedFor = (token, model) => Boolean(token) && issued.has(token) && tok
 
 module.exports = {
     clearOutbound, clearLink, outboundUnit,
-    clear, acknowledge, covers, isIssuedFor, unitHash,
-    // Tests reach in to simulate a restart: the CURRENT scope's record.
-    get _released() { return released(); }
+    clear, acknowledge, covers, isIssuedFor, unitHash, persistTo,
+    // Tests reach in to simulate a restart: the CURRENT scope's record, and dropping it.
+    get _released() { return released(); },
+    _forget() { memories.delete(sandbox.scopeKey()); }
 };

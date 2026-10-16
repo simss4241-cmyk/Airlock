@@ -462,5 +462,60 @@ ok(!F.valuesIn('since 2026-10-02 at 09:14').has('10') && !F.valuesIn('since 2026
 ok(JSON.stringify(figs('a ratio of 3:2, and 12:30:05 exactly')) === '["3","2","12:30:05"]', 'a ratio is not a time; seconds are kept');
 ok(Object.isFrozen(F), 'the rule is frozen');
 
+// ── 18. the calculator ──
+//
+// Small models are poor at arithmetic, and a worked-out number could only read "new in this
+// reply". A calculated one carries its working. A parser, never eval: anything outside its
+// small grammar is refused.
+
+const calc = require('../public/calc.js');
+const val = e => calc.evaluate(e).result;
+ok(val('480 + 480') === '960' && val('(480 + 455) / 2') === '467.5' && val('17 * 23') === '391',
+    'sums, averages and products come out exact');
+ok(val('2^3^2') === '512' && val('-2^2') === '-4' && val('480 × 2 ÷ 4') === '240',
+    'powers bind right to left and above minus; × and ÷ are read');
+ok(val('0.1 + 0.2') === '0.3' && val('round(4.8251, 2)') === '4.83' && val('sqrt(16) + max(1, 5, 3)') === '9',
+    'results are written to twelve significant digits, and the functions work');
+ok(JSON.stringify(calc.evaluate('(480 + 455) / 2').inputs) === '["480","455","2"]', 'the numbers it was given are kept, as written');
+const refuses = e => { try { calc.evaluate(e); return false; } catch { return true; } };
+ok(['process.exit()', 'constructor', 'require("fs")', 'this', '__proto__', '[1,2]', '"a"'].every(refuses),
+    'anything that is not arithmetic is refused — it is a parser, not eval');
+ok(['1/0', '2 +', '(1 + 2', 'foo(3)', 'sqrt(1, 2)', ''].every(refuses) && refuses('1+'.repeat(150) + '1'),
+    'and so are division by zero, broken or over-long expressions, unknown names and wrong argument counts');
+ok(calc.convert(480, 'kPa', 'bar').result === '4.8' && calc.convert(100, 'C', 'F').result === '212'
+    && calc.convert(1, 'mi', 'km').result === '1.609344', 'unit conversions are exact');
+ok((() => { try { calc.convert(5, 'kg', 'm'); return false; } catch (e) { return /mass.*length/.test(e.message); } })(),
+    'converting between kinds is refused, with the reason');
+const ran = calc.run('calculate', { expression: '480 + 455' });
+ok(ran.ok && ran.summary === '480 + 455 = 935' && ran.calc.result === '935' && calc.run('calculate', { expression: 'x' }).ok === false,
+    'as a tool: the working for the card and the record; a bad expression is a failed call, not a crash');
+ok(Object.isFrozen(calc), 'the rules are frozen');
+
+// ── 19. what the gate reads of the system prompt ──
+//
+// Measured 2026-10-16: on a first remote turn the 14B, reading Airlock's whole system prompt,
+// withheld "loop A reads 480 kPa…" three runs in four. The gate reads only what the User
+// wrote in it; Airlock's own wording holds nothing of theirs.
+
+const { gateViewOfSystem, buildSystemPrompt } = require('../duet-context');
+const seat = (extra = {}) => ({ name: 'Right', model: 'nvidia/some-remote', ...extra });
+ok(gateViewOfSystem({ participant: seat(), others: [{ name: 'Left', model: 'x' }], userName: 'User' }) === '',
+    'nothing the User wrote: the gate has nothing to read in the system prompt');
+const viewRole = gateViewOfSystem({ participant: seat({ instructions: 'Skeptic of every figure' }), others: [], userName: 'User',
+    appSystemPrompt: 'Answer in British English.' });
+ok(/Skeptic of every figure/.test(viewRole) && /British English/.test(viewRole),
+    "the User's role and standing prompt are read in full");
+const full = buildSystemPrompt({ participant: seat({ instructions: 'Skeptic of every figure' }), others: [], userName: 'User' });
+ok(/Never cite a file/.test(full) && !/Never cite a file|You are the RIGHT|Today's date/.test(viewRole),
+    "Airlock's own wording is in the prompt the model gets, and not in what the gate reads");
+ok(/Ada, Brunel/.test(gateViewOfSystem({ participant: seat({ name: 'Ada' }), others: [{ name: 'Brunel' }], userName: 'User' })),
+    'participant names count as the User\'s once renamed from Left and Right');
+const { DEFAULT_APP_PROMPT } = require('../duet-context');
+ok(gateViewOfSystem({ participant: seat(), others: [], userName: 'User', appSystemPrompt: DEFAULT_APP_PROMPT }) === ''
+    && gateViewOfSystem({ participant: seat(), others: [], userName: 'User', appSystemPrompt: DEFAULT_APP_PROMPT.replace(/\n/g, '\r\n') + '  ' }) === '',
+    "Airlock's default standing prompt is Airlock's wording, not the User's: not read (measured: it tipped the 14B into withholding)");
+ok(/British English/.test(gateViewOfSystem({ participant: seat(), others: [], userName: 'User', appSystemPrompt: DEFAULT_APP_PROMPT + '\nUse British English.' })),
+    'once the User edits it, it is theirs, and read in full');
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);
