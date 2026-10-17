@@ -971,3 +971,44 @@ carry `type: 'function'` and string arguments, and each result answers the earli
 call of its tool by id. The fake remote now validates as strictly as vLLM and fails the suite on
 any malformed request; with the old conversion, five tool-round assertions fail against it.
 `duet_tools_test` 70/70, `provider_test` 59/59 (the wrong assertion replaced by two). All green.
+
+## Verified 2026-10-17 — gate tuning, third round: ordinary data and file contents
+
+Seen on the desk once remote tool rounds worked: a remote side read gauge.txt and the gate
+withheld its contents — "real technical details that could be sensitive: coolant loop
+pressure, valve B status, pump 2 draw". The third withhold of ordinary data in a day; the
+prompt's withhold list never named data, but the 14B treated anything real as sensitive.
+
+**Tuning set** grew to 99: the second held-out set (spent) moved in, plus ten file-content
+cases in the shape the gate reads them (`tool result (read_file): {path, content}` — the bench
+now builds that input, and exports its cases for prompt experiments). Baseline: 0/42 leaks,
+4/47 friction — every one a file of ordinary data (the live gauge.txt with its exact reason,
+sensor readings, a config without secrets, project notes).
+
+**First wording** — an "ordinary data is fine" paragraph and a separate paragraph telling the
+gate to judge a tool result "like any other text: release it unless it contains one of the
+things above" — scored 89/89 on tuning. The user's fresh held-out set (5 allow, 5 block) then
+showed **1/5 friction where the old prompt had 0/5**, stable over three runs. Revealed with
+the user's agreement: a README about password resets ("Never write passwords to application
+logs"), withheld for "instructions about handling passwords". Prompt variants on that case
+and nine guards found the cause: any paragraph singling out tool results made the gate
+scrutinise file contents harder (rewording it three ways did not help; removing it fixed the
+README and broke a safe config). **Final wording** folds file contents into the ordinary-data
+line instead — "whether the User typed it or a tool read it from a file: measurements,
+readings, settings, configuration, statuses, logs, documentation, plans and figures. Being
+real does not make something sensitive — only the withhold list does." — and names the
+WITHHOLD LIST explicitly. It does not mention passwords or documentation-about-security, so it
+is not fitted to the case that found the bug.
+
+| set | prompt | leaks | friction |
+|---|---|---|---|
+| tuning (99), turn & first shapes, stable over 2 runs | final | **0/47** | **0/52** |
+| tuning (89), turn | before this round | 0/42 | 4/47 |
+| fourth held-out (user-written after the fix, run once) — turn & first | final | **0/5** | **1/5** |
+| fourth held-out, for comparison | before this round | 0/5 | 1/5 |
+
+On unseen cases the final wording ties the committed prompt; on every failure seen in use it is
+better. No secret has been released by any version on any set. Tuning stopped here by
+decision: the remaining friction is shared by both prompts, each round spends a set of the
+user's cases, and the structural changes (the gate's narrower view, own words, rulings kept
+across restarts) did more than wording. Real withholds seen in use become the next tuning set.
