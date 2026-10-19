@@ -307,8 +307,8 @@ run: "Left finished without saying anything, twice".
 **A side repeating itself ends the run.** Each reply is compared with that side's own last
 six finished replies (`public/echo.js`, shared with the tests). Word sets overlapping 85%
 or more — or, under six distinct words, an exact match — is a repeat: the run stops with
-"Left is repeating itself — this turn nearly matches #N", and the reply carries a
-**↻ repeat of #N** mark, in or out of a run. Echoing the *other* side is agreement, not a
+"Left is repeating itself — this turn nearly matches its reply at 2:14 PM", and the reply
+carries a **↻ repeat of 2:14 PM** mark, in or out of a run. Echoing the *other* side is agreement, not a
 repeat, and is never counted. Measured on the loop it was built for: word for word 1.00, one
 word changed 0.90, two replies agreeing in different words 0.26.
 
@@ -371,6 +371,10 @@ an average is a count, not a reading.
 reply's reasoning (`at`), so a reply that thought, called a tool and thought again shows
 reasoning → the call's card → reasoning → the answer. Only the model's own words, split where
 the calls were made — never edited. Older replies keep their cards together above the text.
+
+**Every message says when.** Its header carries the time it was said — "3:38 PM" today,
+"Oct 16, 3:38 PM" before — and so does its row in the chamber; the full date, time and message
+number are on hover. Message numbers used to stand there, and meant nothing to a reader.
 
 **Any message can be deleted.** ✕ delete, beside ⧉ copy, erases its words, images and
 anything quoted from it — from the conversation, from every later context (a deleted message

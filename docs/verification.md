@@ -1012,3 +1012,14 @@ better. No secret has been released by any version on any set. Tuning stopped he
 decision: the remaining friction is shared by both prompts, each round spends a set of the
 user's cases, and the structural changes (the gate's narrower view, own words, rulings kept
 across restarts) did more than wording. Real withholds seen in use become the next tuning set.
+
+## Verified 2026-10-18 — times, not message numbers
+
+Raised by the user: no message showed when it was said, and "#105" meant nothing to them.
+Headers now carry the time ("3:38 PM" today, "Oct 16, 3:38 PM" before), the chamber's first
+column shows it ("Oct 12" for an earlier day), the repeat mark reads "↻ repeat of 2:14 PM",
+the chatter stop names the time of the reply it matches, and the drag chip shows the time; the
+full date, time and message number are in the stamp's tooltip. Seen on the desk's Gauge
+thread: headers "Oct 16, 3:28 PM", chamber "Oct 12" with "Monday, October 12, 2026 at 2:14:48 PM
+· message #108" on hover; in a narrow pane the stamp wrapped beside a long model id, so it is
+kept on one line. Provenance exports (packet.md) keep their message numbers: there they cite.

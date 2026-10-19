@@ -393,6 +393,29 @@ function sourceLabel(m) {
  * When a message was said, for a tooltip: " at 14:32" today, " on 11 Oct at 14:32" before.
  * A time reads at a glance where a message number means opening the chamber to look it up.
  */
+/**
+ * When a message was said, for its header and the chamber: "2:31 PM" today, "Oct 5, 2:31 PM"
+ * before. Message numbers used to stand here, and a number tells a reader nothing; the full
+ * date, time and number are in the stamp's tooltip for anyone who needs to point at one.
+ */
+function stampOf(m, { short = false } = {}) {
+    const d = m?.createdAt ? new Date(m.createdAt) : null;
+    if (!d || Number.isNaN(d.getTime())) return '';
+    const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    if (d.toDateString() === new Date().toDateString()) return time;
+    const day = d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    return short ? day : `${day}, ${time}`;
+}
+const stampTitle = m => {
+    const d = m?.createdAt ? new Date(m.createdAt) : null;
+    const when = d && !Number.isNaN(d.getTime())
+        ? d.toLocaleString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' })
+        : 'time not recorded';
+    return `${when} · message #${m.id}`;
+};
+/** The header stamp: visible, quiet, with the full when and the number on hover. */
+const stampHtml_ = m => (m.id ? `<span class="msg-when" title="${escapeHtml(stampTitle(m))}">${escapeHtml(stampOf(m))}</span>` : '');
+
 function saidAt(m) {
     const d = m.createdAt ? new Date(m.createdAt) : null;
     if (!d || Number.isNaN(d.getTime())) return '';
@@ -607,7 +630,7 @@ function deletedHtml(message, who) {
         ? ` It had already crossed${to ? ` to ${escapeHtml(to)}` : ''} — that record stays, and deleting here cannot recall it.`
         : '';
     return `<div class="msg ${message.role === 'user' ? 'user' : 'assistant'} duet-deleted${meta.crossed ? ' remote' : ''}" data-message="${message.id}">
-                <span class="who">${who}<span class="msg-id"> · #${message.id}</span>${
+                <span class="who">${who}${stampHtml_(message)}${
                     meta.crossed ? ' <span class="badge travel">↗ crossed</span>' : ''}</span>
                 <div class="bubble"><p class="deleted-note">Deleted by you${when ? ` ${escapeHtml(when)}` : ''}.${crossed}</p></div>
             </div>`;
@@ -655,7 +678,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
     // Nearly the same as an earlier reply from this side: where a loop started is visible.
     const echoed = mine ? null : repeatOf(message);
     const echoMark = echoed
-        ? ` <span class="badge repeat" title="Nearly word for word an earlier reply from this side (#${echoed.id})">↻ repeat of #${echoed.id}</span>`
+        ? ` <span class="badge repeat" title="${escapeHtml(`Nearly word for word this side's earlier reply — ${stampTitle(echoed)}`)}">↻ repeat of ${escapeHtml(stampOf(echoed) || 'an earlier reply')}</span>`
         : '';
 
     // Names a file nobody here has read or given: evidence that may not exist.
@@ -796,7 +819,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
 
     return `<div class="${classes.join(' ')}" data-message="${message.id}">
                 <span class="who"${portable ? ' draggable="true"' : ''}>${who}${addressed}${
-                    message.id ? `<span class="msg-id"> · #${message.id}</span>` : ''}${crossed}${echoMark}${restateMark}${figureMark}${unseenMark}${claimMark}${linkMark}${kept}${note}${handoff}</span>
+                    stampHtml_(message)}${crossed}${echoMark}${restateMark}${figureMark}${unseenMark}${claimMark}${linkMark}${kept}${note}${handoff}</span>
                 <div class="bubble${message.streaming && message.content ? ' caret' : ''}">${
                     timeline ?? think}${body}</div>
                 ${message.stats ? `<span class="stats">${escapeHtml(message.stats)}</span>` : ''}
@@ -1243,7 +1266,7 @@ function airRow(message) {
     }
 
     return `<div class="${classes.join(' ')}" data-message="${message.id}"${entering}>
-                <span class="air-seq">#${message.id}</span>
+                <span class="air-seq" title="${escapeHtml(stampTitle(message))}">${escapeHtml(stampOf(message, { short: true }))}</span>
                 <span class="air-who"><span class="from">${from}</span>
                     <span class="arrow">→</span><span class="to">${to}</span></span>
                 <span class="air-text">${text}</span>
@@ -1333,10 +1356,10 @@ function wireHandoff(scope) {
             const mode = dragMode(e, movable);
             const tag = mode === 'export' ? ' <b>[.md]</b>' : mode === 'fork' ? ' <b>[fork]</b>' : '';
             const preview = node.querySelector('.bubble')?.textContent.trim().slice(0, 46) || '';
-            dt.setDragImage(makeDragChip(`<b>#${packetId}</b> ${escapeHtml(preview)}…${tag}`), 16, 14);
+            dt.setDragImage(makeDragChip(`<b>${escapeHtml(stampOf(message) || "message")}</b> ${escapeHtml(preview)}…${tag}`), 16, 14);
 
             if (hits.length) {
-                dt.setDragImage(makeDragChip(`<b>#${packetId}</b> ⚠ kept in Airlock — move or fork only`), 16, 14);
+                dt.setDragImage(makeDragChip(`<b>${escapeHtml(stampOf(message) || "message")}</b> ⚠ kept in Airlock — move or fork only`), 16, 14);
                 flash(`${exportRefusal(hits, packetId)} Dropping it on a thread here still moves it.`, 30000);
                 return;
             }
@@ -2355,7 +2378,7 @@ async function chatterAuto() {
             // conversation. Every further turn would spend tokens — and across the boundary,
             // credit — on the same two sentences.
             const echoed = repeatOf(reply);
-            if (echoed) { why = `${nameOf(reply)} is repeating itself — this turn nearly matches #${echoed.id}`; break; }
+            if (echoed) { why = `${nameOf(reply)} is repeating itself — this turn nearly matches its reply at ${stampOf(echoed) || 'an earlier turn'}`; break; }
         }
         if (!why) why = chatter.stopping ? 'stopped' : `${chatter.round} turns — the cap`;
     } finally {
