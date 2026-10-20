@@ -156,6 +156,18 @@ const fake = http.createServer((req, res) => {
                     { choices: [{ delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 10, completion_tokens: 5 } }
                 ]);
             }
+            // Section 8, again: the calculator, a round of silence, then — nudged — an answer.
+            const note = m => m?.role === 'user' && /^\[Airlock → /.test(m.content || '');
+            const asked = [...messages].reverse().find(m => m.role === 'user' && !note(m))?.content || '';
+            if (/Add the readings, then pause\./.test(asked)) {
+                if (last.role === 'user' && !note(last)) return sse(res, [
+                    { choices: [{ delta: { tool_calls: [{ index: 0, id: 'calc_2', type: 'function',
+                        function: { name: 'calculate', arguments: JSON.stringify({ expression: '480 + 455' }) } }] } }] },
+                    { choices: [{ delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 10, completion_tokens: 5 } }
+                ]);
+                if (last.role === 'tool') return sse(res, [{ choices: [{ delta: { reasoning_content: 'Hmm.' } }] }, ...answer('')]);
+                if (note(last)) return sse(res, answer('After a pause: 935 kPa.'));
+            }
             if (last.role === 'tool' && /"result":"935"/.test(last.content || '')) {
                 return sse(res, [{ choices: [{ delta: { reasoning_content: SECOND_THOUGHT } }] }, ...answer('The total is 935 kPa.')]);
             }
@@ -618,6 +630,18 @@ async function main() {
             'the record keeps the working and the numbers it used', JSON.stringify(trace9));
         ok(reply9?.thinking?.startsWith(FIRST_THOUGHT) && reply9.thinking.includes(SECOND_THOUGHT) && trace9?.at === FIRST_THOUGHT.length,
             'and where the call fell in the reasoning: after the first thought, before the second', `at=${trace9?.at} thinking=${reply9?.thinking}`);
+
+        // Gone quiet after the calculator, it is nudged — the runner's own words, acknowledged
+        // like the result, so the turn still costs one ruling.
+        const { thread: t9b, right: r9b } = await duetThread(folderId, 'calculator, nudged');
+        const g9b = gateAsked.length, n9b = received.length;
+        const s9b = await send(t9b.id, { participantId: r9b.id, text: 'Add the readings, then pause.', clientRequestId: 'calc-2' });
+        const nudge9b = received.slice(n9b).map(b => JSON.parse(b)).find(b => /^\[Airlock → /.test(b.messages.at(-1)?.content || ''));
+        ok(s9b.last('done')?.message?.content === 'After a pause: 935 kPa.' && /You have not written an answer yet/.test(nudge9b?.messages.at(-1).content || '')
+            && !/search results/.test(nudge9b?.messages.at(-1).content || ''),
+            'a remote side gone quiet after the calculator is nudged, without web wording, and answers', nudge9b?.messages.at(-1).content);
+        ok(gateAsked.length - g9b === 1, "and the gate still rules once: the nudge is the runner's words, not new exposure",
+            `${gateAsked.length - g9b} gate calls`);
 
         // ── 9. what the gate reads on a thread's first remote turn ──
         console.log('\n9. a first remote turn: the gate reads what the User wrote, not Airlock\'s wording');

@@ -52,6 +52,8 @@ function ok(cond, name, detail) {
 
 const bodies = [];          // every /api/chat body that was not the gate's
 const toolNames = body => (body.tools || []).map(t => t.function?.name);
+// The runner's own mid-turn notes: a labelled line, not a system message (see runnerNote).
+const isNote = m => m?.role === 'user' && /^\[Airlock → /.test(m.content || '');
 
 const ollama = http.createServer((req, res) => {
     let raw = '';
@@ -84,26 +86,35 @@ const ollama = http.createServer((req, res) => {
         const call = (name, args) => reply({ tool_calls: [{ function: { name, arguments: args } }] });
 
         // Told it is out of tool rounds: it answers.
-        if (last.role === 'system' && /used all \d+ rounds of tool calls/.test(last.content)) {
+        if (isNote(last) && /used all \d+ rounds of tool calls/.test(last.content)) {
             return reply({ content: 'Out of tool calls: here is what I found so far.' });
         }
         // A model that goes quiet after a tool call: answers once nudged — or never does.
-        const quiet = [...messages].reverse().find(m => m.role === 'user')?.content || '';
+        const quiet = [...messages].reverse().find(m => m.role === 'user' && !isNote(m))?.content || '';
         if (/then go quiet|and stay silent/i.test(quiet)) {
-            if (last.role === 'system' && /not written an answer yet/.test(last.content) && /go quiet/i.test(quiet)) {
+            if (isNote(last) && /not written an answer yet/.test(last.content) && /go quiet/i.test(quiet)) {
                 return reply({ content: 'Answered after a nudge.' });
             }
-            if (last.role === 'tool' || last.role === 'system') return reply({ content: '' });
+            if (last.role === 'tool' || isNote(last)) return reply({ content: '' });
             if (offered.includes('list_directory')) return call('list_directory', { path: '.' });
+        }
+        // A model part-way through a sum: one calculation, a round of silence, then — nudged,
+        // with the calculator still there — the next calculation, and its answer.
+        if (/add up the pizzas/i.test(quiet)) {
+            const nudgedYet = messages.some(m => isNote(m) && /not written an answer yet/.test(m.content));
+            if (!isNote(last) && last.role === 'user' && offered.includes('calculate')) return call('calculate', { expression: '7 * 14.50' });
+            if (last.role === 'tool' && !nudgedYet) return reply({ content: '' });
+            if (isNote(last) && offered.includes('calculate')) return call('calculate', { expression: '101.5 * 0.2' });
+            if (last.role === 'tool') return reply({ content: 'Subtotal 101.5, tip 20.3.' });
         }
         if (last.role === 'tool') {
             if (last.tool_name === 'request_result') return reply({ content: 'I asked the User to measure the silence.' });
             // A model that never stops looking: calls a tool every round it is offered one.
-            const looking = [...messages].reverse().find(m => m.role === 'user')?.content || '';
+            const looking = [...messages].reverse().find(m => m.role === 'user' && !isNote(m))?.content || '';
             if (/keep looking/i.test(looking) && offered.includes('list_directory')) return call('list_directory', { path: '.' });
             if (last.tool_name === 'search_text') return call('read_file', { path: 'benign.md', start_line: 3, end_line: 3 });
             // Asked for both: having read the first long file, read the second.
-            const asked = [...messages].reverse().find(m => m.role === 'user')?.content || '';
+            const asked = [...messages].reverse().find(m => m.role === 'user' && !isNote(m))?.content || '';
             if (/read both long files/i.test(asked) && /long\.md/.test(last.content) && !messages.some(m => m.role === 'tool' && /second\.md/.test(m.content))) {
                 return call('read_file', { path: 'second.md' });
             }
@@ -308,9 +319,9 @@ async function main() {
         const looking = await send(thread.id, { participantId: left.id, text: 'Keep looking until you find it.', tools: true, clientRequestId: 'loop-1' });
         const final = bodies[bodies.length - 1];
         const notice = final.messages[final.messages.length - 1];
-        ok(!final.tools && notice.role === 'system' && /used all 5 rounds of tool calls/.test(notice.content)
-            && /give the specific details they asked for/.test(notice.content) && /do not answer only that you could not verify/.test(notice.content),
-            'on the last round the model is told it is out of tool calls, and to give the details asked for — a gap only as a named detail', JSON.stringify(notice));
+        ok(!final.tools && isNote(notice) && /used all 5 rounds of tool calls/.test(notice.content)
+            && /give the specific details they asked for/.test(notice.content) && !/search results|pages above/.test(notice.content),
+            'on the last round the model is told it is out of tool calls, and to give the details asked for — with no web it never read', JSON.stringify(notice));
         ok(/Out of tool calls/.test(looking.last('done')?.message?.content || ''),
             'so it answers, rather than reasoning and saying nothing');
 
@@ -318,17 +329,35 @@ async function main() {
         console.log('\na round that says nothing');
         const goneQuiet = await send(thread.id, { participantId: left.id, text: 'Look around, then go quiet.', tools: true, clientRequestId: 'quiet-1' });
         const nudge = bodies[bodies.length - 1];
-        ok(goneQuiet.last('done')?.message?.content === 'Answered after a nudge.' && !nudge.tools
+        ok(goneQuiet.last('done')?.message?.content === 'Answered after a nudge.'
+            && JSON.stringify(toolNames(nudge)) === '["calculate","convert"]'
             && /not written an answer yet/.test(nudge.messages[nudge.messages.length - 1].content),
-            'a model that goes quiet after a tool call is asked once, without tools, and answers',
-            JSON.stringify(goneQuiet.last('done')?.message?.content));
+            'a model that goes quiet after a tool call is asked once, with nothing left that reads, and answers',
+            `${JSON.stringify(goneQuiet.last('done')?.message?.content)} offered ${toolNames(nudge).join(', ')}`);
         const n0 = bodies.length;
         const silent = await send(thread.id, { participantId: left.id, text: 'Look around and stay silent.', tools: true, clientRequestId: 'quiet-2' });
-        const nudges = bodies[bodies.length - 1].messages.filter(m => m.role === 'system' && /not written an answer yet/.test(m.content)).length;
+        const nudges = bodies[bodies.length - 1].messages.filter(m => isNote(m) && /not written an answer yet/.test(m.content)).length;
         ok(silent.last('done')?.message?.status === 'complete' && silent.last('done').message.content === ''
             && nudges === 1 && bodies.length - n0 === 3,
             'one that stays silent is asked once, not over and over — it ends empty, as before',
             `nudges ${nudges}, calls ${bodies.length - n0}`);
+
+        // The pizza audit, measured on a 4B: one calculation, then silence. The nudge used to
+        // say "using the search results and pages above" on a turn that searched nothing, and
+        // took the calculator away mid-sum; the model read the nudge as the whole request.
+        const sumBodies = bodies.length;
+        const sum = await send(thread.id, { participantId: left.id, text: 'Add up the pizzas: 7 at $14.50, tip 20%.', clientRequestId: 'quiet-3' });
+        const sumNudge = bodies.slice(sumBodies).find(b => isNote(b.messages[b.messages.length - 1]));
+        const said = sumNudge?.messages[sumNudge.messages.length - 1].content || '';
+        ok(/^\[Airlock → Left\] You have not written an answer yet/.test(said) && !/search results|pages|unverified/.test(said)
+            && /not a new request/.test(said) && /what your tools returned/.test(said),
+            'a calculator-only turn that goes quiet is nudged back to the request, with no web wording — as a labelled line, not a system message', said);
+        ok(JSON.stringify(toolNames(sumNudge)) === '["calculate","convert"]',
+            'and the calculator is still offered after the nudge — nothing else is', toolNames(sumNudge || {}).join(', '));
+        const sums = sum.events.filter(e => e.type === 'tool').map(e => e.summary);
+        ok(JSON.stringify(sums) === JSON.stringify(['7 * 14.50 = 101.5', '101.5 * 0.2 = 20.3'])
+            && sum.last('done')?.message?.content === 'Subtotal 101.5, tip 20.3.',
+            'so it finishes the sum on the calculator, then answers', `${sums.join(' | ')} → ${sum.last('done')?.message?.content}`);
 
         // ── 9. a model that cannot call tools is offered none ──
         console.log('\na model without tools');

@@ -1023,3 +1023,46 @@ full date, time and message number are in the stamp's tooltip. Seen on the desk'
 thread: headers "Oct 16, 3:28 PM", chamber "Oct 12" with "Monday, October 12, 2026 at 2:14:48 PM
 · message #108" on hover; in a narrow pane the stamp wrapped beside a long model id, so it is
 kept on one line. Provenance exports (packet.md) keep their message numbers: there they cite.
+
+## Verified 2026-10-20 — a nudge the 4B could not see past
+
+Seen on the desk (packet #143, nemotron-3-nano:4b): asked to audit a pizza budget with the
+calculator, it called `7 * 14.50 = 101.5`, then went quiet. The nudge (2026-10-05) said "using
+the search results and pages above", withdrew the calculator, and the 4B answered only "The
+specific detail you requested is unverified." Its stored reasoning held every right number, and
+also "we have no search results or pages… The conversation appears empty".
+
+The wording was the smaller fault. A/B on the 4B, from that turn's state: the nudge as a system
+message after the conversation, old wording, new wording, with or without the calculator: no
+answer had the numbers, 0 of 28. A trailing system message of only "Continue." got "Could you
+clarify what you'd like me to continue?" 4 times of 4. Ollama's `nemotron-3-nano` renderer makes a
+trailing system message read as a fresh start. Sent as a labelled line, "[Airlock → Left] You
+have not written an answer yet…", 11 of 12 answers had all four numbers. Appending the nudge to
+the first system message got 5 of 12.
+
+So the nudge and the out-of-rounds notice are now a labelled user-role line (`runnerNote`), not
+a system message. It holds only the runner's words: going to a remote side it is acknowledged,
+not gated. The web wording is kept word for word, but only for a turn that searched or opened a
+page. Any other turn gets "This note is not a new request. Answer the User's message above, the
+one your tool calls were for, using what your tools returned: give the specific details they
+asked for." Once nudged, the calculator stays offered and nothing else does. The 10-05 reason
+for withdrawing tools was to stop the looking, and the calculator reads nothing. A model
+part-way through a sum should not have to finish it in its head. The out-of-rounds notice still
+withdraws everything.
+
+`duet_request_test` 37/37 (3 new: a calculator-only quiet turn is nudged as a labelled line with
+no web wording; the calculator is still offered after it, nothing else is; the model finishes
+the sum on it and answers). `web_test` 45/45 (2 new: a page read, then quiet, gets the web
+wording word for word, with no web tools left). `duet_tools_test` 72/72 (2 new: a remote side
+nudged after the calculator answers, and the gate still rules once; without the
+acknowledgement it rules twice). One older assertion, that the nudge offers no tools, now
+expects only the calculator. All other offline suites green.
+
+End to end on a throwaway server (own port and database, real 4B, pizza prompt), the round after
+the first calculator result forced empty so that the server's own nudge fired: at HEAD, 0 of 4
+nudged runs gave the numbers ("The specific details requested are unverified."). With this
+change, 4 of 4, two of them calling the calculator again after the nudge. Unforced, the nudge
+fired in 1 run of 6 before (the same "unverified" non-answer) and in 0 of 12 after. Seen in
+passing and not fixed here: most unforced runs never called the calculator, yet wrote "(calc: 7
+× 14.50)" beside the numbers. One run wrote its tool call as text, "<tool_call>
+<function=calculate>".

@@ -113,6 +113,13 @@ const ollama = http.createServer((req, res) => {
         const last = messages[messages.length - 1] || {};
         const call = (name, args) => reply({ tool_calls: [{ function: { name, arguments: args } }] });
 
+        // A model that opens a page, then goes quiet: answers once nudged.
+        const isNote = m => m?.role === 'user' && /^\[Airlock → /.test(m.content || '');
+        const asked = [...messages].reverse().find(m => m.role === 'user' && !isNote(m))?.content || '';
+        if (/then go quiet/i.test(asked) && isNote(last) && /not written an answer yet/.test(last.content)) {
+            return reply({ content: 'The page says it is a page the user linked.' });
+        }
+        if (/then go quiet/i.test(asked) && last.role === 'tool') return reply({ content: '' });
         if (last.role === 'tool') {
             if (last.tool_name === 'web_search' && !/error/.test(last.content)) {
                 return call('fetch_url', { url: JSON.parse(last.content).results[0].url });
@@ -338,6 +345,20 @@ async function main() {
         ok(typo.tools[0] && !typo.tools[0].ok && /near miss/.test(typo.tools[0].summary) && pageHits.length === hitsBefore,
             'a link copied with a slip is not opened — a near miss may be another site', JSON.stringify(typo.tools[0]));
         ok(told.includes(`Did you mean ${PAGE}/given?`), 'but the model is told the link it was given, to try again with');
+
+        // ── 7. a web turn that goes quiet ──
+        // The nudge's web wording was measured on a 4B (2026-10-05) and is kept as it was; only a
+        // turn that read the web gets it. Once nudged, nothing that reads is offered.
+        console.log('\na web turn that goes quiet');
+        n = bodies.length;
+        const quiet = await send(thread.id, { participantId: left.id, text: `Open the link, then go quiet: ${PAGE}/given`, web: true, clientRequestId: 'quiet-1' });
+        const nudged = bodies.slice(n).find(b => /^\[Airlock → /.test(b.messages[b.messages.length - 1].content || ''));
+        const nudge = nudged?.messages[nudged.messages.length - 1].content || '';
+        ok(/not written an answer yet/.test(nudge) && /using the search results and pages above: give the specific details/.test(nudge)
+            && /do not answer only that you could not verify/.test(nudge),
+            'nudged after reading a page: the web wording, as measured', nudge);
+        ok(JSON.stringify(names(nudged)) === '["calculate","convert"]' && quiet.last('done')?.message?.content === 'The page says it is a page the user linked.',
+            'with no web tools left, and it answers', names(nudged).join(', '));
     } catch (err) {
         fail++;
         console.log(`  FAIL run aborted: ${err.message}`);

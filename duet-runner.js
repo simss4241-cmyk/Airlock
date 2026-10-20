@@ -515,8 +515,10 @@ async function generate({
                 // Out of tool rounds: say so. The tools used to vanish silently, and a model
                 // mid-plan reasoned for 7,000 characters and then said nothing at all.
                 if (lastRound && offered.length) {
-                    convo.push({ role: 'system', content: `You have used all ${workspace.MAX_TOOL_ROUNDS} rounds of tool calls for this turn. `
-                        + ANSWER_NOW });
+                    const note = runnerNote(participant, `You have used all ${workspace.MAX_TOOL_ROUNDS} rounds of tool calls for this turn. `
+                        + answerNow(useWeb, toolTrace));
+                    convo.push(note);
+                    if (crosses) kernel.acknowledge([note]);
                 }
 
                 if (crosses) {
@@ -552,8 +554,12 @@ async function generate({
                     // Omitted entirely when unsupported: sending `false` is still a request to
                     // a model that has no thinking channel, and that is a hard 400.
                     ...(canThink ? { think: config.think !== false } : {}),
-                    // Once it has asked the user for something, the turn is for saying so.
-                    tools: offered.length && !lastRound && !requests.length && !nudged ? offered : undefined,
+                    // Once it has asked the user for something, the turn is for saying so. Once
+                    // nudged, only the calculator stays: it reads nothing, and a model part-way
+                    // through a sum should not have to finish it in its head.
+                    tools: offered.length && !lastRound && !requests.length
+                        ? (nudged ? offered.filter(t => calc.NAMES.has(t.function?.name)) : offered)
+                        : undefined,
                     signal,
                     clearance
                 });
@@ -609,10 +615,12 @@ async function generate({
                 if (!toolCalls.length) {
                     // A round with no tool call and no words — measured on a 4B after three
                     // tool calls: it reasoned, then wrote nothing. Asked once, plainly, with
-                    // no tools, it is given the chance to answer from what it has.
+                    // nothing left to look at, it is given the chance to answer from what it has.
                     if (!roundContent.trim() && !nudged && round > 0 && round < workspace.MAX_TOOL_ROUNDS) {
                         nudged = true;
-                        convo.push({ role: 'system', content: 'You have not written an answer yet. ' + ANSWER_NOW });
+                        const note = runnerNote(participant, 'You have not written an answer yet. ' + answerNow(useWeb, toolTrace));
+                        convo.push(note);
+                        if (crosses) kernel.acknowledge([note]);
                         continue;
                     }
                     return;                             // this round is the answer
@@ -863,9 +871,38 @@ function recordWebCrossing(packetId, threadId, { actor, label, gate }) {
  * named detail. Measured: told to "say plainly what you could not open or verify", a 4B
  * that had a page open answered only "I could not open or verify the requested item."
  */
-const ANSWER_NOW = "Answer the User's request now, using the search results and pages above: give the specific "
+const ANSWER_FROM_WEB = "Answer the User's request now, using the search results and pages above: give the specific "
     + 'details they asked for. If one particular detail is not in what you read, name that detail and say it is '
     + 'unverified — do not answer only that you could not verify.';
+
+/**
+ * The same, for a turn that read no web. Seen on the desk: a 4B that had only used the
+ * calculator, told to answer "using the search results and pages above", reasoned "we have
+ * no search results or pages" and answered only "The specific detail you requested is
+ * unverified." So this one names no source the turn did not have, and points back at the
+ * request rather than standing in for it.
+ */
+const ANSWER_FROM_TOOLS = "This note is not a new request. Answer the User's message above, the one your tool "
+    + 'calls were for, using what your tools returned: give the specific details they asked for.';
+
+/**
+ * The runner speaking mid-turn, as a line of the transcript. ⚠ Not a system message:
+ * measured on nemotron-3-nano:4b, a system message after the conversation reads as a fresh
+ * start — sent only "Continue." it asked what it should continue. Nudged that way, whatever
+ * the wording, it answered without the request 28 times of 28; as this line, 11 of 12 gave
+ * every number. Labelled like any other line, so it carries no more authority than one; it
+ * holds only the runner's own words, so going to a remote model it is acknowledged, not
+ * put to the gate.
+ */
+function runnerNote(participant, text) {
+    return { role: 'user', content: `[Airlock → ${participant.name}] ${text}` };
+}
+
+/** Which of the two fits: the web wording only when this turn searched or opened a page. */
+function answerNow(useWeb, toolTrace) {
+    return useWeb && toolTrace.some(t => t.name === 'web_search' || t.name === 'fetch_url')
+        ? ANSWER_FROM_WEB : ANSWER_FROM_TOOLS;
+}
 
 /** The given link closest to `url` by edit distance, if it is close enough to be a slip. */
 function nearestLink(url, fetchable) {
