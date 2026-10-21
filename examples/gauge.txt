@@ -1,0 +1,3 @@
+Coolant loop pressure: 480 kPa at 09:14
+Valve B: closed since 2026-10-02
+Pump 2 draw: 3.7 A
