@@ -207,7 +207,8 @@ async function runGate(markdown, { model, config } = {}) {
                 : `${model} is not a model on this side of the boundary, so it cannot `
                     + 'rule on a crossing. Nothing was sent.',
             concerns: [],
-            model
+            model,
+            undecided: true
         };
     }
 
@@ -218,7 +219,8 @@ async function runGate(markdown, { model, config } = {}) {
             release: false,
             reason: 'No local model is reachable to rule on this crossing, so nothing was sent.',
             concerns: [],
-            model: null
+            model: null,
+            undecided: true
         };
     }
 
@@ -247,6 +249,7 @@ async function runGate(markdown, { model, config } = {}) {
                 reason: 'The gate did not return a decision that could be read, so nothing was sent.',
                 concerns: [],
                 model,
+                undecided: true,
                 usage,
                 unparsed: result.content.slice(0, 400)
             };
@@ -258,7 +261,8 @@ async function runGate(markdown, { model, config } = {}) {
             release: false,
             reason: `The gate could not be reached (${err.message}), so nothing was sent.`,
             concerns: [],
-            model
+            model,
+            undecided: true
         };
     }
 }

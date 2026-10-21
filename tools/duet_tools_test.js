@@ -37,6 +37,8 @@ const FAKE_PORT = 8161;
 const PORT = 8162;
 const BASE = `http://127.0.0.1:${PORT}`;
 const FAKE_MODEL = 'fake/remote-model';
+// A second model on the same far side: what one model was refused is still ruled on for another.
+const FAKE_MODEL_2 = 'fake/other-remote-model';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'airlock-duet-tools-'));
 const workspace = path.join(tmp, 'workspace');
@@ -103,7 +105,7 @@ const fake = http.createServer((req, res) => {
     req.on('end', () => {
         if (req.method === 'GET' && req.url.endsWith('/models')) {
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            return res.end(JSON.stringify({ data: [{ id: FAKE_MODEL, object: 'model' }] }));
+            return res.end(JSON.stringify({ data: [{ id: FAKE_MODEL, object: 'model' }, { id: FAKE_MODEL_2, object: 'model' }] }));
         }
         if (req.method === 'POST' && req.url.endsWith('/chat/completions')) {
             received.push(body);
@@ -190,7 +192,8 @@ const fake = http.createServer((req, res) => {
 // ─────────────────────── the stand-in gate ───────────────────────
 //
 // A fake Ollama, so the LOCAL side is under test control too. Its one model is the gate,
-// and it releases everything it is asked about.
+// and it releases everything it is asked about — except text carrying GATE_REFUSES, which
+// stands in for whatever a real gate model would withhold (section 10).
 //
 // Why: this file proves plumbing — that every route to a cloud model passes through the
 // scanner and a gate ruling — and a real gate model makes that depend on its judgement,
@@ -201,6 +204,7 @@ const fake = http.createServer((req, res) => {
 // and a route that skipped the gate would leak, and fail.
 
 const GATE_MODEL = 'stand-in-gate:1b';
+const GATE_REFUSES = 'stand-in-gate-refuses-7f3a';
 const gateAsked = [];               // every text the stand-in gate was asked to rule on
 
 const fakeOllama = http.createServer((req, res) => {
@@ -214,10 +218,13 @@ const fakeOllama = http.createServer((req, res) => {
         if (req.url === '/api/ps') return json({ models: [] });
         if (req.url === '/api/chat') {
             const { messages = [] } = JSON.parse(body || '{}');
-            gateAsked.push(messages.map(m => m.content).join('\n'));
+            const asked = messages.map(m => m.content).join('\n');
+            gateAsked.push(asked);
             res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
             res.end(JSON.stringify({
-                message: { role: 'assistant', content: '{"release": true, "reason": "stand-in gate", "concerns": []}' },
+                message: { role: 'assistant', content: asked.includes(GATE_REFUSES)
+                    ? '{"release": false, "reason": "stand-in gate: carries the refusal mark", "concerns": ["the refusal mark"]}'
+                    : '{"release": true, "reason": "stand-in gate", "concerns": []}' },
                 done: true
             }) + '\n');
             return;
@@ -313,7 +320,7 @@ async function main() {
 
         const health = await api('GET', '/api/health');
         const remote = (health.body?.models || []).filter(m => m.tier === 'remote').map(m => m.name);
-        const isolated = remote.length === 1 && remote[0] === FAKE_MODEL;
+        const isolated = remote.length === 2 && remote.every(m => m === FAKE_MODEL || m === FAKE_MODEL_2);
         ok(isolated, 'the server under test can reach only the fake remote', remote.join(', '));
         if (!isolated) throw new Error('refusing to continue: this server could reach a real remote tier');
 
@@ -658,6 +665,85 @@ async function main() {
         const shown11 = gateAsked.slice(g11).join('\n');
         ok(/Skeptic of every gauge/.test(shown11) && !/Never cite a file/.test(shown11),
             'with a role, the gate reads the role the User wrote — still none of Airlock\'s wording', shown11.slice(0, 240));
+
+        // ── 10. what the gate withheld from a side stays out of that side's later turns ──
+        // Seen on the desk 2026-10-21 ("Unauthorized Pizza Party"): a card number sent to the
+        // right side was withheld, and every later turn to that side was refused for the SAME
+        // card number — it was still in that side's context, and the gate never read the new
+        // message. A withheld message is now left out of what that side's model is sent.
+        console.log('\n10. a message withheld from a side is left out of that side\'s later turns');
+        const CARD_MARK = 'saffron-card-6a1d';
+        const { thread: tw, right: rw } = await duetThread(folderId, 'pizza party');
+        const leftOf = async t => (await api('GET', `/api/duet/${t.id}`)).body.participants.find(p => p.slot === 'a');
+        const lw = await leftOf(tw);
+        await api('PATCH', `/api/duet/participants/${lw.id}`, { model: GATE_MODEL });
+        const nw = received.length;
+        const w1 = await send(tw.id, { participantId: rw.id, text: `Pay with 4242 4242 4242 4242 (${CARD_MARK}).`, clientRequestId: 'wh-1' });
+        const card = w1.events.find(e => e.type === 'user')?.message;
+        const w1meta = w1.last('blocked')?.message?.requestMeta;
+        ok(w1meta?.gate?.ruledBy === 'secret scanner' && JSON.stringify(w1meta.withheldIds) === `[${card?.id}]`,
+            'the card number is withheld by the scanner, and the refusal names the message it withheld', JSON.stringify(w1meta));
+
+        const gw = gateAsked.length;
+        const w2 = await send(tw.id, { participantId: rw.id, text: 'Order the pizzas for Friday.', clientRequestId: 'wh-2' });
+        ok(Boolean(w2.last('done')), 'the next turn to that side is ruled on its own content, and released', trace(w2));
+        ok(gateAsked.slice(gw).some(t => t.includes('Order the pizzas')) && !gateAsked.slice(gw).some(t => t.includes(CARD_MARK)),
+            'the gate read the new message, and not the withheld one');
+        ok(!received.slice(nw).some(b => b.includes(CARD_MARK) || b.includes('4242')), 'the withheld message is not in the remote request');
+        ok(w2.last('done')?.message?.requestMeta?.leftOut?.includes(card?.id), "and the reply's record says it was left out");
+
+        const gl = gateAsked.length;
+        const w3 = await send(tw.id, { participantId: lw.id, text: 'Which card did I mention?', clientRequestId: 'wh-3' });
+        ok(Boolean(w3.last('done')) && gateAsked.slice(gl).some(t => t.includes(CARD_MARK)),
+            'the local side still has it in its context', trace(w3));
+
+        await api('PATCH', `/api/duet/participants/${rw.id}`, { model: FAKE_MODEL_2 });
+        const nw4 = received.length;
+        const w4 = await send(tw.id, { participantId: rw.id, text: 'And the drinks?', clientRequestId: 'wh-4' });
+        const w4meta = w4.last('blocked')?.message?.requestMeta;
+        ok(w4meta?.gate?.ruledBy === 'secret scanner', 'switched to a different remote model, that side is gated on it again, and refused',
+            trace(w4));
+        ok(!received.slice(nw4).some(b => b.includes(CARD_MARK)), 'nothing of it reached the other model');
+        ok(JSON.stringify(w4meta?.withheldIds) === `[${card?.id}]`,
+            'and of everything new to that model, only the message holding the card is withheld', JSON.stringify(w4meta?.withheldIds));
+        const w5 = await send(tw.id, { participantId: rw.id, text: 'And dessert?', clientRequestId: 'wh-5' });
+        ok(Boolean(w5.last('done')) && received.slice(nw4).some(b => b.includes('Order the pizzas'))
+            && !received.slice(nw4).some(b => b.includes(CARD_MARK)),
+            'after which that model too gets the conversation without it', trace(w5));
+
+        // The gate MODEL's refusal does not say which message it objects to, so the request is
+        // read again on its own — one more reading, only on a refusal of more than one message.
+        console.log('\n   …and when the gate model, not the scanner, withholds');
+        const { thread: tg, right: rg } = await duetThread(folderId, 'gate model withholds');
+        const lg = await leftOf(tg);
+        await api('PATCH', `/api/duet/participants/${lg.id}`, { model: GATE_MODEL });
+        await send(tg.id, { participantId: lg.id, text: 'Plan: teal ribbons for Friday.', clientRequestId: 'gm-1' });
+        const gg = gateAsked.length;
+        const m1 = await send(tg.id, { participantId: rg.id, text: `Ada lives at 12 Elm Row (${GATE_REFUSES}).`, clientRequestId: 'gm-2' });
+        const ada = m1.events.find(e => e.type === 'user')?.message;
+        const m1held = m1.last('blocked')?.message?.requestMeta?.withheldIds;
+        ok(JSON.stringify(m1held) === `[${ada?.id}]` && gateAsked.length - gg === 2,
+            "refused, and refused again on its own: the request alone is withheld, not the other side's exchange",
+            `${JSON.stringify(m1held)}, ${gateAsked.length - gg} gate readings`);
+        const ng = received.length;
+        const m2 = await send(tg.id, { participantId: rg.id, text: 'What did Left plan?', clientRequestId: 'gm-3' });
+        ok(Boolean(m2.last('done')) && received.slice(ng).some(b => b.includes('teal ribbons for Friday'))
+            && !received.slice(ng).some(b => b.includes(GATE_REFUSES) || b.includes('Elm Row')),
+            "the next turn crosses with the other side's exchange, and without the withheld request", trace(m2));
+
+        const quotedG = (await api('POST', '/api/packets', {
+            threadId: tg.id, role: 'assistant', content: `From my notes: ${GATE_REFUSES}`, model: 'local-quoter'
+        })).body;
+        const m3 = await send(tg.id, { participantId: rg.id, text: 'Anything to add?', clientRequestId: 'gm-4' });
+        ok(JSON.stringify(m3.last('blocked')?.message?.requestMeta?.withheldIds) === `[${quotedG?.id}]`,
+            'when the request alone is released, what is withheld is the rest: the quotation, not the question',
+            JSON.stringify(m3.last('blocked')?.message?.requestMeta));
+        const ng4 = received.length;
+        const m4 = await send(tg.id, { participantId: rg.id, text: 'And now?', clientRequestId: 'gm-5' });
+        ok(Boolean(m4.last('done')) && received.slice(ng4).some(b => b.includes('Anything to add?'))
+            && !received.slice(ng4).some(b => b.includes(GATE_REFUSES)),
+            'and the next turn crosses with the question, without the quotation', trace(m4));
+
         ok(!rejected.length, 'no request to the remote side was malformed', rejected.slice(0, 3).join(' | '));
     } finally {
         child.kill();

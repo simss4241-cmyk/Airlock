@@ -269,11 +269,15 @@ function mergeRuns(entries) {
  * @param {string}   [args.userName]
  * @param {object}   [args.dialogueWith] the participant whose reply this turn answers, when
  *                                       it is a chatter turn rather than an answer to the user
- * @returns {{messages: object[], meta: object}}
+ * @param {Iterable<number>} [args.withheld] packet ids the gate withheld from this side's
+ *                                       model (withheldFrom, below): left out of the history.
+ *                                       Never the trigger — a retry is asked again, and gated.
+ * @returns {{messages: object[], sources: number[][], meta: object}}
  */
 function buildContext({
     participant, others = [], messages = [], trigger = null,
-    appSystemPrompt = '', numCtx = 8192, userName = USER_NAME_FALLBACK, dialogueWith = null
+    appSystemPrompt = '', numCtx = 8192, userName = USER_NAME_FALLBACK, dialogueWith = null,
+    withheld = []
 }) {
     if (!participant) throw new Error('buildContext needs a participant.');
 
@@ -290,7 +294,9 @@ function buildContext({
     // The trigger is pulled out of the history so it can be reserved first. A trigger
     // already present in `messages` is matched by id rather than by position, so a caller
     // that passes the snapshot verbatim gets the same result as one that trims it.
-    const history = trigger ? messages.filter(m => m.id !== trigger.id) : [...messages];
+    const leaveOut = new Set(withheld);
+    const leftOut = messages.filter(m => leaveOut.has(m.id) && m.id !== trigger?.id).map(m => m.id);
+    const history = messages.filter(m => m.id !== trigger?.id && !leaveOut.has(m.id));
 
     const entries = [];
     let usedChars = 0;
@@ -352,6 +358,9 @@ function buildContext({
             ...merged.map(({ role, content, images }) =>
                 (images?.length ? { role, content, images } : { role, content }))
         ],
+        // Which packets each wire message holds, in step with `messages` (the system message
+        // holds none). How a refusal is traced back to the messages it was about.
+        sources: [[], ...merged.map(m => m.sourceIds)],
         meta: {
             budgetChars,
             usedChars,
@@ -362,13 +371,56 @@ function buildContext({
             // The packet ids whose text is actually in this context. This is the exact set
             // that crosses the boundary when the answering participant is remote, so it is
             // also the set recorded as having crossed.
-            sourceIds: merged.flatMap(m => m.sourceIds)
+            sourceIds: merged.flatMap(m => m.sourceIds),
+            // What was left out because the gate withheld it from this model before.
+            ...(leftOut.length ? { leftOut } : {})
         }
     };
 }
 
+/**
+ * The packets the gate withheld from `participant` while it ran `model`, and that have not
+ * reached that model since. Left out of what that model is sent from then on: it never saw
+ * them, so its view of the conversation should not hold them. Measured on the desk
+ * 2026-10-21: a card number withheld once stayed in the remote side's context, and every
+ * later turn to that side was refused for it — the gate never read the new message at all.
+ *
+ * Scoped to the side AND the model, the way ownWords is. The other side still sees the
+ * message, and a different model on this side is gated on it like anything else new.
+ *
+ * Read from the record, oldest first:
+ *   - a refused turn names what it withheld (`requestMeta.withheldIds`, set by the runner
+ *     from the ruling, see duet-runner.js withheldBy);
+ *   - a turn refused before that field existed is taken to have withheld the message it
+ *     answered — when its ruling was a decision (the scanner's, or the model's with a
+ *     concern), not a gate that could not be reached;
+ *   - a turn withheld MID-turn (tool results, `withheld`) had crossed already: nothing to add;
+ *   - anything that later did cross to this model (a retry, released) is back in.
+ *
+ * ⚠ This can only send less. It never marks anything released or as this model's own words;
+ * what is sent is still ruled on by the kernel, whole.
+ */
+function withheldFrom({ conversation = [], participant, model }) {
+    const out = new Set();
+    for (const m of conversation) {
+        if (m.authorId == null || m.authorId !== participant.id || m.model !== model) continue;
+        const meta = m.requestMeta || {};
+        if (m.status === 'blocked' && !meta.withheld && !meta.crossed) {
+            if (Array.isArray(meta.withheldIds)) meta.withheldIds.forEach(id => out.add(id));
+            else if (m.replyTo != null && decided(meta.gate)) out.add(m.replyTo);
+        }
+        if (meta.crossed) (meta.sourceIds || []).forEach(id => out.delete(id));
+    }
+    return out;
+}
+
+/** A refusal that was a ruling on the words — not a gate that failed or could not read them. */
+const decided = gate => Boolean(gate) && gate.release === false && !gate.undecided
+    && (gate.ruledBy === 'secret scanner' || (Boolean(gate.model) && gate.concerns?.length > 0));
+
 module.exports = {
-    buildContext, buildSystemPrompt, gateViewOfSystem, DEFAULT_APP_PROMPT, isDefaultAppPrompt, label,
+    buildContext, buildSystemPrompt, gateViewOfSystem, withheldFrom, transcriptLine,
+    DEFAULT_APP_PROMPT, isDefaultAppPrompt, label,
     CHARS_PER_TOKEN, REPLY_RESERVE_TOKENS, MIN_HISTORY_CHARS,
     OMISSION_MARKER, TRUNCATION_MARKER
 };

@@ -1066,3 +1066,46 @@ fired in 1 run of 6 before (the same "unverified" non-answer) and in 0 of 12 aft
 passing and not fixed here: most unforced runs never called the calculator, yet wrote "(calc: 7
 × 14.50)" beside the numbers. One run wrote its tool call as text, "<tool_call>
 <function=calculate>".
+
+## Verified 2026-10-21 — a withheld message stays out of that side's later turns
+
+Seen on the desk, thread "Unauthorized Pizza Party": #148, sent to the right (cloud) side, held a
+card number, and the scanner withheld it (#149). Then #150, contact details meant to test the
+gate model, was refused with the same card-number reason, ruled by the secret scanner (#151).
+Its `sourceIds` included 148. The withheld message was still in that side's context. Every
+later turn to that side would have been refused for it until it was deleted. The gate model
+never read the new message, and the reason did not say it was about an earlier one.
+
+Now a message the gate withheld from a side is left out of what that side's model is sent
+later. That model never saw it. Scoped like `ownWords`, to the side AND the model. The other
+side still sees the message, and a different model on the same side is gated on it like
+anything new. Which messages a refusal withheld is decided when it happens and kept on it
+(`requestMeta.withheldIds`). The refusal was about everything new the gate read, which can be
+the other side's latest exchange as well as the request, so it is narrowed. A scanner refusal
+withholds only the messages that hold a credential. A gate-model refusal is checked against the
+request on its own, which costs one more reading and only when more than one message was new.
+If the request alone is refused, only it is withheld. If it is released alone, the rest is what
+gets withheld. A gate that failed or could not read (unreachable, unparsed, an image) withholds
+nothing, so the message is just gated again next time. A turn withheld mid-way at a file result
+had already crossed, so nothing is added. A message that later does reach that model, through a
+retry or a gate the User changed, is back in. Refusals written before this record get the
+message they answered, when their ruling was a decision. The trigger is never left out, so a
+retry is asked again and gated. Exclusion only sends less: nothing is marked released or as the
+model's own words, and the kernel still rules on the whole wire. The red card adds one line,
+"Kept out of what <model> is sent from now on: the message it answered."
+
+`duet_context_test` 120/120 (13 new: scoping by side and model, left out with `meta.leftOut`,
+the other side keeps it, retry, back in once crossed, the legacy rule, and that undecided or
+mid-turn refusals withhold nothing). `duet_tools_test` 86/86 (14 new, end to end against the
+fake remote). Card to the right side: refused by the scanner, the refusal names the message.
+The next turn is released, the gate read only the new message, and the card is in no remote
+request. The local side's request still holds it. Switched to a second fake remote model, the
+side is refused again, withholding only the card message of everything new. Its next turn is
+released without it. With a stand-in gate that refuses a mark: a refused request after the
+other side's exchange withholds only the request, after two gate readings, and the next turn
+carries that exchange. A refused quotation with a clean question withholds the quotation and
+keeps the question. Mutation check: with the exclusion off, 7 of these fail, the first with the
+desk's own symptom, the next turn refused by the scanner for the earlier card. With no
+narrowing, 6 fail. All other offline suites green. Against a throwaway server: smoke 66,
+duet 48 (2 opt-in remote skips), boundary 49. The card's new line was checked in the page there.
+Not verified with the real 14B gate model; its rulings are its own (gate_bench).

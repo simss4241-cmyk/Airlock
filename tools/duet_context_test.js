@@ -517,5 +517,74 @@ ok(gateViewOfSystem({ participant: seat(), others: [], userName: 'User', appSyst
 ok(/British English/.test(gateViewOfSystem({ participant: seat(), others: [], userName: 'User', appSystemPrompt: DEFAULT_APP_PROMPT + '\nUse British English.' })),
     'once the User edits it, it is theirs, and read in full');
 
+// ── 20. what the gate withheld from a side stays out of that side's later turns ──
+//
+// Seen on the desk 2026-10-21 ("Unauthorized Pizza Party"): a card number sent to the right
+// side was withheld, and the next message to that side — contact details, meant for the gate
+// model — was refused for the SAME card number. The withheld message was still in its context.
+
+const { withheldFrom } = require('../duet-context');
+console.log('\nwhat the gate withheld from a side');
+{
+    const OTHER_REMOTE = 'deepseek-ai/some-other-remote';
+    const CARD = 'Pay with 4242 4242 4242 4242, card-mark-6a1d.';
+    let n = 100;
+    const card = { ...userTo(RIGHT, CARD), id: ++n, seq: n };
+    const scannerSaid = { release: false, ruledBy: 'secret scanner', model: null, concerns: ['a payment card number (4242…42)'] };
+    const refusal = (over, meta) => ({ ...replyFrom(RIGHT, ''), id: ++n, seq: n, status: 'blocked', replyTo: over.id,
+        requestMeta: { gate: scannerSaid, ...meta } });
+    const blocked = refusal(card, { withheldIds: [card.id] });
+    const next = { ...userTo(RIGHT, 'Order the pizzas for Friday.'), id: ++n, seq: n };
+    const record = [askLeft, leftSaid, card, blocked, next];
+
+    ok(JSON.stringify([...withheldFrom({ conversation: record, participant: RIGHT, model: RIGHT.model })]) === `[${card.id}]`,
+        'a refused turn names what it withheld from that side, for that model');
+    ok(withheldFrom({ conversation: record, participant: LEFT, model: LEFT.model }).size === 0,
+        'the other side has nothing withheld from it');
+    ok(withheldFrom({ conversation: record, participant: RIGHT, model: OTHER_REMOTE }).size === 0,
+        'nor does a different model on the same side: it is gated on the message like anything new');
+
+    const snapshot = record.filter(m => m.status !== 'blocked');
+    const right = buildContext({ participant: RIGHT, others: [LEFT], messages: snapshot, trigger: next, userName: 'User',
+        withheld: withheldFrom({ conversation: record, participant: RIGHT, model: RIGHT.model }) });
+    const rightText = right.messages.map(m => m.content).join('\n');
+    ok(!rightText.includes('card-mark-6a1d') && !right.meta.sourceIds.includes(card.id)
+        && JSON.stringify(right.meta.leftOut) === `[${card.id}]`,
+        'the withheld message is left out of that side\'s next context, and the record says so', JSON.stringify(right.meta));
+    ok(rightText.includes('Call it Verdigris.') && rightText.includes('Order the pizzas'),
+        'and nothing else is: the rest of the conversation, and the new request, are all there');
+    ok(right.sources.length === right.messages.length && right.sources.flat().join() === right.meta.sourceIds.join(),
+        'each wire message says which packets it holds (how a refusal is traced back to them)');
+
+    const left = buildContext({ participant: LEFT, others: [RIGHT], messages: snapshot, trigger: null, userName: 'User',
+        withheld: withheldFrom({ conversation: record, participant: LEFT, model: LEFT.model }) });
+    ok(left.messages.some(m => m.content.includes('card-mark-6a1d')), 'the other side still sees it');
+
+    const retried = buildContext({ participant: RIGHT, others: [LEFT], messages: snapshot, trigger: card, userName: 'User',
+        withheld: [card.id] });
+    ok(retried.messages.at(-1).content.includes('card-mark-6a1d'),
+        'a retry of the withheld message is asked again — the trigger is never left out, it is gated');
+
+    // Released later — a retry, or a gate the User changed — and it is back in.
+    const sent = { ...replyFrom(RIGHT, 'Paid.'), id: ++n, seq: n, replyTo: card.id,
+        requestMeta: { crossed: true, sourceIds: [askLeft.id, leftSaid.id, card.id] } };
+    ok(withheldFrom({ conversation: [...record, sent], participant: RIGHT, model: RIGHT.model }).size === 0,
+        'a message that later did reach that model is not left out any more');
+
+    // Refusals written before withheldIds existed: the message it answered, when the ruling
+    // was a decision on the words. Not a gate that failed, and not a mid-turn withhold.
+    const legacy = (gate, meta = {}) => withheldFrom({ conversation: [card,
+        { ...replyFrom(RIGHT, ''), id: 900, seq: 900, status: 'blocked', replyTo: card.id, requestMeta: { gate, ...meta } }],
+        participant: RIGHT, model: RIGHT.model }).size;
+    ok(legacy(scannerSaid) === 1 && legacy({ release: false, model: 'qwen2.5:14b', concerns: ['a home address'] }) === 1,
+        'an older refusal by the scanner or the gate model withholds the message it answered');
+    ok(legacy({ release: false, model: 'qwen2.5:14b', concerns: [], reason: 'The gate could not be reached (ECONNREFUSED)' }) === 0
+        && legacy({ ...scannerSaid, undecided: true }) === 0,
+        'a gate that could not rule withholds nothing: the message is gated again next time');
+    ok(legacy(scannerSaid, { withheld: ['read_file(todo.md)'], crossed: true }) === 0,
+        'a turn withheld mid-way, at a file result, had already crossed: its request is not left out');
+    ok(legacy(scannerSaid, { withheldIds: [] }) === 0, 'and a refusal that names nothing withholds nothing');
+}
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 if (fail) process.exit(1);

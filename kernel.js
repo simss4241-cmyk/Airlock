@@ -183,7 +183,9 @@ const COVERED = Object.freeze({
  * gateViewOfSystem). Empty text means none of it is the User's, and it is not read at all.
  * The clearance still covers the message exactly as sent; only what the gate reads changes.
  *
- * Returns { ok: true, token, ruling, fresh } or { ok: false, ruling, fresh }.
+ * Returns { ok: true, token, ruling, fresh } or { ok: false, ruling, fresh, freshAt }, where
+ * `freshAt` is the index in `messages` of each one the gate was asked about — what a refusal
+ * was about, so the caller can say which messages it withheld.
  * A local destination needs no clearance and gets { ok: true, token: null, local: true }.
  */
 async function clear({ model, messages = [], config = {}, threadId = null, ownWords = [], shownAs = [] }) {
@@ -195,17 +197,21 @@ async function clear({ model, messages = [], config = {}, threadId = null, ownWo
     const seen = new Set();
     const fresh = units.filter(u => !released().has(u.h) && !own.has(u.h) && !(views.has(u.h) && !views.get(u.h))
         && !seen.has(u.h) && seen.add(u.h));
+    const freshAt = units.flatMap((u, i) => (seen.has(u.h) ? [i] : []));
 
     if (fresh.some(u => u.m.images?.length)) {
         return {
             ok: false,
             fresh: fresh.length,
+            freshAt,
             ruling: {
                 release: false,
                 reason: 'This request carries an image, and the local gate reads text only — '
                     + 'it cannot rule on what an image shows, so nothing was sent.',
                 concerns: ['image'],
-                model: null
+                model: null,
+                // Not a ruling on the words: the gate never read them.
+                undecided: true
             }
         };
     }
@@ -216,11 +222,23 @@ async function clear({ model, messages = [], config = {}, threadId = null, ownWo
         ruling = await require('./boundary').runGate(fresh.map(u => views.has(u.h)
             ? `${u.m.role} (only what the User wrote in it):\n${views.get(u.h)}` : describe(u.m)).join('\n\n'), { config });
         recordGateUsage(ruling, threadId);
-        if (!ruling.release) return { ok: false, ruling, fresh: fresh.length };
+        if (!ruling.release) return { ok: false, ruling, fresh: fresh.length, freshAt };
         for (const u of fresh) remember(u.h, 'gate', ruling.model || null);
     }
 
     return { ok: true, token: issue(model, units.map(u => u.h), ruling), ruling, fresh: fresh.length };
+}
+
+/**
+ * Ask the gate about some messages WITHOUT sending them anywhere: no clearance is issued and
+ * nothing is remembered as released, so a ruling here can never let anything cross. Used after
+ * a refusal, to tell which of the messages it was about the gate objects to on its own
+ * (duet-runner.js withheldBy). On the token ledger like any other reading.
+ */
+async function judge({ messages = [], config = {}, threadId = null }) {
+    const ruling = await require('./boundary').runGate(messages.map(describe).join('\n\n'), { config });
+    recordGateUsage(ruling, threadId);
+    return ruling;
 }
 
 /** The unit a web clearance is bound to: the destination and the exact text sent. */
@@ -291,7 +309,7 @@ const isIssuedFor = (token, model) => Boolean(token) && issued.has(token) && tok
 
 module.exports = {
     clearOutbound, clearLink, outboundUnit,
-    clear, acknowledge, covers, isIssuedFor, unitHash, persistTo,
+    clear, judge, acknowledge, covers, isIssuedFor, unitHash, persistTo,
     // Tests reach in to simulate a restart: the CURRENT scope's record, and dropping it.
     get _released() { return released(); },
     _forget() { memories.delete(sandbox.scopeKey()); }

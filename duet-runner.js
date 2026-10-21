@@ -44,7 +44,8 @@ const providers = require('./providers');
 const auth = require('./auth');
 const kernel = require('./kernel');
 const sandbox = require('./sandbox');
-const { buildContext, CHARS_PER_TOKEN, REPLY_RESERVE_TOKENS } = require('./duet-context');
+const { buildContext, withheldFrom, transcriptLine, CHARS_PER_TOKEN, REPLY_RESERVE_TOKENS } = require('./duet-context');
+const secrets = require('./secrets');
 const workspace = require('./workspace-tools');
 const web = require('./web');
 const calc = require('./public/calc');
@@ -164,6 +165,44 @@ function ownWordsOf({ wire, snapshot, participant, model }) {
         .filter(m => m.authorId === participant.id && m.model === model && m.tier === 'remote' && m.content)
         .map(m => m.content));
     return wire.filter(w => w.role === 'assistant' && mine.has(w.content));
+}
+
+/**
+ * Which packets a refused turn withheld from this side's model — kept on the refusal, and
+ * left out of every later turn to that model (duet-context.js withheldFrom). Without this,
+ * one withheld message stayed in the side's context and every later turn was refused for it.
+ *
+ * The refusal was about everything the gate was asked to read — the turn's new messages,
+ * which may be several: the other side's latest exchange as well as the request. Held back
+ * whole, a card number typed to the right side would take the left side's innocent answer
+ * with it. So it is narrowed, never widened:
+ *   - the scanner's refusal names a credential: the messages that hold one are withheld;
+ *   - the gate model's refusal is checked against the request alone (one more reading, only
+ *     on a refusal with more than one new message, nothing sent and nothing remembered):
+ *     refused alone, it alone is withheld; released alone, the rest is what was refused.
+ * Whatever cannot be narrowed is withheld whole. A gate that failed rather than ruled
+ * withholds nothing: the message is simply gated again next time.
+ *
+ * ⚠ Only ever decides what is sent LESS. A wrong answer here costs context, not exposure.
+ */
+async function withheldBy({ cleared, sources, trigger, snapshot, userName, config, threadId }) {
+    const ruling = cleared?.ruling;
+    if (!ruling || ruling.release || ruling.undecided) return [];
+    const fresh = [...new Set((cleared.freshAt || []).flatMap(i => sources[i] || []))];
+    if (fresh.length <= 1) return fresh;
+
+    const byId = new Map([...snapshot, trigger].map(m => [m.id, m]));
+    const lineOf = id => (byId.get(id) ? transcriptLine(byId.get(id), { userName }, { attached: id === trigger.id }) : '');
+
+    if (ruling.ruledBy === 'secret scanner') {
+        const holding = fresh.filter(id => secrets.scan(lineOf(id)).length);
+        return holding.length ? holding : fresh;
+    }
+    if (!fresh.includes(trigger.id)) return fresh;
+    const alone = await kernel.judge({ messages: [{ role: 'user', content: lineOf(trigger.id) }], config, threadId })
+        .catch(() => null);
+    if (!alone || alone.undecided) return fresh;
+    return alone.release ? fresh.filter(id => id !== trigger.id) : [trigger.id];
 }
 
 // ─────────────────────────── generation ───────────────────────────
@@ -335,9 +374,12 @@ async function generate({
 
     // ── 2. snapshot, fixed at submit time ──
     const snapshotSeq = trigger.seq;
-    const snapshot = duet.getConversation(threadId, { maxSeq: snapshotSeq, completedOnly: true });
+    const record = duet.getConversation(threadId, { maxSeq: snapshotSeq });
+    const snapshot = record.filter(m => m.status === STATUS.COMPLETE);
 
-    const { messages: wire, meta, systemForGate } = buildContext({
+    const crosses = tier !== 'local';
+
+    const { messages: wire, sources, meta, systemForGate } = buildContext({
         participant,
         others,
         messages: snapshot,
@@ -347,7 +389,10 @@ async function generate({
         userName: duet.USER_NAME,
         // Any relay is a dialogue turn — including one answering a reply from before the
         // thread had participants, which has no author to name.
-        dialogueWith: relayOf ? (dialogueWith || { name: 'the other participant' }) : null
+        dialogueWith: relayOf ? (dialogueWith || { name: 'the other participant' }) : null,
+        // What the gate withheld from this model before stays out: it never saw it. Read
+        // from the whole record, refusals included, which the snapshot leaves out.
+        withheld: crosses ? withheldFrom({ conversation: record, participant, model }) : []
     });
 
     const generationId = nextGenerationId();
@@ -396,16 +441,15 @@ async function generate({
     let gateRuling = null;
     let clearance = null;
 
-    // ⚠ `!== 'local'`: anything the local catalogue did not name is treated as a
+    // ⚠ `crosses` is `!== 'local'`: anything the local catalogue did not name is treated as a
     // crossing. A duet crossing carries the OTHER participant's words too, so this is
     // the last place that should be deciding by exact string match on 'remote'.
-    const crosses = tier !== 'local';
-
     if (crosses) {
         emit({ type: 'gating', messageId: reply.id });
 
+        let cleared = null;
         try {
-            const cleared = await clearCrossing({ model, wire, config, threadId, systemForGate,
+            cleared = await clearCrossing({ model, wire, config, threadId, systemForGate,
                 ownWords: ownWordsOf({ wire, snapshot, participant, model }) });
             gateRuling = cleared.ruling;
             clearance = cleared.token;
@@ -414,14 +458,19 @@ async function generate({
             gateRuling = {
                 release: false,
                 reason: `The gate could not be reached (${err.message}), so nothing was sent.`,
-                concerns: []
+                concerns: [],
+                undecided: true
             };
         }
 
         if (!gateRuling.release) {
             // Nothing has touched the network. The refusal stays in the log as a packet so
-            // the attempt is part of the record, and `blocked` keeps it out of context.
-            reply = settle(STATUS.BLOCKED, '', { gate: gateRuling });
+            // the attempt is part of the record, and `blocked` keeps it out of context —
+            // and what it withheld stays out of this model's later turns (withheldBy).
+            // Never in the way of settling: if it cannot say, nothing is left out later.
+            const withheldIds = await withheldBy({ cleared, sources, trigger, snapshot,
+                userName: duet.USER_NAME, config, threadId }).catch(() => []);
+            reply = settle(STATUS.BLOCKED, '', { gate: gateRuling, withheldIds });
             emit({ type: 'blocked', message: reply, gate: gateRuling, tier });
             return reply;
         }

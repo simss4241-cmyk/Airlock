@@ -741,7 +741,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
 
     // A blocked generation has no text, so the gate's reason IS the message.
     const gate = message.status === 'blocked' && message.requestMeta?.gate
-        ? gateHtml(message.requestMeta.gate, message.requestMeta.withheld)
+        ? gateHtml(message.requestMeta.gate, message.requestMeta.withheld, keptOutNote(message))
         : '';
 
     // A failure with nothing written says why, from the record — an empty red box reads as
@@ -826,8 +826,21 @@ function messageHtml(message, { showAddressing = false } = {}) {
             </div>`;
 }
 
+/**
+ * What a refusal keeps out of that model's later turns (duet-runner.js withheldBy): one line,
+ * so the next turn's context is not a surprise. Older refusals carry no such record.
+ */
+function keptOutNote(message) {
+    const ids = message.requestMeta?.withheldIds;
+    if (!ids?.length) return '';
+    const others = ids.filter(id => id !== message.replyTo).length;
+    const what = [ids.includes(message.replyTo) ? 'the message it answered' : '',
+        others ? `${others} earlier message${others > 1 ? 's' : ''}` : ''].filter(Boolean).join(' and ');
+    return ` Kept out of what ${escapeHtml(message.model || 'this model')} is sent from now on: ${what}.`;
+}
+
 /** The local gate's ruling, rendered where the answer would have been. */
-function gateHtml(gate, withheld = null) {
+function gateHtml(gate, withheld = null, keptOut = '') {
     const concerns = gate.concerns?.length
         ? `<ul>${gate.concerns.map(c => `<li>${escapeHtml(String(c))}</li>`).join('')}</ul>`
         : '';
@@ -851,7 +864,7 @@ function gateHtml(gate, withheld = null) {
                 ${concerns}
                 <p class="stats">Nothing was sent.${
                     gate.model || gate.ruledBy
-                        ? ` Ruled by ${escapeHtml(gate.model || gate.ruledBy)}.` : ''}</p>
+                        ? ` Ruled by ${escapeHtml(gate.model || gate.ruledBy)}.` : ''}${keptOut}</p>
             </div>`;
 }
 
