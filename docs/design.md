@@ -437,7 +437,7 @@ the thing only you can.
 
 ## Tests
 
-**About 830 assertions across nineteen suites** (2026-10-21). Run them:
+**About 860 assertions across twenty suites** (2026-10-22). Run them:
 
 ```
 npm start                          # in one terminal
@@ -456,6 +456,7 @@ node tools/web_test.js             # web search and fetch: the gate, given links
 node tools/workspace_http_test.js  # workspace routes over HTTP
 node tools/clearance_test.js       # retired per-thread consent is removed from old databases
 node tools/secrets_test.js         # the credential scanner in front of the gate (offline)
+node tools/ruling_test.js          # a gate ruling never keeps a secret, on screen or on disk (offline)
 node tools/kernel_test.js          # the kernel, both locks, one door
 node tools/hosting_test.js         # what a hosted instance lets a visitor reach
 node tools/sandbox_test.js         # every store call routed to its visitor's database

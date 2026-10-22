@@ -221,7 +221,8 @@ leaving the machine.
 - **A scanner first.** Known credential formats — private keys, cloud and platform tokens,
   passwords in URLs, secrets in env files, card numbers, SSNs — are withheld by `secrets.js`
   before any model reads anything. The same rules run in the page, so a message dragged or
-  copied out is checked too.
+  copied out is checked too — and they mask the gate's own ruling, so a reason never repeats a
+  secret it found.
 - **Then a local model**, at temperature 0, with a prompt that says *withhold what contains
   a secret, not what talks about one*: a question about rotating API keys is fine; the key is
   not. Ordinary data — readings, configs, logs, plans — is fine however real it is.
@@ -260,7 +261,7 @@ sandboxes for hosting, and the gate's measurement bench — about 80 commits sin
 
 ## Tests
 
-Nineteen suites, about 830 assertions. Fifteen run offline on a clean clone with no key and
+Twenty suites, about 860 assertions. Sixteen run offline on a clean clone with no key and
 no model — they fake both a remote and Ollama where needed, so they prove the plumbing, not a
 model's judgement:
 
