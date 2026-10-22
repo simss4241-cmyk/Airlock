@@ -1109,3 +1109,58 @@ desk's own symptom, the next turn refused by the scanner for the earlier card. W
 narrowing, 6 fail. All other offline suites green. Against a throwaway server: smoke 66,
 duet 48 (2 opt-in remote skips), boundary 49. The card's new line was checked in the page there.
 Not verified with the real 14B gate model; its rulings are its own (gate_bench).
+
+## Verified 2026-10-22 — a ruling that repeated the secret it withheld
+
+Seen on the desk: a Sep 28 refusal, ruled by `nemotron-3-nano:4b` before the scanner existed, on
+"aws configure set aws_access_key_id AKIA… && … aws_secret_access_key q8Vd…". The red card said
+"contains AWS credentials", then listed both secret values in full as its concerns. The scanner
+only ever shows a four-character preview. But a gate model's `reason` and `concerns` are free
+text, and `GATE_SYSTEM` asks it to "name anything … the author may not realise they are
+exposing". Sometimes it names a secret by repeating it. The ruling is stored on the blocked
+reply's `request_meta.gate`, and deleting a message never touched the ruling on the reply that
+answered it. So the credential stayed in `airlock.db` after its message was deleted, against
+the README's promise that the words go.
+
+Fixed in code, not in the prompt. `GATE_SYSTEM` is unchanged, so `gate_bench` was not rerun.
+
+- `secrets.js` `maskRuling(gate, source)` masks a ruling's reason, concerns and raw unparsed
+  answer. Every known format becomes the scanner's preview, wherever it appears. Anything
+  copied verbatim from `source` (the text the gate read) that is secret-shaped is masked too.
+  That catches values no rule has a pattern for, such as a bare AWS secret or a password in a
+  sentence. Secret-shaped means at least 8 characters, letters and digits, and either a symbol
+  or at least three letter/digit switches. Links and placeholders don't count. `hunter2!`,
+  `P@ssw0rd123` and `AKIAQX7RZ3M4TB2WKLPE` are masked. `report2024.pdf`, `Win32Exception`,
+  `qwen2.5:14b`, `v2.4.1` and dates are not. Only what the model copied from its input is
+  masked, so "a person's phone number" and "AWS credentials" are never touched.
+- `boundary.js` `runGate` returns every ruling masked against its own input. That covers each
+  path that makes one: duet turns (`kernel.clear`), `kernel.judge`, the web-query gate
+  (`kernel.clearOutbound`), and ⇱ Carry out.
+- The page masks again in `gateHtml` (public/duet.js), against the conversation up to that
+  message, so a ruling stored before this renders masked. If the scanner failed to load, the
+  model's words are not shown.
+- A one-time migration on open (`gate_rulings_masked`, duet-store.js) masks stored rulings
+  against their thread's text. A ruling on a message that was already deleted loses its
+  words. Then the WAL is checkpointed.
+- Deleting a message erases the words of any ruling about it: on the reply that answered it,
+  or on a refusal that withheld it (`withheldIds`). The decision, the model and the scanner's
+  rule ids stay, marked `erased`, and the card says the gate's words went with the message.
+  Other rulings in the thread lose whatever secret-shaped text they copied from it.
+
+`ruling_test` 28/28, new and offline. It covers masking, including the desk's own ruling and
+a list of ordinary concerns left untouched. A fake gate model that echoes a password and a
+token through `runGate` has both masked, and its unparsed answer is masked too. `gateHtml`, run
+from public/duet.js in a vm, renders a fully stored ruling masked. The migration scrubs a
+planted database the old code would have left. Delete erases, and the file and its WAL no
+longer hold any of the values. `duet_tools_test` 90/90 (4 new, end to end). A stand-in gate
+repeats a key and a password: both are masked in the `blocked` event and in the stored
+ruling, and its ordinary concerns are kept word for word. Deleting the message erases the
+ruling's words, and neither secret is left on disk. Mutation check: with runGate unmasked,
+2 fail. With the page unmasked, 1 fails. With no migration, 4 fail. With no delete scrub,
+4 fail. End to end with runGate unmasked and no delete scrub, 3 of the 4 new fail. All other
+offline suites green.
+Against a throwaway server: smoke 66, duet 48 (2 opt-in remote skips), boundary 49. In the page
+there, a ruling planted after boot, holding both of the desk's values in full, rendered as
+"AKIA…PE" and "q8Vd…Qv" while the stored copy was still unmasked. After its request was
+deleted, the card showed the erased line, and neither value was left in the database or its
+WAL. Not run against the user's desk. It needs a restart to run the migration.

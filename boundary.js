@@ -183,7 +183,15 @@ function readDecision(text) {
  * the call sites is deliberate: there were three call sites and all three had it wrong,
  * so the guarantee belongs where it cannot be forgotten.
  */
-async function runGate(markdown, { model, config } = {}) {
+async function runGate(markdown, opts = {}) {
+    // Every ruling leaves here masked: whatever the model repeated of a secret it read
+    // becomes the scanner's preview before anyone stores or shows it (secrets.js
+    // maskRuling). Here, at the one function every ruling comes out of — a duet turn,
+    // kernel.judge, a web query, a carry — rather than at each caller.
+    return secrets.maskRuling(await ruleOn(markdown, opts), markdown);
+}
+
+async function ruleOn(markdown, { model, config } = {}) {
     // Known credential formats first, and without a model. See secrets.js: the scanner can
     // only withhold, so running it ahead of everything else can never let something
     // through that the model would have stopped — it only stops, for certain and in

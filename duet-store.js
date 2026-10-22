@@ -27,6 +27,8 @@
  * boundary, which is the arrangement this whole feature is most interesting for.
  */
 
+const secrets = require('./secrets');
+
 const now = () => new Date().toISOString();
 
 /**
@@ -161,6 +163,40 @@ function createDuet(db, store) {
         rename.run('Left', 'a', 'Lyra');
         rename.run('Right', 'b', 'Ember');
         store.setMeta('duet_sides_not_personas', now());
+    }
+
+    // Mask the gate rulings stored before rulings were masked (2026-10-22). A gate model's
+    // reason and concerns could repeat a secret it read, in full, and they were kept on the
+    // blocked reply — so a credential the gate refused to send stayed in this file, and
+    // stayed after its message was deleted. Each ruling is masked against its thread's text
+    // (secrets.js maskRuling); one about a message already deleted loses its words, as a
+    // delete does now (db.js deletePacket). Then the old text is checkpointed out of the WAL.
+    if (!store.getMeta('gate_rulings_masked')) {
+        const rows = db.prepare(`SELECT id, thread_id, reply_to_packet_id, request_meta FROM packets
+                                  WHERE request_meta LIKE '%"gate"%'`).all();
+        const said = db.prepare('SELECT id, content, deleted_at FROM packets WHERE thread_id = ?');
+        const put = db.prepare('UPDATE packets SET request_meta = ? WHERE id = ?');
+        let masked = 0;
+        db.exec('BEGIN');
+        try {
+            for (const row of rows) {
+                let meta;
+                try { meta = JSON.parse(row.request_meta); } catch { continue; }
+                if (!meta?.gate) continue;
+                const thread = said.all(row.thread_id);
+                const was = JSON.stringify(meta.gate);
+                meta.gate = thread.some(p => p.deleted_at && store.rulingOn(row, meta, p.id))
+                    ? store.eraseRulingWords(meta.gate)
+                    : secrets.maskRuling(meta.gate, thread.map(p => p.content || '').join('\n'));
+                if (JSON.stringify(meta.gate) !== was) { put.run(JSON.stringify(meta), row.id); masked++; }
+            }
+            store.setMeta('gate_rulings_masked', now());
+            db.exec('COMMIT');
+        } catch (err) {
+            db.exec('ROLLBACK');
+            throw err;
+        }
+        if (masked) try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch { /* the next delete's checkpoint will */ }
     }
 
     /**

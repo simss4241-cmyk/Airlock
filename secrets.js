@@ -112,14 +112,8 @@ function preview(value) {
     return `${v.slice(0, 4)}…${v.slice(-2)}`;
 }
 
-/**
- * Every known secret format found in `text`.
- *
- * Returns [{ rule, label, preview, index }], leftmost first, one entry per span — where two
- * rules claim overlapping text (an Anthropic key is also shaped like an OpenAI one), the
- * earlier rule in RULES wins, which is why the specific ones come first.
- */
-function scan(text) {
+/** Every rule's match in `text`, as spans: { rule, label, value, start, end }, leftmost first. */
+function spans(text) {
     const source = String(text || '');
     const found = [];
 
@@ -134,13 +128,22 @@ function scan(text) {
             const end = start + value.length;
             if (found.some(f => start < f.end && end > f.start)) continue;
 
-            found.push({ rule: rule.id, label: rule.label, preview: preview(value), index: start, start, end });
+            found.push({ rule: rule.id, label: rule.label, value, start, end });
         }
     }
 
-    return found
-        .sort((a, b) => a.start - b.start)
-        .map(({ start, end, ...hit }) => hit);
+    return found.sort((a, b) => a.start - b.start);
+}
+
+/**
+ * Every known secret format found in `text`.
+ *
+ * Returns [{ rule, label, preview, index }], leftmost first, one entry per span — where two
+ * rules claim overlapping text (an Anthropic key is also shaped like an OpenAI one), the
+ * earlier rule in RULES wins, which is why the specific ones come first.
+ */
+function scan(text) {
+    return spans(text).map(s => ({ rule: s.rule, label: s.label, preview: preview(s.value), index: s.start }));
 }
 
 /**
@@ -164,11 +167,85 @@ function rule(text) {
     };
 }
 
+// ─────────────────────── What a ruling may repeat ───────────────────────
+//
+// The scanner says what it found by its preview, never in full. The gate MODEL's reason and
+// concerns are free text, and a model asked to name what the author is exposing will
+// sometimes name it by repeating it: seen on the desk (2026-10-22), a Sep 28 ruling listed
+// an AWS key id and its secret, both in full, as its concerns. That text is stored on the
+// blocked reply and shown in the red card, so the refusal kept exactly what it refused to
+// send. Asking the model not to do it is a request; this is a rule.
+//
+// Two passes over everything a ruling says, run where a ruling is made (boundary.js) and
+// again where one is shown (public/duet.js), so a ruling stored before this existed is
+// masked on screen as well:
+//
+//   1. every known format, wherever it appears, becomes the scanner's own preview;
+//   2. anything copied VERBATIM from the text the gate read, if it is shaped like a secret,
+//      becomes its preview too. That catches the values no rule has a pattern for, like a
+//      bare AWS secret or a password typed in a sentence, without guessing at the model's
+//      words: only what it repeated from its input can be masked, so "a person's phone
+//      number" or "AWS credentials" are never touched.
+
+/** Letter-to-digit and digit-to-letter steps between neighbouring characters. */
+const SWITCHES = /[A-Za-z](?=\d)|\d(?=[A-Za-z])/g;
+
+/**
+ * Does this token, copied from the gated text, read as a secret rather than a word?
+ *
+ * Letters AND digits, at least eight characters, and then either a symbol among them
+ * (hunter2!, P@ssw0rd) or at least three switches between letters and digits — which random
+ * keys have in plenty (AKIAQX7RZ3M4TB2WKLPE has eight) and ordinary names rarely reach:
+ * report2024, Win32Exception, Base64Encoder and qwen2.5:14b all stay readable. A link is
+ * left alone; one with a password in it is the scanner's (url-credentials).
+ */
+function secretShaped(token) {
+    const t = String(token);
+    if (t.length < 8 || /\s/.test(t) || t.includes('://') || PLACEHOLDER.test(t)) return false;
+    if (!/[A-Za-z]/.test(t) || !/\d/.test(t)) return false;
+    const switches = (t.match(SWITCHES) || []).length;
+    return switches >= 3 || (switches >= 1 && /[^A-Za-z0-9\-_./:]/.test(t));
+}
+
+/** The secret-shaped tokens in `source`, longest first, so a longer one masks before its parts. */
+function tokensOf(source) {
+    const found = new Set();
+    for (const run of String(source || '').split(/[\s"'`=,;()[\]{}<>|]+/)) {
+        for (const piece of run.includes('://') ? [run] : [run, ...run.split(':')]) {
+            found.add(piece);
+            found.add(piece.replace(/^[.,:;!?*]+|[.,:;!?*]+$/g, ''));
+        }
+    }
+    return [...found].filter(secretShaped).sort((a, b) => b.length - a.length);
+}
+
+/** `text` with every known format, and every secret-shaped token copied from `source`, masked. */
+function redact(text, source = '') {
+    let out = String(text ?? '');
+    for (const s of spans(out).reverse()) out = out.slice(0, s.start) + preview(s.value) + out.slice(s.end);
+    for (const t of tokensOf(source)) if (out.includes(t)) out = out.split(t).join(preview(t));
+    return out;
+}
+
+/**
+ * A ruling with its words masked: reason, concerns, and the raw answer an unreadable ruling
+ * keeps. `source` is the text the gate read. Everything else — the decision, who ruled — is
+ * left exactly as it was. Masking twice changes nothing.
+ */
+function maskRuling(gate, source = '') {
+    if (!gate || typeof gate !== 'object') return gate;
+    const out = { ...gate };
+    if (out.reason != null) out.reason = redact(out.reason, source);
+    if (Array.isArray(out.concerns)) out.concerns = out.concerns.map(c => redact(c, source));
+    if (out.unparsed != null) out.unparsed = redact(out.unparsed, source);
+    return out;
+}
+
 // Frozen, rules included: the page must not be able to empty the list it checks against.
 for (const r of RULES) Object.freeze(r);
 Object.freeze(RULES);
 
-const api = { scan, rule, RULES, PLACEHOLDER };
+const api = { scan, rule, redact, maskRuling, secretShaped, RULES, PLACEHOLDER };
 if (typeof module === 'object' && module.exports) module.exports = api;
 else root.AirlockSecrets = Object.freeze(api);
 })(typeof window !== 'undefined' ? window : globalThis);

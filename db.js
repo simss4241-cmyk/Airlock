@@ -17,6 +17,7 @@
 
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
+const secrets = require('./secrets');
 
 /** Where the desk's database lives. Read when it is opened, not when this file loads. */
 const defaultPath = () => process.env.AIRLOCK_DB || path.join(__dirname, 'airlock.db');
@@ -642,6 +643,15 @@ function createCore(db, file) {
         `).all(id);
     }
 
+    /** Was this blocked reply's ruling about message `id`: the one it answered, or one it withheld? */
+    const rulingOn = (row, meta, id) => row.reply_to_packet_id === id || (meta.withheldIds || []).includes(id);
+
+    /** A ruling without its words: the decision, the model and the scanner's rule ids stay. */
+    function eraseRulingWords(gate) {
+        const { reason, concerns, unparsed, ...kept } = gate;
+        return { ...kept, concerns: [], erased: true };
+    }
+
     /**
      * Delete a message: its words, images and anything quoted from it are erased, and a stub
      * stays in the conversation saying when. Its provenance — above all any crossing — is
@@ -684,6 +694,21 @@ function createCore(db, file) {
                     if (m.answers?.id !== Number(id)) continue;
                     m.answers = { ...m.answers, request: '' };
                     db.prepare('UPDATE packets SET request_meta = ? WHERE id = ?').run(JSON.stringify(m), row.id);
+                }
+                // So is what the gate said about it. A ruling is the model's own account of
+                // these words, and a model asked what is being exposed can name it by
+                // repeating it (secrets.js maskRuling). A ruling ON this message loses its
+                // words, keeping the decision and who made it; any other ruling in the thread
+                // loses whatever secret-shaped text it copied from this one.
+                for (const row of db.prepare("SELECT id, reply_to_packet_id, request_meta FROM packets WHERE thread_id = ? AND request_meta LIKE '%\"gate\"%'").all(packet.thread_id)) {
+                    const m = JSON.parse(row.request_meta);
+                    if (!m.gate) continue;
+                    const was = JSON.stringify(m.gate);
+                    m.gate = rulingOn(row, m, Number(id)) ? eraseRulingWords(m.gate)
+                        : secrets.maskRuling(m.gate, packet.content);
+                    if (JSON.stringify(m.gate) !== was) {
+                        db.prepare('UPDATE packets SET request_meta = ? WHERE id = ?').run(JSON.stringify(m), row.id);
+                    }
                 }
             } else {
                 db.prepare("UPDATE packets SET content = '', images = NULL, deleted_at = ? WHERE id = ?").run(when, id);
@@ -1124,7 +1149,7 @@ function createCore(db, file) {
         createThread, deleteThread, getThread, renameThread, moveThreadToFolder, reorderThread,
         setThreadWorkspace, migrateWorkspaceRoot, getMeta, setMeta,
         createPacket, getPacket, getThreadPackets, movePacket, forkPacket, deletePacket,
-        getProvenance, getReviews, stats, subtreeIds, getDeletedCrossings, loadReleased, rememberReleased,
+        getProvenance, getReviews, stats, rulingOn, eraseRulingWords, subtreeIds, getDeletedCrossings, loadReleased, rememberReleased,
         buildBrief, recordHandoff, recordCarry, getExposure, recordCrossings, recordArtifactCrossing,
         recordUsage, getUsage
     };

@@ -205,6 +205,10 @@ const fake = http.createServer((req, res) => {
 
 const GATE_MODEL = 'stand-in-gate:1b';
 const GATE_REFUSES = 'stand-in-gate-refuses-7f3a';
+// Section 11: the stand-in refuses AND repeats the secrets it read, as a gate model has.
+const GATE_ECHOES = 'stand-in-gate-echoes-2b9e';
+const ECHO_KEY = 'k3Rt9Wq2Lz8Px5Nv';
+const ECHO_PASSWORD = 'Zq7!vR2pLm9x';
 const gateAsked = [];               // every text the stand-in gate was asked to rule on
 
 const fakeOllama = http.createServer((req, res) => {
@@ -222,7 +226,10 @@ const fakeOllama = http.createServer((req, res) => {
             gateAsked.push(asked);
             res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
             res.end(JSON.stringify({
-                message: { role: 'assistant', content: asked.includes(GATE_REFUSES)
+                message: { role: 'assistant', content: asked.includes(GATE_ECHOES)
+                    ? JSON.stringify({ release: false, reason: `It gives the password ${ECHO_PASSWORD}.`,
+                        concerns: [`password ${ECHO_PASSWORD}`, `key ${ECHO_KEY}`, "a person's phone number", 'AWS credentials'] })
+                    : asked.includes(GATE_REFUSES)
                     ? '{"release": false, "reason": "stand-in gate: carries the refusal mark", "concerns": ["the refusal mark"]}'
                     : '{"release": true, "reason": "stand-in gate", "concerns": []}' },
                 done: true
@@ -743,6 +750,29 @@ async function main() {
         ok(Boolean(m4.last('done')) && received.slice(ng4).some(b => b.includes('Anything to add?'))
             && !received.slice(ng4).some(b => b.includes(GATE_REFUSES)),
             'and the next turn crosses with the question, without the quotation', trace(m4));
+
+        // ── 11. a ruling that repeats what it withheld ──
+        // Found on the desk 2026-10-22: a gate model's ruling listed the secrets it withheld
+        // in full, and they stayed in the database after the message was deleted.
+        console.log('\n11. a gate ruling that repeats the secret it withheld');
+        const { thread: te, right: re } = await duetThread(folderId, 'echoing gate');
+        const e1 = await send(te.id, { participantId: re.id, clientRequestId: 'echo-1',
+            text: `The deploy key is ${ECHO_KEY} and the wifi password is ${ECHO_PASSWORD} (${GATE_ECHOES}).` });
+        const echoed = e1.last('blocked')?.message;
+        const storedE = (await api('GET', `/api/duet/${te.id}`)).body.messages.find(m => m.id === echoed?.id);
+        const shownE = JSON.stringify([e1.last('blocked')?.gate, storedE?.requestMeta?.gate]);
+        ok(echoed && !shownE.includes(ECHO_KEY) && !shownE.includes(ECHO_PASSWORD) && shownE.includes('k3Rt…Nv'),
+            'the stand-in gate repeats a key and a password: both are masked, as sent to the page and as stored', shownE.slice(0, 300));
+        ok(JSON.stringify(storedE?.requestMeta?.gate?.concerns?.slice(2)) === JSON.stringify(["a person's phone number", 'AWS credentials']),
+            'and its ordinary concerns are kept word for word');
+        const askedE = e1.events.find(e => e.type === 'user')?.message;
+        await api('DELETE', `/api/packets/${askedE?.id}`);
+        const afterE = (await api('GET', `/api/duet/${te.id}`)).body.messages.find(m => m.id === echoed?.id);
+        ok(afterE?.requestMeta?.gate?.erased && afterE.requestMeta.gate.release === false && !(afterE.requestMeta.gate.concerns || []).length,
+            'deleting the message erases what the ruling said about it, and keeps the refusal', JSON.stringify(afterE?.requestMeta?.gate));
+        const onDiskE = ['duet-tools.db', 'duet-tools.db-wal'].map(f => path.join(tmp, f)).filter(f => fs.existsSync(f))
+            .some(f => fs.readFileSync(f).includes(ECHO_KEY) || fs.readFileSync(f).includes(ECHO_PASSWORD));
+        ok(!onDiskE, 'and neither secret is left in the database file, or its write-ahead log');
 
         ok(!rejected.length, 'no request to the remote side was malformed', rejected.slice(0, 3).join(' | '));
     } finally {

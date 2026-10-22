@@ -741,7 +741,7 @@ function messageHtml(message, { showAddressing = false } = {}) {
 
     // A blocked generation has no text, so the gate's reason IS the message.
     const gate = message.status === 'blocked' && message.requestMeta?.gate
-        ? gateHtml(message.requestMeta.gate, message.requestMeta.withheld, keptOutNote(message))
+        ? gateHtml(message.requestMeta.gate, message.requestMeta.withheld, keptOutNote(message), saidBefore(message))
         : '';
 
     // A failure with nothing written says why, from the record — an empty red box reads as
@@ -839,8 +839,35 @@ function keptOutNote(message) {
     return ` Kept out of what ${escapeHtml(message.model || 'this model')} is sent from now on: ${what}.`;
 }
 
-/** The local gate's ruling, rendered where the answer would have been. */
-function gateHtml(gate, withheld = null, keptOut = '') {
+/** Rulings already masked: stored ruling -> { source it was masked against, masked ruling }. */
+const maskedRulings = new WeakMap();
+
+/** Everything said in this conversation up to and including `message`: what its gate could have read. */
+function saidBefore(message) {
+    const at = state.messages.findIndex(m => m.id === message.id);
+    return state.messages.slice(0, at === -1 ? state.messages.length : at + 1)
+        .map(m => [m.content, m.requestMeta?.answers?.request].filter(Boolean).join('\n')).join('\n');
+}
+
+/**
+ * The local gate's ruling, rendered where the answer would have been.
+ *
+ * Masked again here (secrets.js maskRuling) against what was said before it: the server masks
+ * every ruling it makes, but one stored before it did may still repeat a secret in full. If the
+ * scanner did not load, the model's words are not shown at all rather than shown unchecked.
+ */
+function gateHtml(gate, withheld = null, keptOut = '', source = '') {
+    // Every paint renders every message, so a ruling is masked once per conversation it sits in.
+    const hit = maskedRulings.get(gate);
+    if (hit?.source === source) gate = hit.gate;
+    else {
+        const stored = gate;
+        gate = window.AirlockSecrets
+            ? window.AirlockSecrets.maskRuling(gate, source)
+            : { ...gate, reason: 'Not shown: the secret scanner did not load, so it could not be checked.', concerns: [] };
+        if (window.AirlockSecrets) maskedRulings.set(stored, { source, gate });
+    }
+    if (gate.erased) gate = { ...gate, reason: 'What the gate said went with the message it was about, when that was deleted.' };
     const concerns = gate.concerns?.length
         ? `<ul>${gate.concerns.map(c => `<li>${escapeHtml(String(c))}</li>`).join('')}</ul>`
         : '';
