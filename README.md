@@ -21,7 +21,7 @@ Factory. Each reply has a line to the message it answers — green stayed here, 
 and the top bar counts what has gone to the cloud. Dimmed words were copied from the other side.*
 
 Built for the **Nebius × NVIDIA Global AI Hackathon — Personal AI track.**
-[Demo video](#) · [How it uses Nemotron, Token Factory and Tavily](#nvidia-nemotron-nebius-token-factory-and-tavily) · [Design notes](docs/design.md)
+**[▶ Watch the demo (2:45)](https://youtu.be/uE7tTuFfaXA)** · [How it uses Nemotron, Token Factory and Tavily](#nvidia-nemotron-nebius-token-factory-and-tavily) · [Design notes](docs/design.md)
 
 ---
 
